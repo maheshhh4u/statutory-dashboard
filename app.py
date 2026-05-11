@@ -34,6 +34,27 @@ def cache_set(key, val):
     _cache[key] = (datetime.utcnow(), val)
 
 # ── Bulk extract loader ────────────────────────────────────────────────────────
+# Only load the columns we actually need — saves ~70% RAM on free Render tier
+NEEDED_COLS = {
+    "parta": [
+        "registered_charity_number","organisation_number",
+        "income_from_government_grants","income_from_government_contracts",
+        "total_gross_income","total_gross_expenditure",
+        "fin_period_end_date","ar_due_date","ar_received_date",
+        "latest_fin_period_submitted_ind","fin_period_order_number",
+    ],
+    "charity": [
+        "registered_charity_number","organisation_number",
+        "charity_name","charity_registration_status",
+        "date_of_registration","date_of_removal",
+        "charity_contact_phone","charity_contact_email","charity_contact_web",
+        "charity_contact_address1","charity_contact_address2",
+        "charity_contact_address3","charity_contact_address4",
+        "charity_contact_postcode","charity_activities",
+        "latest_income","charity_type",
+    ],
+}
+
 def load_extract(name):
     cached = cache_get(f"ex_{name}")
     if cached is not None:
@@ -50,23 +71,45 @@ def load_extract(name):
             with z.open(inner) as f:
                 raw = f.read()
         buf = io.BytesIO(raw)
+        # First pass: read just the header to find which columns exist
+        header_buf = io.BytesIO(raw)
+        try:
+            header_df = pd.read_csv(header_buf, sep="\t", encoding="utf-8",
+                                    nrows=0, dtype=str, on_bad_lines="skip")
+        except TypeError:
+            header_buf.seek(0)
+            header_df = pd.read_csv(header_buf, sep="\t", encoding="utf-8",
+                                    nrows=0, dtype=str, error_bad_lines=False)
+        all_cols = [c.strip().lower() for c in header_df.columns]
+        # Only keep needed columns if defined for this extract
+        usecols = None
+        needed = NEEDED_COLS.get(name)
+        if needed:
+            usecols = [c for c in needed if c in all_cols]
+            print(f"  {name}: loading {len(usecols)} of {len(all_cols)} columns")
+        # Second pass: read full data with column filter
+        buf.seek(0)
         try:
             df = pd.read_csv(buf, sep="\t", encoding="utf-8",
-                             low_memory=False, dtype=str, on_bad_lines="skip")
+                             low_memory=False, dtype=str,
+                             on_bad_lines="skip",
+                             usecols=usecols if usecols else None)
         except TypeError:
             buf.seek(0)
             df = pd.read_csv(buf, sep="\t", encoding="utf-8",
                              low_memory=False, dtype=str,
-                             error_bad_lines=False, warn_bad_lines=False)
+                             error_bad_lines=False, warn_bad_lines=False,
+                             usecols=usecols if usecols else None)
         df.columns = [c.strip().lower() for c in df.columns]
         for col in df.columns:
             df[col] = df[col].astype(str).str.strip()
         df.replace("nan", "", inplace=True)
-        print(f"  {name}: {len(df)} rows")
+        print(f"  {name}: {len(df)} rows, {len(df.columns)} cols loaded")
         cache_set(f"ex_{name}", df)
         return df
     except Exception as e:
         print(f"  ERROR {name}: {e}")
+        import traceback; traceback.print_exc()
         return None
 
 def find_col(df, *frags):
