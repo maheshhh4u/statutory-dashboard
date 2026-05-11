@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Statutory Prospecting Dashboard</title>
+<style>
+:root{
+  --bg:#f4f6f9;--surface:#fff;--s2:#f0f2f6;--border:#e2e6ea;
+  --text:#1a1d23;--t2:#5a6070;--t3:#9aa0ac;
+  --green:#1a6b35;--gl:#e6f4ec;--gm:#2d9e55;--grow:#f0faf4;
+  --gold:#9a6c00;--goldl:#fef9e7;
+  --red:#9a1a1a;--redl:#fdecea;
+  --blue:#1a3d7a;--bluel:#e8eef8;
+  --orange:#8b4200;--orangel:#fef0e6;
+  --purple:#5a1a7a;--purplel:#f3eef8;
+  --alt:#f8fdf9;--radius:8px;--shadow:0 1px 4px rgba(0,0,0,.09);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+.hdr{background:#1a1d23;color:#fff;padding:0 24px;height:54px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200}
+.hdr-brand{display:flex;align-items:center;gap:10px}
+.hdr-logo{width:28px;height:28px;background:var(--gm);border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
+.hdr-title{font-size:15px;font-weight:600}.hdr-sub{font-size:10px;opacity:.45;margin-top:1px}
+.nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;display:flex;overflow-x:auto}
+.nav-btn{padding:12px 16px;font-size:13px;font-weight:500;color:var(--t3);cursor:pointer;background:none;border:none;border-bottom:2px solid transparent;white-space:nowrap;font-family:inherit;transition:all .15s}
+.nav-btn:hover{color:var(--text)}.nav-btn.active{color:var(--green);border-bottom-color:var(--green)}
+.main{padding:20px 24px;max-width:1500px;margin:0 auto}
+.section{display:none}.section.active{display:block}
+/* HOME */
+.home-hero{text-align:center;padding:40px 20px 32px}
+.home-hero h1{font-size:26px;font-weight:700;margin-bottom:8px}
+.home-hero p{font-size:14px;color:var(--t2);margin-bottom:28px}
+.home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;max-width:960px;margin:0 auto}
+.home-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;cursor:pointer;transition:all .2s;box-shadow:var(--shadow)}
+.home-card:hover{border-color:var(--green);transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,.12)}
+.home-card-icon{font-size:26px;margin-bottom:10px}.home-card-title{font-size:14px;font-weight:700;margin-bottom:5px}
+.home-card-desc{font-size:12px;color:var(--t2);line-height:1.5}
+.home-card-count{display:inline-block;margin-top:10px;font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;background:var(--gl);color:var(--green)}
+/* CTRL */
+.ctrl{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px}
+.ctrl-left h2{font-size:19px;font-weight:700}.ctrl-left p{font-size:12px;color:var(--t3);margin-top:1px}
+.ctrl-right{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+/* PTABS */
+.ptab-bar{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
+.ptab{padding:6px 14px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--t2);transition:all .15s;font-family:inherit}
+.ptab:hover{border-color:var(--green);color:var(--green)}.ptab.active{background:var(--green);color:#fff;border-color:var(--green)}
+.ptab-count{margin-left:4px;background:rgba(255,255,255,.25);border-radius:8px;padding:0 5px;font-size:10px}
+/* CRITERIA */
+.criteria-box{background:var(--s2);border:1px solid var(--border);border-left:3px solid var(--green);border-radius:var(--radius);padding:9px 13px;margin-bottom:10px;font-size:11px;color:var(--t2);line-height:1.7}
+/* FILTER BAR */
+.filter-bar{display:flex;gap:7px;flex-wrap:wrap;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:9px 13px;margin-bottom:10px}
+.filter-bar input,.filter-bar select{font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text)}
+.filter-bar input:focus,.filter-bar select:focus{outline:none;border-color:var(--green)}
+.filter-label{font-size:11px;color:var(--t3);font-weight:600;white-space:nowrap}
+.filter-clear{font-size:11px;color:var(--t3);cursor:pointer;text-decoration:underline}
+.filter-clear:hover{color:var(--red)}
+/* ADV SEARCH */
+.adv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:12px}
+.adv-field label{display:block;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+.adv-field input,.adv-field select{width:100%;font-family:inherit;font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text)}
+.adv-field input:focus,.adv-field select:focus{outline:none;border-color:var(--green)}
+/* SAVED SEARCHES */
+.saved-bar{display:flex;gap:7px;align-items:center;flex-wrap:wrap;background:var(--goldl);border:1px solid #e8d88a;border-radius:var(--radius);padding:8px 12px;margin-bottom:10px}
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:var(--radius);font-size:12px;font-weight:600;cursor:pointer;border:none;font-family:inherit;transition:all .15s}
+.btn-green{background:var(--green);color:#fff}.btn-green:hover{background:#145528}
+.btn-outline{background:var(--surface);color:var(--t2);border:1px solid var(--border)}.btn-outline:hover{border-color:var(--green);color:var(--green)}
+.btn-home{background:var(--s2);color:var(--t2);border:1px solid var(--border)}.btn-home:hover{border-color:var(--green);color:var(--green)}
+.btn-gold{background:var(--goldl);color:var(--gold);border:1px solid #d4c060}.btn-gold:hover{background:#fef3c7}
+.btn-sm{padding:4px 10px;font-size:11px}
+/* STATS */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:12px}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow)}
+.stat-label{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
+.stat-value{font-size:22px;font-weight:700;line-height:1}.stat-sub{font-size:11px;color:var(--t3);margin-top:2px}
+/* SBAR */
+.sbar{display:flex;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:0 11px;gap:7px;flex:1;max-width:360px}
+.sbar input{border:none;outline:none;background:none;font-family:inherit;font-size:13px;color:var(--text);padding:8px 0;flex:1}
+.sbar input::placeholder{color:var(--t3)}
+/* TABLE */
+.tbl-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+.tbl-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;table-layout:auto}
+thead th{background:var(--s2);padding:8px 11px;text-align:left;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none}
+thead th:hover{color:var(--text)}.sort-asc::after{content:" ↑";color:var(--green)}.sort-desc::after{content:" ↓";color:var(--green)}
+tbody tr:nth-child(odd){background:var(--surface)}
+tbody tr:nth-child(even){background:var(--alt)}
+tbody tr.row-client{background:#c8f0d8 !important;border-left:3px solid var(--green)}
+tbody tr:hover{background:#edf7f0 !important}
+tbody tr.row-client:hover{background:#b8eac8 !important}
+tbody tr{border-bottom:1px solid var(--border)}
+tbody tr:last-child{border-bottom:none}
+tbody td{padding:7px 11px;font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mono{font-family:'Consolas','SF Mono',monospace;font-size:11px}
+/* TAGS */
+.tag{display:inline-block;padding:2px 6px;border-radius:10px;font-size:10px;font-weight:600;white-space:nowrap}
+.tag-green{background:var(--gl);color:var(--green)}.tag-red{background:var(--redl);color:var(--red)}
+.tag-gold{background:var(--goldl);color:var(--gold)}.tag-blue{background:var(--bluel);color:var(--blue)}
+.tag-orange{background:var(--orangel);color:var(--orange)}.tag-purple{background:var(--purplel);color:var(--purple)}
+.tag-gray{background:var(--s2);color:var(--t2)}
+/* CALLED BTN */
+.cbtn{display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--t2);transition:all .15s;font-family:inherit;white-space:nowrap}
+.cbtn:hover{border-color:var(--green);color:var(--green)}.cbtn.called{background:var(--gl);color:var(--green);border-color:var(--green)}
+/* STATUS SELECT */
+.ssel{font-family:inherit;font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;max-width:130px}
+.ssel:focus{outline:none;border-color:var(--green)}
+.s-client{background:#c8f0d8;color:var(--green);border-color:var(--green);font-weight:700}
+.s-interested{background:var(--goldl);color:var(--gold);border-color:#d4b040}
+.s-meeting{background:var(--bluel);color:var(--blue);border-color:#6080c8}
+.s-contacted{background:var(--orangel);color:var(--orange);border-color:#c07040}
+.s-callback{background:var(--purplel);color:var(--purple);border-color:#9060b0}
+.s-notinterested{background:var(--redl);color:var(--red);border-color:#c06060}
+/* COMMENT */
+.cm-input{width:100%;min-width:140px;font-family:inherit;font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);resize:none;height:26px;overflow:hidden;transition:height .2s}
+.cm-input:focus{outline:none;border-color:var(--green);height:56px}
+.cm-count{font-size:9px;color:var(--t3);text-align:right;margin-top:1px}
+/* LOADING */
+.loading{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:52px 20px;gap:12px}
+.spinner{width:28px;height:28px;border:2px solid var(--border);border-top-color:var(--green);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-txt{font-size:12px;color:var(--t3)}
+.info-box{background:var(--bluel);border:1px solid #b8cde8;border-radius:var(--radius);padding:10px 13px;font-size:12px;color:var(--blue);margin-bottom:12px}
+.err-box{background:var(--redl);border:1px solid #f0bcbc;border-radius:var(--radius);padding:10px 13px;font-size:12px;color:var(--red);margin-bottom:12px}
+/* PAG */
+.pag{display:flex;align-items:center;justify-content:space-between;padding:9px 13px;border-top:1px solid var(--border);background:var(--s2);flex-wrap:wrap;gap:7px}
+.pag-info{font-size:11px;color:var(--t3)}
+.pag-btns{display:flex;gap:3px;flex-wrap:wrap}
+.pag-btn{min-width:26px;height:26px;padding:0 6px;border:1px solid var(--border);background:var(--surface);border-radius:5px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--t2);font-family:inherit}
+.pag-btn.active{background:var(--green);color:#fff;border-color:var(--green)}.pag-btn:hover:not(.active){border-color:var(--green);color:var(--green)}
+select{font-family:inherit;font-size:12px;padding:5px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);cursor:pointer}
+select:focus{outline:none;border-color:var(--green)}
+.up{color:var(--green)}.dn{color:var(--red)}.flat{color:var(--t3)}
+.rmeta{font-size:11px;color:var(--t3);margin-bottom:7px}
+/* MODAL */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:500;align-items:center;justify-content:center}
+.modal-bg.open{display:flex}
+.modal{background:var(--surface);border-radius:12px;padding:22px;max-width:440px;width:95%;box-shadow:0 8px 40px rgba(0,0,0,.2)}
+.modal h3{font-size:15px;font-weight:700;margin-bottom:14px}
+.modal-field{margin-bottom:10px}
+.modal-field label{display:block;font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase;margin-bottom:3px}
+.modal-field input{width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px}
+.modal-field input:focus{outline:none;border-color:var(--green)}
+.modal-btns{display:flex;gap:7px;justify-content:flex-end;margin-top:14px}
+</style>
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-brand"><div class="hdr-logo">SP</div><div><div class="hdr-title">Statutory Prospecting Dashboard</div><div class="hdr-sub">Charity Commission for England &amp; Wales · Live Data</div></div></div>
+  <div style="font-size:11px;color:rgba(255,255,255,.4)" id="hdrDate"></div>
+</header>
+<nav class="nav">
+  <button class="nav-btn active" onclick="switchTab('home',this)">🏠 Home</button>
+  <button class="nav-btn" onclick="switchTab('prospects',this)">📋 Prospect Lists</button>
+  <button class="nav-btn" onclick="switchTab('search',this)">🔍 Charity Search</button>
+  <button class="nav-btn" onclick="switchTab('new',this)">🆕 Newly Registered</button>
+  <button class="nav-btn" onclick="switchTab('late',this)">⏰ Late Accounts</button>
+  <button class="nav-btn" onclick="switchTab('old',this)">🏛️ 40+ Yrs · Zero Statutory</button>
+</nav>
+<main class="main">
+
+<!-- HOME -->
+<section id="tab-home" class="section active">
+  <div class="home-hero">
+    <h1>Statutory Prospecting Dashboard</h1>
+    <p>Live charity data from the Charity Commission · Caller: <strong>Muhanna</strong></p>
+    <div class="home-grid">
+      <div class="home-card" onclick="navTo('prospects')"><div class="home-card-icon">📋</div><div class="home-card-title">Statutory Prospect Lists</div><div class="home-card-desc">Rules-based screening across 4 lists. Full pagination, sorting and filters on all rows.</div><span class="home-card-count" id="home-prospect-count">Click to load</span></div>
+      <div class="home-card" onclick="navTo('search')"><div class="home-card-icon">🔍</div><div class="home-card-title">Charity Search</div><div class="home-card-desc">Simple or Advanced Search matching all Charity Commission criteria. Save searches for one-click retrieval.</div><span class="home-card-count" style="background:var(--bluel);color:var(--blue)">Simple + Advanced</span></div>
+      <div class="home-card" onclick="navTo('new')"><div class="home-card-icon">🆕</div><div class="home-card-title">Newly Registered Charities</div><div class="home-card-desc">Charities recently registered with the Charity Commission. Filter by last 30, 60 or 90 days.</div><span class="home-card-count" id="home-new-count">Click to load</span></div>
+      <div class="home-card" onclick="navTo('late')"><div class="home-card-icon">⏰</div><div class="home-card-title">Late Accounts</div><div class="home-card-desc">Charities that have not filed their annual return on time — severity bands from recent to severely overdue.</div><span class="home-card-count" id="home-late-count" style="background:var(--redl);color:var(--red)">Click to load</span></div>
+      <div class="home-card" onclick="navTo('old')"><div class="home-card-icon">🏛️</div><div class="home-card-title">40+ Years · Zero Statutory</div><div class="home-card-desc">Established charities with no recorded government grants or contracts — potential new prospects.</div><span class="home-card-count" id="home-old-count" style="background:var(--purplel);color:var(--purple)">Click to load</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- PROSPECTS -->
+<section id="tab-prospects" class="section">
+  <div class="ctrl">
+    <div class="ctrl-left"><h2>Statutory Prospect Lists</h2><p>Paginated · Sortable · Filterable · Status &amp; comments on every row · Download includes full contact details</p></div>
+    <div class="ctrl-right">
+      <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
+      <button class="btn btn-outline btn-sm" onclick="loadProspects()">↺ Refresh</button>
+      <button class="btn btn-green btn-sm" id="p-dl-btn" style="display:none" onclick="location.href='/download/prospects?list=all'">↓ Download CSV</button>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Total Prospects</div><div class="stat-value" id="p-total">—</div></div>
+    <div class="stat"><div class="stat-label">Best Immediate</div><div class="stat-value" id="p-best">—</div></div>
+    <div class="stat"><div class="stat-label">Readiness Package</div><div class="stat-value" id="p-ready">—</div></div>
+    <div class="stat"><div class="stat-label">Contract Growth</div><div class="stat-value" id="p-contract">—</div></div>
+    <div class="stat"><div class="stat-label">Retention/Replace</div><div class="stat-value" id="p-retention">—</div></div>
+    <div class="stat"><div class="stat-label">Called by Muhanna</div><div class="stat-value" id="p-called" style="color:var(--green)">0</div></div>
+  </div>
+  <div id="p-msg"></div>
+  <div id="p-loading" class="loading"><div class="spinner"></div><div class="loading-txt">Loading from Charity Commission…</div></div>
+  <div id="p-content" style="display:none">
+    <div class="ptab-bar">
+      <button class="ptab" onclick="switchPList('all',this)">📋 All Lists <span class="ptab-count" id="ptc-all">0</span></button>
+      <button class="ptab active" onclick="switchPList('best',this)">● Best Immediate <span class="ptab-count" id="ptc-best">0</span></button>
+      <button class="ptab" onclick="switchPList('readiness',this)">● Readiness Package <span class="ptab-count" id="ptc-readiness">0</span></button>
+      <button class="ptab" onclick="switchPList('contract',this)">● Contract Growth <span class="ptab-count" id="ptc-contract">0</span></button>
+      <button class="ptab" onclick="switchPList('retention',this)">● Retention/Replace <span class="ptab-count" id="ptc-retention">0</span></button>
+    </div>
+    <div class="criteria-box"><strong>Screening criteria applied to this list:</strong> <span id="p-criteria-text"></span></div>
+    <div class="filter-bar">
+      <span class="filter-label">🔍 Filter:</span>
+      <input type="text" id="pf-name" placeholder="Charity name…" oninput="applyPF()">
+      <input type="text" id="pf-reg" placeholder="Reg number…" oninput="applyPF()" style="width:90px">
+      <select id="pf-status" onchange="applyPF()"><option value="">All statuses</option><option>Call back</option><option>Contacted</option><option>Interested</option><option>Meeting secured</option><option>Client</option><option>Not interested</option></select>
+      <select id="pf-called" onchange="applyPF()"><option value="">Called/Not</option><option value="yes">Called only</option><option value="no">Not called</option></select>
+      <input type="number" id="pf-inc-min" placeholder="Min £" oninput="applyPF()" style="width:80px">
+      <input type="number" id="pf-inc-max" placeholder="Max £" oninput="applyPF()" style="width:80px">
+      <input type="number" id="pf-pct-min" placeholder="Min %" oninput="applyPF()" style="width:70px">
+      <input type="number" id="pf-pct-max" placeholder="Max %" oninput="applyPF()" style="width:70px">
+      <span class="filter-clear" onclick="clearPF()">✕ Clear</span>
+    </div>
+    <div class="rmeta" id="p-rmeta"></div>
+    <div class="tbl-wrap tbl-scroll"><table>
+      <thead><tr>
+        <th onclick="sortP('reg_number')">Reg No.</th>
+        <th onclick="sortP('name')" style="min-width:150px">Charity Name</th>
+        <th onclick="sortP('total_income')">Total Income</th>
+        <th onclick="sortP('total_expenditure')">Total Expend.</th>
+        <th onclick="sortP('gov_grants')">Gov Grants</th>
+        <th onclick="sortP('gov_contracts')">Gov Contracts</th>
+        <th onclick="sortP('statutory')">Statutory</th>
+        <th onclick="sortP('stat_pct')">Stat %</th>
+        <th onclick="sortP('prev_statutory')">Prev Stat.</th>
+        <th>Trend</th>
+        <th onclick="sortP('fin_year')">Fin Year</th>
+        <th>Flags</th>
+        <th style="min-width:130px">Status</th>
+        <th style="min-width:160px">Comment</th>
+        <th>Called</th>
+        <th style="min-width:130px">Also In / Elsewhere</th>
+      </tr></thead>
+      <tbody id="p-body"></tbody>
+    </table></div>
+    <div class="pag"><div class="pag-info" id="p-pag-info"></div><div class="pag-btns" id="p-pag-btns"></div></div>
+  </div>
+</section>
+
+<!-- SEARCH -->
+<section id="tab-search" class="section">
+  <div class="ctrl">
+    <div class="ctrl-left"><h2>Charity Search</h2><p>Simple or Advanced Search · Save criteria for one-click reuse · Download includes full contact details</p></div>
+    <div class="ctrl-right"><button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button></div>
+  </div>
+  <div style="display:flex;gap:7px;margin-bottom:12px">
+    <button class="btn btn-green btn-sm" id="sm-simple" onclick="setMode('simple')">Simple Search</button>
+    <button class="btn btn-outline btn-sm" id="sm-adv" onclick="setMode('advanced')">🔧 Advanced Search</button>
+  </div>
+  <div id="simple-bar" style="display:flex;gap:9px;margin-bottom:12px;flex-wrap:wrap">
+    <div class="sbar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--t3);flex-shrink:0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input id="search-q" placeholder="Charity name or registration number…" onkeydown="if(event.key==='Enter')doSimple()"></div>
+    <button class="btn btn-green btn-sm" onclick="doSimple()">Search</button>
+    <button class="btn btn-outline btn-sm" onclick="clearSearch()">Clear</button>
+  </div>
+  <div id="adv-bar" style="display:none">
+    <div class="adv-grid">
+      <div class="adv-field"><label>Charity Name</label><input id="adv-name" placeholder="e.g. Age UK"></div>
+      <div class="adv-field"><label>Registration Number</label><input id="adv-reg" placeholder="e.g. 1128267"></div>
+      <div class="adv-field"><label>Postcode (prefix)</label><input id="adv-postcode" placeholder="e.g. SW1A"></div>
+      <div class="adv-field"><label>County / Region</label><input id="adv-county" placeholder="e.g. Greater London"></div>
+      <div class="adv-field"><label>What it does (activities)</label><input id="adv-what" placeholder="e.g. education, housing"></div>
+      <div class="adv-field"><label>Who it helps</label><input id="adv-who" placeholder="e.g. children, elderly"></div>
+      <div class="adv-field"><label>How it helps</label><input id="adv-how" placeholder="e.g. grants, services"></div>
+      <div class="adv-field"><label>Registration Status</label><select id="adv-status"><option value="registered">Registered only</option><option value="removed">Removed only</option><option value="all">All</option></select></div>
+      <div class="adv-field"><label>Charity Type</label><select id="adv-type"><option value="">Any</option><option value="CIO">CIO</option><option value="Charitable Company">Charitable Company</option><option value="Trust">Trust</option></select></div>
+      <div class="adv-field"><label>Min Income £</label><input type="number" id="adv-inc-min" placeholder="e.g. 100000"></div>
+      <div class="adv-field"><label>Max Income £</label><input type="number" id="adv-inc-max" placeholder="e.g. 5000000"></div>
+      <div class="adv-field"><label>Registered From</label><input type="date" id="adv-date-from"></div>
+      <div class="adv-field"><label>Registered To</label><input type="date" id="adv-date-to"></div>
+    </div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="btn btn-green btn-sm" onclick="doAdv()">🔍 Search</button>
+      <button class="btn btn-outline btn-sm" onclick="clearAdv()">Clear All</button>
+      <button class="btn btn-gold btn-sm" onclick="openSaveModal()">💾 Save This Search</button>
+    </div>
+    <div class="saved-bar" id="saved-bar" style="display:none">
+      <span class="filter-label">📁 Saved:</span>
+      <select id="saved-sel" style="font-size:12px;padding:4px 8px"><option value="">— Select —</option></select>
+      <button class="btn btn-gold btn-sm" onclick="loadSaved()">▶ Load &amp; Search</button>
+      <button class="btn btn-outline btn-sm" onclick="deleteSaved()" style="color:var(--red);border-color:var(--red)">✕ Delete</button>
+    </div>
+  </div>
+  <div id="s-msg"></div>
+  <div id="s-loading" style="display:none" class="loading"><div class="spinner"></div><div class="loading-txt">Searching…</div></div>
+  <div id="s-results" style="display:none">
+    <div class="ctrl"><div id="s-meta" style="font-size:12px;color:var(--t3)"></div><button class="btn btn-outline btn-sm" onclick="dlSearch()">↓ Download CSV</button></div>
+    <div class="tbl-wrap tbl-scroll"><table>
+      <thead><tr>
+        <th onclick="sortS('reg_number')">Reg No.</th>
+        <th onclick="sortS('name')" style="min-width:140px">Name</th>
+        <th>Status</th>
+        <th onclick="sortS('total_income')">Income</th>
+        <th onclick="sortS('gov_grants')">Gov Grants</th>
+        <th onclick="sortS('gov_contracts')">Gov Contracts</th>
+        <th onclick="sortS('stat_pct')">Stat %</th>
+        <th>Trend</th><th>List</th>
+        <th onclick="sortS('town')">Town</th>
+        <th onclick="sortS('county')">County</th>
+        <th>Phone</th><th>Email</th><th>Flags</th>
+        <th style="min-width:130px">Status</th>
+        <th style="min-width:160px">Comment</th>
+        <th>Called</th>
+      </tr></thead>
+      <tbody id="s-body"></tbody>
+    </table></div>
+  </div>
+  <div id="s-empty" style="text-align:center;padding:48px;color:var(--t3);font-size:13px">Enter a charity name or registration number, or use Advanced Search above.</div>
+</section>
+
+<!-- NEWLY REGISTERED -->
+<section id="tab-new" class="section">
+  <div class="ctrl">
+    <div class="ctrl-left"><h2>Newly Registered Charities</h2><p>Sort by clicking headers · Filter below · Download includes full contact details</p></div>
+    <div class="ctrl-right">
+      <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
+      <select id="new-days" onchange="loadNew()"><option value="30">Last 30 days</option><option value="60">Last 60 days</option><option value="90">Last 90 days</option></select>
+      <button class="btn btn-outline btn-sm" onclick="loadNew()">↺ Refresh</button>
+      <button class="btn btn-green btn-sm" id="new-dl-btn" style="display:none" onclick="dlNew()">↓ Download CSV</button>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Total Registered</div><div class="stat-value" id="new-count">—</div><div class="stat-sub" id="new-sub">Loading…</div></div>
+    <div class="stat"><div class="stat-label">With Website</div><div class="stat-value" id="new-web">—</div></div>
+    <div class="stat"><div class="stat-label">Most Recent</div><div class="stat-value" id="new-recent" style="font-size:13px;padding-top:3px">—</div></div>
+    <div class="stat"><div class="stat-label">Called by Muhanna</div><div class="stat-value" id="new-called" style="color:var(--green)">0</div></div>
+  </div>
+  <div id="new-msg"></div>
+  <div id="new-loading" class="loading"><div class="spinner"></div><div class="loading-txt">Fetching registration data…</div></div>
+  <div id="new-content" style="display:none">
+    <div class="filter-bar">
+      <span class="filter-label">🔍 Filter:</span>
+      <input type="text" id="nf-name" placeholder="Charity name…" oninput="applyNF()">
+      <input type="text" id="nf-reg" placeholder="Reg number…" oninput="applyNF()" style="width:90px">
+      <select id="nf-status" onchange="applyNF()"><option value="">All statuses</option><option>Call back</option><option>Contacted</option><option>Interested</option><option>Meeting secured</option><option>Client</option><option>Not interested</option></select>
+      <select id="nf-called" onchange="applyNF()"><option value="">All</option><option value="yes">Called</option><option value="no">Not called</option></select>
+      <span class="filter-clear" onclick="clearNF()">✕ Clear</span>
+    </div>
+    <div class="rmeta" id="new-rmeta"></div>
+    <div class="tbl-wrap tbl-scroll"><table>
+      <thead><tr>
+        <th onclick="sortN('reg_number')">Reg No.</th>
+        <th onclick="sortN('name')" style="min-width:200px">Charity Name</th>
+        <th onclick="sortN('date_registered')">Date Registered</th>
+        <th>Website</th><th>Stat.</th>
+        <th style="min-width:130px">Status</th>
+        <th style="min-width:160px">Comment</th>
+        <th>Called</th>
+      </tr></thead>
+      <tbody id="new-body"></tbody>
+    </table></div>
+    <div class="pag"><div class="pag-info" id="new-pag-info"></div><div class="pag-btns" id="new-pag-btns"></div></div>
+  </div>
+</section>
+
+<!-- LATE ACCOUNTS -->
+<section id="tab-late" class="section">
+  <div class="ctrl">
+    <div class="ctrl-left"><h2>Late Accounts</h2><p>Sort by clicking headers · Filter below · Download includes full contact details</p></div>
+    <div class="ctrl-right">
+      <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
+      <button class="btn btn-outline btn-sm" onclick="loadLate()">↺ Refresh</button>
+      <button class="btn btn-green btn-sm" id="late-dl-btn" style="display:none" onclick="dlLate()">↓ Download CSV</button>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Total Late</div><div class="stat-value" id="late-total">—</div></div>
+    <div class="stat"><div class="stat-label">Over 12 Months</div><div class="stat-value" id="late-12" style="color:var(--red)">—</div></div>
+    <div class="stat"><div class="stat-label">6–12 Months</div><div class="stat-value" id="late-612" style="color:var(--orange)">—</div></div>
+    <div class="stat"><div class="stat-label">Under 6 Months</div><div class="stat-value" id="late-u6" style="color:var(--gold)">—</div></div>
+    <div class="stat"><div class="stat-label">Called by Muhanna</div><div class="stat-value" id="late-called" style="color:var(--green)">0</div></div>
+  </div>
+  <div id="late-msg"></div>
+  <div id="late-loading" class="loading"><div class="spinner"></div><div class="loading-txt">Fetching late accounts…</div></div>
+  <div id="late-content" style="display:none">
+    <div class="filter-bar">
+      <span class="filter-label">🔍 Filter:</span>
+      <input type="text" id="lf-name" placeholder="Charity name…" oninput="applyLF()">
+      <input type="text" id="lf-reg" placeholder="Reg number…" oninput="applyLF()" style="width:90px">
+      <select id="lf-sev" onchange="applyLF()"><option value="">All severities</option><option value="Severe">Severe (12+ mo)</option><option value="Moderate">Moderate (6–12 mo)</option><option value="Recent">Recent (&lt;6 mo)</option></select>
+      <input type="number" id="lf-months" placeholder="Min months" oninput="applyLF()" style="width:90px">
+      <select id="lf-status" onchange="applyLF()"><option value="">All statuses</option><option>Call back</option><option>Contacted</option><option>Interested</option><option>Meeting secured</option><option>Client</option><option>Not interested</option></select>
+      <select id="lf-called" onchange="applyLF()"><option value="">All</option><option value="yes">Called</option><option value="no">Not called</option></select>
+      <span class="filter-clear" onclick="clearLF()">✕ Clear</span>
+    </div>
+    <div class="rmeta" id="late-rmeta"></div>
+    <div class="tbl-wrap tbl-scroll"><table>
+      <thead><tr>
+        <th onclick="sortL('reg_number')">Reg No.</th>
+        <th onclick="sortL('name')" style="min-width:200px">Charity Name</th>
+        <th onclick="sortL('due_date')">Due Date</th>
+        <th onclick="sortL('months_late')">Months Late</th>
+        <th onclick="sortL('latest_income')">Latest Income</th>
+        <th>Severity</th>
+        <th style="min-width:130px">Status</th>
+        <th style="min-width:160px">Comment</th>
+        <th>Called</th>
+      </tr></thead>
+      <tbody id="late-body"></tbody>
+    </table></div>
+    <div class="pag"><div class="pag-info" id="late-pag-info"></div><div class="pag-btns" id="late-pag-btns"></div></div>
+  </div>
+</section>
+
+<!-- 40+ YEARS -->
+<section id="tab-old" class="section">
+  <div class="ctrl">
+    <div class="ctrl-left"><h2>40+ Years Old · Zero Statutory Income</h2><p>Sort by clicking headers · Download includes full contact details</p></div>
+    <div class="ctrl-right">
+      <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
+      <button class="btn btn-outline btn-sm" onclick="loadOld()">↺ Refresh</button>
+      <button class="btn btn-green btn-sm" id="old-dl-btn" style="display:none" onclick="dlOld()">↓ Download CSV</button>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Total Charities</div><div class="stat-value" id="old-total">—</div></div>
+    <div class="stat"><div class="stat-label">With Income Data</div><div class="stat-value" id="old-with-inc">—</div></div>
+    <div class="stat"><div class="stat-label">Oldest Charity</div><div class="stat-value" id="old-oldest" style="font-size:12px;padding-top:4px">—</div></div>
+    <div class="stat"><div class="stat-label">Called by Muhanna</div><div class="stat-value" id="old-called" style="color:var(--green)">0</div></div>
+  </div>
+  <div id="old-msg"></div>
+  <div id="old-loading" class="loading"><div class="spinner"></div><div class="loading-txt">Loading established charities…</div></div>
+  <div id="old-content" style="display:none">
+    <div class="filter-bar">
+      <span class="filter-label">🔍 Filter:</span>
+      <input type="text" id="of-name" placeholder="Charity name…" oninput="applyOF()">
+      <input type="text" id="of-reg" placeholder="Reg number…" oninput="applyOF()" style="width:90px">
+      <input type="number" id="of-age" placeholder="Min age (yrs)" oninput="applyOF()" style="width:100px">
+      <input type="number" id="of-inc" placeholder="Min income £" oninput="applyOF()" style="width:100px">
+      <select id="of-status" onchange="applyOF()"><option value="">All statuses</option><option>Call back</option><option>Contacted</option><option>Interested</option><option>Meeting secured</option><option>Client</option><option>Not interested</option></select>
+      <select id="of-called" onchange="applyOF()"><option value="">All</option><option value="yes">Called</option><option value="no">Not called</option></select>
+      <span class="filter-clear" onclick="clearOF()">✕ Clear</span>
+    </div>
+    <div class="rmeta" id="old-rmeta"></div>
+    <div class="tbl-wrap tbl-scroll"><table>
+      <thead><tr>
+        <th onclick="sortO('reg_number')">Reg No.</th>
+        <th onclick="sortO('name')" style="min-width:190px">Charity Name</th>
+        <th onclick="sortO('date_registered')">Date Registered</th>
+        <th onclick="sortO('age_years')">Age (Yrs)</th>
+        <th onclick="sortO('total_income')">Latest Income</th>
+        <th onclick="sortO('fin_year')">Fin Year</th>
+        <th>Website</th>
+        <th style="min-width:130px">Status</th>
+        <th style="min-width:160px">Comment</th>
+        <th>Called</th>
+      </tr></thead>
+      <tbody id="old-body"></tbody>
+    </table></div>
+    <div class="pag"><div class="pag-info" id="old-pag-info"></div><div class="pag-btns" id="old-pag-btns"></div></div>
+  </div>
+</section>
+</main>
+
+<!-- Save search modal -->
+<div class="modal-bg" id="save-modal">
+  <div class="modal">
+    <h3>💾 Save This Search</h3>
+    <div class="modal-field"><label>Search name (max 80 chars)</label><input id="save-name" placeholder="e.g. London Mental Health Charities" maxlength="80"></div>
+    <div class="modal-btns">
+      <button class="btn btn-outline btn-sm" onclick="closeSave()">Cancel</button>
+      <button class="btn btn-green btn-sm" onclick="confirmSave()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const PER=50;
+let pAll={best:[],readiness:[],contract:[],retention:[]};
+let nAll=[],lAll=[],oAll=[],sAll=[];
+let pFil=[],nFil=[],lFil=[],oFil=[];
+let pPg=1,nPg=1,lPg=1,oPg=1;
+let pList='best';
+let called={};  // "page|reg" → true
+let statuses={}; // "page|reg" → status
+let comments={}; // "page|reg" → comment
+let pLoaded=false;
+let sMode='simple';
+let ss={}; // saved searches name→criteria
+let srt={p:{c:'',d:1},n:{c:'',d:1},l:{c:'months_late',d:-1},o:{c:'date_registered',d:1},s:{c:'',d:1}};
+
+document.getElementById('hdrDate').textContent=new Date().toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+
+// ── Nav ────────────────────────────────────────────────────────────────────────
+function switchTab(id,btn){
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  const tabs=['home','prospects','search','new','late','old'];
+  if(btn)btn.classList.add('active');
+  else document.querySelectorAll('.nav-btn')[tabs.indexOf(id)].classList.add('active');
+  document.getElementById('tab-'+id).classList.add('active');
+  if(id==='new'&&!nAll.length)loadNew();
+  if(id==='late'&&!lAll.length)loadLate();
+  if(id==='old'&&!oAll.length)loadOld();
+  if(id==='prospects'&&!pLoaded)loadProspects();
+  if(id==='search')loadSavedList();
+}
+function navTo(id){switchTab(id,null);window.scrollTo(0,0);}
+
+// ── Utils ──────────────────────────────────────────────────────────────────────
+function fmt(v){if(!v&&v!==0)return'—';v=parseFloat(v);if(isNaN(v)||v===0)return'—';if(v>=1e6)return'£'+(v/1e6).toFixed(1)+'m';if(v>=1e3)return'£'+Math.round(v/1e3)+'k';return'£'+v.toLocaleString();}
+function fmtP(v){return(!v&&v!==0)?'—':parseFloat(v).toFixed(1)+'%';}
+function trend(c,p){if(!c||!p)return'<span class="flat">—</span>';const d=((c-p)/p)*100;if(d>5)return`<span class="up">↑${Math.abs(Math.round(d))}%</span>`;if(d<-5)return`<span class="dn">↓${Math.abs(Math.round(d))}%</span>`;return'<span class="flat">↔</span>';}
+function sevStr(m){return m>12?'Severe':m>=6?'Moderate':'Recent';}
+function sevTag(m){const s=sevStr(m),c=m>12?'red':m>=6?'orange':'gold';return`<span class="tag tag-${c}">${s}</span>`;}
+function ltag(l){const m={'Best Immediate':'tag-green','Readiness Package':'tag-gold','Contract Growth':'tag-blue','Retention/Replacement':'tag-red'};return`<span class="tag ${m[l]||'tag-gray'}">${l}</span>`;}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function sa(a,col,dir,nest){
+  return[...a].sort((a,b)=>{
+    let av=nest?(a[nest]?.[col]??a[col]):a[col];
+    let bv=nest?(b[nest]?.[col]??b[col]):b[col];
+    if(av==null)av='';if(bv==null)bv='';
+    const an=parseFloat(av),bn=parseFloat(bv);
+    if(!isNaN(an)&&!isNaN(bn))return(an-bn)*dir;
+    return String(av).localeCompare(String(bv))*dir;
+  });
+}
+
+// ── Status helpers ─────────────────────────────────────────────────────────────
+const STATUS_OPTS=['','Call back','Contacted','Interested','Meeting secured','Client','Not interested'];
+function sCls(s){const m={'Client':'s-client','Interested':'s-interested','Meeting secured':'s-meeting','Contacted':'s-contacted','Call back':'s-callback','Not interested':'s-notinterested'};return m[s]||'';}
+function sSelect(pg,reg){
+  const k=pg+'|'+reg,cur=statuses[k]||'';
+  const opts=STATUS_OPTS.map(o=>`<option value="${esc(o)}"${o===cur?' selected':''}>${o||'— Set status —'}</option>`).join('');
+  return`<select class="ssel ${sCls(cur)}" id="ss-${pg}-${reg}" onchange="setStatus('${pg}','${esc(reg)}',this)">${opts}</select>`;
+}
+function setStatus(pg,reg,el){
+  const s=el.value,k=pg+'|'+reg;
+  statuses[k]=s;
+  el.className='ssel '+sCls(s);
+  if(s&&!called[k]){called[k]={pg,reg,ts:new Date().toLocaleString('en-GB')};refreshCalled();}
+  fetch('/api/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reg_number:reg,page:pg,status:s})});
+  const row=el.closest('tr');
+  if(row)row.classList.toggle('row-client',s==='Client');
+}
+
+// ── Called ─────────────────────────────────────────────────────────────────────
+function isCalled(pg,reg){return!!called[pg+'|'+reg];}
+function toggleCalled(pg,reg,name){
+  const k=pg+'|'+reg;
+  if(called[k])delete called[k]; else called[k]={pg,reg,name,ts:new Date().toLocaleString('en-GB')};
+  fetch('/api/mark_called',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reg_number:reg,page:pg,name})});
+  refreshCalled();
+  if(pFil.length)renderPT(pPg);
+  if(nFil.length)renderNT(nPg);
+  if(lFil.length)renderLT(lPg);
+  if(oFil.length)renderOT(oPg);
+}
+function cBtn(pg,reg,name){
+  const c=isCalled(pg,reg);
+  const others=['prospects','new','late','old','search'].filter(p=>p!==pg&&isCalled(p,reg));
+  const pgL={'prospects':'Prospects','new':'Newly Reg.','late':'Late Accts','old':'40+ Yrs','search':'Search'};
+  const note=(!c&&others.length)?`<span title="Called via: ${others.map(p=>pgL[p]).join(', ')}" style="font-size:9px;background:var(--purplel);color:var(--purple);border-radius:6px;padding:1px 5px;cursor:help">★</span>`:'';
+  return`<div style="display:flex;align-items:center;gap:3px"><button id="cb-${pg}-${reg}" class="cbtn${c?' called':''}" onclick="toggleCalled('${pg}','${esc(reg)}','${esc(name)}')">${c?'✓ Called':'Call'}</button>${note}</div>`;
+}
+function countC(pg){return Object.keys(called).filter(k=>k.startsWith(pg+'|')).length;}
+function refreshCalled(){
+  const m={prospects:'p-called',new:'new-called',late:'late-called',old:'old-called'};
+  Object.entries(m).forEach(([p,id])=>{const el=document.getElementById(id);if(el)el.textContent=countC(p);});
+}
+
+// ── Comments ───────────────────────────────────────────────────────────────────
+function cmBox(pg,reg){
+  const k=pg+'|'+reg,val=esc(comments[k]||'');
+  return`<div><textarea class="cm-input" id="cm-${pg}-${reg}" maxlength="400" placeholder="Add notes…" oninput="saveComment('${pg}','${esc(reg)}',this)">${val}</textarea><div class="cm-count" id="cc-${pg}-${reg}">${(comments[k]||'').length}/400</div></div>`;
+}
+function saveComment(pg,reg,el){
+  const k=pg+'|'+reg,txt=el.value.slice(0,400);
+  comments[k]=txt;
+  const cc=document.getElementById('cc-'+pg+'-'+reg);
+  if(cc)cc.textContent=txt.length+'/400';
+  clearTimeout(el._t);
+  el._t=setTimeout(()=>fetch('/api/comment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reg_number:reg,page:pg,comment:txt})}),600);
+}
+
+// ── Prospect criteria descriptions ────────────────────────────────────────────
+const CRITERIA={
+  all:'All 4 lists combined (deduplicated). All filter fields apply across the full dataset.',
+  best:'Income £250k–£3m · Statutory income £50k–£300k · Dependency 10–40%. Mid-sized charities ready to engage now — meaningful but not dominant government funding.',
+  readiness:'Income £150k–£1.5m · Statutory £10k–£100k. Early-stage statutory recipients who may be ready to grow their government income.',
+  contract:'Income £500k–£5m · Govt contracts £100k–£500k · Contracts under 35% of income. Growing contract income with capacity to take on more.',
+  retention:'Income £500k–£5m · Statutory over £200k · Dependency 40–70%. Highly dependent on government funding — retention or replacement offer is relevant.'
+};
+function getPD(){
+  if(pList==='all'){const seen={};const out=[];['best','readiness','contract','retention'].forEach(k=>pAll[k].forEach(c=>{if(!seen[c.reg_number]){seen[c.reg_number]=true;out.push(c);}}));return out;}
+  return pAll[pList]||[];
+}
+function getOL(reg){
+  const m={best:'Best',readiness:'Readiness',contract:'Contract',retention:'Retention'};
+  const cols={best:'tag-green',readiness:'tag-gold',contract:'tag-blue',retention:'tag-red'};
+  const cur=pList==='all'?null:pList;
+  return Object.entries(pAll).filter(([k,items])=>k!==cur&&items.some(c=>c.reg_number===reg)).map(([k])=>`<span class="tag ${cols[k]}" style="font-size:9px">${m[k]}</span>`).join(' ');
+}
+
+// ── PROSPECTS ──────────────────────────────────────────────────────────────────
+function loadProspects(){
+  document.getElementById('p-loading').style.display='flex';
+  document.getElementById('p-content').style.display='none';
+  document.getElementById('p-msg').innerHTML='';
+  fetch('/api/prospects').then(r=>r.json()).then(d=>{
+    if(d.error){document.getElementById('p-msg').innerHTML=`<div class="err-box">⚠ ${d.error}</div>`;document.getElementById('p-loading').style.display='none';return;}
+    pLoaded=true;
+    pAll={best:d.lists.best||[],readiness:d.lists.readiness||[],contract:d.lists.contract||[],retention:d.lists.retention||[]};
+    const cnt={p:d.total,best:d.counts.best||0,ready:d.counts.readiness||0,contract:d.counts.contract||0,retention:d.counts.retention||0};
+    document.getElementById('p-total').textContent=cnt.p;
+    document.getElementById('p-best').textContent=cnt.best;
+    document.getElementById('p-ready').textContent=cnt.ready;
+    document.getElementById('p-contract').textContent=cnt.contract;
+    document.getElementById('p-retention').textContent=cnt.retention;
+    document.getElementById('ptc-all').textContent=cnt.p;
+    document.getElementById('ptc-best').textContent=cnt.best;
+    document.getElementById('ptc-readiness').textContent=cnt.ready;
+    document.getElementById('ptc-contract').textContent=cnt.contract;
+    document.getElementById('ptc-retention').textContent=cnt.retention;
+    document.getElementById('home-prospect-count').textContent=cnt.p+' prospects';
+    document.getElementById('p-dl-btn').style.display='inline-flex';
+    document.getElementById('p-loading').style.display='none';
+    document.getElementById('p-content').style.display='block';
+    switchPList('best',document.querySelector('.ptab.active'));
+    refreshCalled();
+  }).catch(e=>{document.getElementById('p-msg').innerHTML=`<div class="err-box">⚠ ${e.message}</div>`;document.getElementById('p-loading').style.display='none';});
+}
+function switchPList(list,btn){
+  pList=list;pPg=1;
+  document.querySelectorAll('.ptab').forEach(t=>t.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  document.getElementById('p-criteria-text').textContent=' '+CRITERIA[list];
+  applyPF();
+}
+function applyPF(){
+  const n=(document.getElementById('pf-name').value||'').toLowerCase();
+  const r=(document.getElementById('pf-reg').value||'').toLowerCase();
+  const sf=document.getElementById('pf-status').value;
+  const cf=document.getElementById('pf-called').value;
+  const i1=parseFloat(document.getElementById('pf-inc-min').value)||0;
+  const i2=parseFloat(document.getElementById('pf-inc-max').value)||Infinity;
+  const p1=parseFloat(document.getElementById('pf-pct-min').value)||0;
+  const p2=parseFloat(document.getElementById('pf-pct-max').value)||Infinity;
+  let data=getPD();
+  if(n) data=data.filter(c=>(c.name||'').toLowerCase().includes(n));
+  if(r) data=data.filter(c=>String(c.reg_number||'').includes(r));
+  if(sf) data=data.filter(c=>(statuses['prospects|'+c.reg_number]||'')==sf);
+  if(cf==='yes') data=data.filter(c=>isCalled('prospects',c.reg_number));
+  if(cf==='no')  data=data.filter(c=>!isCalled('prospects',c.reg_number));
+  const f=c=>c.financials||{};
+  data=data.filter(c=>{const fi=f(c);return fi.total_income>=i1&&fi.total_income<=i2&&(fi.stat_pct||0)>=p1&&(fi.stat_pct||0)<=p2;});
+  if(srt.p.c) data=sa(data,srt.p.c,srt.p.d,'financials');
+  pFil=data;pPg=1;renderPT(1);
+}
+function clearPF(){['pf-name','pf-reg','pf-inc-min','pf-inc-max','pf-pct-min','pf-pct-max'].forEach(id=>document.getElementById(id).value='');document.getElementById('pf-called').value='';document.getElementById('pf-status').value='';applyPF();}
+function sortP(col){const s=srt.p;s.d=(s.c===col)?-s.d:1;s.c=col;applyPF();}
+function renderPT(pg){
+  pPg=pg;const s=(pg-1)*PER,e=s+PER,rows=pFil.slice(s,e);
+  const tot=getPD().length;
+  document.getElementById('p-rmeta').textContent=`Showing ${pFil.length} of ${tot} prospects${pFil.length<tot?' (filtered)':''}`;
+  document.getElementById('p-body').innerHTML=rows.map(c=>{
+    const f=c.financials||{};const pct=f.stat_pct||0;
+    const pc=pct>50?'var(--red)':pct>30?'var(--gold)':'var(--green)';
+    const stat=f.statutory||0;const prev=f.prev_statutory||0;
+    const flgs=(f.flags||[]).map(fl=>`<span class="tag tag-${fl.cls}">${fl.label}</span>`).join('');
+    const ol=getOL(c.reg_number);
+    const otherPgs=['new','late','old','search'].filter(p=>isCalled(p,c.reg_number));
+    const pgL={'new':'Newly Reg.','late':'Late Accts','old':'40+ Yrs','search':'Search'};
+    const cc=otherPgs.map(p=>`<span class="tag tag-purple" style="font-size:9px" title="Called in ${pgL[p]}">★ ${pgL[p]}</span>`).join(' ');
+    const ai=[ol,cc].filter(Boolean).join(' ');
+    const st=statuses['prospects|'+c.reg_number]||'';
+    return`<tr class="${st==='Client'?'row-client':''}">
+      <td class="mono">${c.reg_number}</td>
+      <td title="${esc(c.name)}">${esc((c.name||'').substring(0,28))}${(c.name||'').length>28?'…':''}</td>
+      <td class="mono">${fmt(f.total_income)}</td>
+      <td class="mono">${fmt(f.total_expenditure)}</td>
+      <td class="mono">${fmt(f.gov_grants)}</td>
+      <td class="mono">${fmt(f.gov_contracts)}</td>
+      <td class="mono">${fmt(stat)}</td>
+      <td class="mono" style="color:${pc};font-weight:600">${fmtP(pct)}</td>
+      <td class="mono">${fmt(prev)}</td>
+      <td>${trend(stat,prev)}</td>
+      <td class="mono">${f.fin_year||'—'}</td>
+      <td>${flgs}</td>
+      <td>${sSelect('prospects',c.reg_number)}</td>
+      <td>${cmBox('prospects',c.reg_number)}</td>
+      <td>${cBtn('prospects',c.reg_number,c.name||'')}</td>
+      <td style="white-space:normal">${ai||'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
+    </tr>`;
+  }).join('');
+  renderPag('p-pag-info','p-pag-btns',pg,pFil.length,renderPT);
+}
+
+// ── SEARCH ─────────────────────────────────────────────────────────────────────
+function setMode(m){
+  sMode=m;
+  document.getElementById('simple-bar').style.display=m==='simple'?'flex':'none';
+  document.getElementById('adv-bar').style.display=m==='advanced'?'block':'none';
+  document.getElementById('sm-simple').className='btn btn-sm '+(m==='simple'?'btn-green':'btn-outline');
+  document.getElementById('sm-adv').className='btn btn-sm '+(m==='advanced'?'btn-green':'btn-outline');
+}
+function doSimple(){
+  const q=document.getElementById('search-q').value.trim();if(!q)return;
+  showSL();
+  fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(data=>{sAll=data;renderSR(data);}).catch(e=>showSE(e.message));
+}
+function doAdv(){
+  const p=new URLSearchParams({name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),county:v('adv-county'),what:v('adv-what'),who:v('adv-who'),how:v('adv-how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to')});
+  showSL();
+  fetch('/api/advanced_search?'+p).then(r=>r.json()).then(d=>{sAll=d.charities||[];renderSR(sAll);}).catch(e=>showSE(e.message));
+}
+function v(id){const el=document.getElementById(id);return el?el.value:'';}
+function showSL(){document.getElementById('s-loading').style.display='flex';document.getElementById('s-results').style.display='none';document.getElementById('s-empty').style.display='none';document.getElementById('s-msg').innerHTML='';}
+function showSE(msg){document.getElementById('s-msg').innerHTML=`<div class="err-box">⚠ ${msg}</div>`;document.getElementById('s-loading').style.display='none';}
+function renderSR(data){
+  if(srt.s.c) data=sa(data,srt.s.c,srt.s.d,null);
+  document.getElementById('s-meta').textContent=data.length+' result'+(data.length!==1?'s':'')+' found';
+  document.getElementById('s-body').innerHTML=data.map(c=>{
+    const f=c.financials||{};const stat=f.statutory||0;const prev=f.prev_statutory||0;
+    const pct=f.stat_pct||0;const pc=pct>50?'var(--red)':pct>30?'var(--gold)':'var(--green)';
+    const flgs=(f.flags||[]).map(fl=>`<span class="tag tag-${fl.cls}">${fl.label}</span>`).join('');
+    const inc=f.total_income||c.latest_income||0;
+    const st=statuses['search|'+c.reg_number]||'';
+    return`<tr class="${st==='Client'?'row-client':''}">
+      <td class="mono">${c.reg_number}</td>
+      <td title="${esc(c.name)}">${esc((c.name||'').substring(0,24))}${(c.name||'').length>24?'…':''}</td>
+      <td><span class="tag tag-green">${c.status||'Active'}</span></td>
+      <td class="mono">${fmt(inc)}</td>
+      <td class="mono">${fmt(f.gov_grants)}</td>
+      <td class="mono">${fmt(f.gov_contracts)}</td>
+      <td class="mono" style="color:${pc}">${fmtP(pct)}</td>
+      <td>${trend(stat,prev)}</td>
+      <td>${(c.lists||[]).map(ltag).join(' ')||'<span class="tag tag-gray">—</span>'}</td>
+      <td>${esc(c.town||'')}</td>
+      <td>${esc(c.county||'')}</td>
+      <td class="mono" style="font-size:10px">${esc(c.phone||'')}</td>
+      <td class="mono" style="font-size:10px">${esc(c.email||'')}</td>
+      <td>${flgs}</td>
+      <td>${sSelect('search',c.reg_number)}</td>
+      <td>${cmBox('search',c.reg_number)}</td>
+      <td>${cBtn('search',c.reg_number,c.name||'')}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('s-loading').style.display='none';
+  document.getElementById('s-results').style.display='block';
+}
+function sortS(col){const s=srt.s;s.d=(s.c===col)?-s.d:1;s.c=col;renderSR(sAll);}
+function clearSearch(){document.getElementById('search-q').value='';document.getElementById('s-results').style.display='none';document.getElementById('s-empty').style.display='block';sAll=[];}
+function clearAdv(){['adv-name','adv-reg','adv-postcode','adv-county','adv-what','adv-who','adv-how','adv-inc-min','adv-inc-max','adv-date-from','adv-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('adv-status').value='registered';document.getElementById('adv-type').value='';}
+function dlSearch(){
+  if(!sAll.length)return;
+  const hdrs=["Reg No","Name","Status","Income","Gov Grants","Gov Contracts","Stat%","Town","County","Phone","Email","Website","Lists","Call Status","Comment","Called"];
+  const rows=sAll.map(c=>{const f=c.financials||{};return[c.reg_number,c.name,c.status,f.total_income||c.latest_income,f.gov_grants,f.gov_contracts,f.stat_pct,c.town,c.county,c.phone,c.email,c.website,(c.lists||[]).join('; '),statuses['search|'+c.reg_number]||'',comments['search|'+c.reg_number]||'',isCalled('search',c.reg_number)?'Yes':'No'];});
+  dlB(toCSV(rows,hdrs),'Charity_Search_'+today()+'.csv');
+}
+
+// ── Saved searches ─────────────────────────────────────────────────────────────
+function openSaveModal(){document.getElementById('save-modal').classList.add('open');document.getElementById('save-name').focus();}
+function closeSave(){document.getElementById('save-modal').classList.remove('open');}
+function confirmSave(){
+  const name=document.getElementById('save-name').value.trim();if(!name)return;
+  const criteria={name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),county:v('adv-county'),what:v('adv-what'),who:v('adv-who'),how:v('adv-how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to')};
+  ss[name]=criteria;
+  fetch('/api/saved_searches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,criteria})});
+  closeSave();document.getElementById('save-name').value='';loadSavedList();
+}
+function loadSavedList(){
+  fetch('/api/saved_searches').then(r=>r.json()).then(names=>{
+    const sel=document.getElementById('saved-sel');
+    sel.innerHTML='<option value="">— Select —</option>'+names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    document.getElementById('saved-bar').style.display=names.length?'flex':'none';
+  });
+}
+function loadSaved(){
+  const name=document.getElementById('saved-sel').value;if(!name)return;
+  fetch('/api/saved_searches/'+encodeURIComponent(name)).then(r=>r.json()).then(c=>{
+    setMode('advanced');
+    const fm={'adv-name':'name','adv-reg':'reg_number','adv-postcode':'postcode','adv-county':'county','adv-what':'what','adv-who':'who','adv-how':'how','adv-status':'reg_status','adv-type':'charity_type','adv-inc-min':'inc_min','adv-inc-max':'inc_max','adv-date-from':'reg_date_from','adv-date-to':'reg_date_to'};
+    Object.entries(fm).forEach(([id,key])=>{const el=document.getElementById(id);if(el&&c[key])el.value=c[key];});
+    doAdv();
+  });
+}
+function deleteSaved(){
+  const name=document.getElementById('saved-sel').value;if(!name)return;
+  if(!confirm('Delete "'+name+'"?'))return;
+  delete ss[name];fetch('/api/saved_searches/'+encodeURIComponent(name),{method:'DELETE'});loadSavedList();
+}
+
+// ── Newly Registered ───────────────────────────────────────────────────────────
+function loadNew(){
+  const days=v('new-days');
+  document.getElementById('new-loading').style.display='flex';
+  document.getElementById('new-content').style.display='none';
+  document.getElementById('new-msg').innerHTML='';
+  document.getElementById('new-dl-btn').style.display='none';
+  fetch('/api/new_charities?days='+days).then(r=>r.json()).then(d=>{
+    nAll=d.charities||[];
+    document.getElementById('new-count').textContent=d.count||0;
+    document.getElementById('new-sub').textContent='Last '+d.days+' days';
+    document.getElementById('new-web').textContent=nAll.filter(c=>c.website).length;
+    document.getElementById('new-recent').textContent=nAll[0]?nAll[0].date_registered:'—';
+    document.getElementById('home-new-count').textContent=(d.count||0)+' charities';
+    if(!d.count)document.getElementById('new-msg').innerHTML='<div class="info-box">ℹ️ No new charities found. Try 60 or 90 days.</div>';
+    applyNF();
+    document.getElementById('new-loading').style.display='none';
+    document.getElementById('new-content').style.display='block';
+    document.getElementById('new-dl-btn').style.display='inline-flex';
+    refreshCalled();
+  }).catch(e=>{document.getElementById('new-msg').innerHTML=`<div class="err-box">⚠ ${e.message}</div>`;document.getElementById('new-loading').style.display='none';});
+}
+function applyNF(){
+  const n=(v('nf-name')||'').toLowerCase(),r=(v('nf-reg')||'').toLowerCase();
+  const sf=v('nf-status'),cf=v('nf-called');
+  let data=nAll;
+  if(n) data=data.filter(c=>(c.name||'').toLowerCase().includes(n));
+  if(r) data=data.filter(c=>String(c.reg_number||'').includes(r));
+  if(sf) data=data.filter(c=>(statuses['new|'+c.reg_number]||'')==sf);
+  if(cf==='yes') data=data.filter(c=>isCalled('new',c.reg_number));
+  if(cf==='no')  data=data.filter(c=>!isCalled('new',c.reg_number));
+  if(srt.n.c) data=sa(data,srt.n.c,srt.n.d,null);
+  nFil=data;nPg=1;renderNT(1);
+}
+function clearNF(){['nf-name','nf-reg'].forEach(id=>document.getElementById(id).value='');document.getElementById('nf-called').value='';document.getElementById('nf-status').value='';applyNF();}
+function sortN(col){const s=srt.n;s.d=(s.c===col)?-s.d:1;s.c=col;applyNF();}
+function renderNT(pg){
+  nPg=pg;const s=(pg-1)*PER,e=s+PER;
+  document.getElementById('new-rmeta').textContent=`Showing ${nFil.length} of ${nAll.length} charities`;
+  document.getElementById('new-body').innerHTML=nFil.slice(s,e).map(c=>{
+    const web=c.website?`<a href="${esc(c.website)}" target="_blank" style="color:var(--green)">${c.website.substring(0,22)}… ↗</a>`:'—';
+    const st=statuses['new|'+c.reg_number]||'';
+    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.date_registered}</td><td>${web}</td><td><span class="tag tag-green">Active</span></td><td>${sSelect('new',c.reg_number)}</td><td>${cmBox('new',c.reg_number)}</td><td>${cBtn('new',c.reg_number,c.name||'')}</td></tr>`;
+  }).join('');
+  renderPag('new-pag-info','new-pag-btns',pg,nFil.length,renderNT);
+}
+function dlNew(){location.href='/download/new_charities?days='+v('new-days');}
+
+// ── Late Accounts ──────────────────────────────────────────────────────────────
+function loadLate(){
+  document.getElementById('late-loading').style.display='flex';
+  document.getElementById('late-content').style.display='none';
+  document.getElementById('late-msg').innerHTML='';
+  document.getElementById('late-dl-btn').style.display='none';
+  fetch('/api/late_accounts').then(r=>r.json()).then(d=>{
+    lAll=d.charities||[];
+    document.getElementById('late-total').textContent=d.count||0;
+    document.getElementById('late-12').textContent=d.over_12||0;
+    document.getElementById('late-612').textContent=d.bet_6_12||0;
+    document.getElementById('late-u6').textContent=d.under_6||0;
+    document.getElementById('home-late-count').textContent=(d.count||0)+' charities';
+    applyLF();
+    document.getElementById('late-loading').style.display='none';
+    document.getElementById('late-content').style.display='block';
+    document.getElementById('late-dl-btn').style.display='inline-flex';
+    refreshCalled();
+  }).catch(e=>{document.getElementById('late-msg').innerHTML=`<div class="err-box">⚠ ${e.message}</div>`;document.getElementById('late-loading').style.display='none';});
+}
+function applyLF(){
+  const n=(v('lf-name')||'').toLowerCase(),r=(v('lf-reg')||'').toLowerCase();
+  const sev=v('lf-sev'),mm=parseFloat(v('lf-months'))||0,sf=v('lf-status'),cf=v('lf-called');
+  let data=lAll;
+  if(n) data=data.filter(c=>(c.name||'').toLowerCase().includes(n));
+  if(r) data=data.filter(c=>String(c.reg_number||'').includes(r));
+  if(sev) data=data.filter(c=>sevStr(c.months_late)===sev);
+  if(mm)  data=data.filter(c=>c.months_late>=mm);
+  if(sf)  data=data.filter(c=>(statuses['late|'+c.reg_number]||'')==sf);
+  if(cf==='yes') data=data.filter(c=>isCalled('late',c.reg_number));
+  if(cf==='no')  data=data.filter(c=>!isCalled('late',c.reg_number));
+  if(srt.l.c) data=sa(data,srt.l.c,srt.l.d,null);
+  lFil=data;lPg=1;renderLT(1);
+}
+function clearLF(){['lf-name','lf-reg','lf-months'].forEach(id=>document.getElementById(id).value='');document.getElementById('lf-sev').value='';document.getElementById('lf-called').value='';document.getElementById('lf-status').value='';applyLF();}
+function sortL(col){const s=srt.l;s.d=(s.c===col)?-s.d:1;s.c=col;applyLF();}
+function renderLT(pg){
+  lPg=pg;const s=(pg-1)*PER,e=s+PER;
+  document.getElementById('late-rmeta').textContent=`Showing ${lFil.length} of ${lAll.length} charities`;
+  document.getElementById('late-body').innerHTML=lFil.slice(s,e).map(c=>{
+    const st=statuses['late|'+c.reg_number]||'';
+    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td><td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td></tr>`;
+  }).join('');
+  renderPag('late-pag-info','late-pag-btns',pg,lFil.length,renderLT);
+}
+function dlLate(){location.href='/download/late_accounts';}
+
+// ── Old Charities ──────────────────────────────────────────────────────────────
+function loadOld(){
+  document.getElementById('old-loading').style.display='flex';
+  document.getElementById('old-content').style.display='none';
+  document.getElementById('old-msg').innerHTML='';
+  document.getElementById('old-dl-btn').style.display='none';
+  fetch('/api/old_charities').then(r=>r.json()).then(d=>{
+    oAll=d.charities||[];
+    document.getElementById('old-total').textContent=d.count||0;
+    document.getElementById('old-with-inc').textContent=oAll.filter(c=>c.total_income>0).length;
+    const oldest=oAll[0];
+    document.getElementById('old-oldest').textContent=oldest?(oldest.date_registered+' ('+oldest.age_years+'yrs)'):'—';
+    document.getElementById('home-old-count').textContent=(d.count||0)+' charities';
+    applyOF();
+    document.getElementById('old-loading').style.display='none';
+    document.getElementById('old-content').style.display='block';
+    document.getElementById('old-dl-btn').style.display='inline-flex';
+    refreshCalled();
+  }).catch(e=>{document.getElementById('old-msg').innerHTML=`<div class="err-box">⚠ ${e.message}</div>`;document.getElementById('old-loading').style.display='none';});
+}
+function applyOF(){
+  const n=(v('of-name')||'').toLowerCase(),r=(v('of-reg')||'').toLowerCase();
+  const am=parseFloat(v('of-age'))||0,im=parseFloat(v('of-inc'))||0;
+  const sf=v('of-status'),cf=v('of-called');
+  let data=oAll;
+  if(n)  data=data.filter(c=>(c.name||'').toLowerCase().includes(n));
+  if(r)  data=data.filter(c=>String(c.reg_number||'').includes(r));
+  if(am) data=data.filter(c=>c.age_years>=am);
+  if(im) data=data.filter(c=>c.total_income>=im);
+  if(sf) data=data.filter(c=>(statuses['old|'+c.reg_number]||'')==sf);
+  if(cf==='yes') data=data.filter(c=>isCalled('old',c.reg_number));
+  if(cf==='no')  data=data.filter(c=>!isCalled('old',c.reg_number));
+  if(srt.o.c) data=sa(data,srt.o.c,srt.o.d,null);
+  oFil=data;oPg=1;renderOT(1);
+}
+function clearOF(){['of-name','of-reg','of-age','of-inc'].forEach(id=>document.getElementById(id).value='');document.getElementById('of-called').value='';document.getElementById('of-status').value='';applyOF();}
+function sortO(col){const s=srt.o;s.d=(s.c===col)?-s.d:1;s.c=col;applyOF();}
+function renderOT(pg){
+  oPg=pg;const s=(pg-1)*PER,e=s+PER;
+  document.getElementById('old-rmeta').textContent=`Showing ${oFil.length} of ${oAll.length} charities`;
+  document.getElementById('old-body').innerHTML=oFil.slice(s,e).map(c=>{
+    const web=c.website?`<a href="${esc(c.website)}" target="_blank" style="color:var(--green)">${c.website.substring(0,22)}… ↗</a>`:'—';
+    const st=statuses['old|'+c.reg_number]||'';
+    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td><td class="mono">${c.date_registered}</td><td class="mono" style="font-weight:600">${c.age_years}</td><td class="mono">${fmt(c.total_income)}</td><td class="mono">${c.fin_year||'—'}</td><td>${web}</td><td>${sSelect('old',c.reg_number)}</td><td>${cmBox('old',c.reg_number)}</td><td>${cBtn('old',c.reg_number,c.name||'')}</td></tr>`;
+  }).join('');
+  renderPag('old-pag-info','old-pag-btns',pg,oFil.length,renderOT);
+}
+function dlOld(){location.href='/download/old_charities';}
+
+// ── Pagination ─────────────────────────────────────────────────────────────────
+function renderPag(ii,bi,pg,tot,cb){
+  const tp=Math.ceil(tot/PER)||1,s=(pg-1)*PER;
+  document.getElementById(ii).textContent=tot===0?'No results':`Showing ${s+1}–${Math.min(s+PER,tot)} of ${tot}`;
+  const el=document.getElementById(bi);el.innerHTML='';
+  if(pg>1){const b=document.createElement('button');b.className='pag-btn';b.textContent='‹';b.onclick=()=>cb(pg-1);el.appendChild(b);}
+  const st=Math.max(1,pg-3),en=Math.min(tp,pg+3);
+  if(st>1){const b=document.createElement('button');b.className='pag-btn';b.textContent='1';b.onclick=()=>cb(1);el.appendChild(b);if(st>2){const sp=document.createElement('span');sp.textContent='…';sp.style.cssText='padding:0 4px;font-size:11px;color:var(--t3);align-self:center';el.appendChild(sp);}}
+  for(let i=st;i<=en;i++){const b=document.createElement('button');b.className='pag-btn'+(i===pg?' active':'');b.textContent=i;b.onclick=(i=>()=>cb(i))(i);el.appendChild(b);}
+  if(en<tp){if(en<tp-1){const sp=document.createElement('span');sp.textContent='…';sp.style.cssText='padding:0 4px;font-size:11px;color:var(--t3);align-self:center';el.appendChild(sp);}const b=document.createElement('button');b.className='pag-btn';b.textContent=tp;b.onclick=()=>cb(tp);el.appendChild(b);}
+  if(pg<tp){const b=document.createElement('button');b.className='pag-btn';b.textContent='›';b.onclick=()=>cb(pg+1);el.appendChild(b);}
+}
+
+// ── CSV helpers ────────────────────────────────────────────────────────────────
+function toCSV(rows,hdrs){const e=v=>{const s=String(v==null?'':v);return(s.includes(',')||s.includes('"')||s.includes('\n'))?'"'+s.replace(/"/g,'""')+'"':s;};return[hdrs.join(','),...rows.map(r=>r.map(e).join(','))].join('\n');}
+function dlB(c,f){const b=new Blob([c],{type:'text/csv'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=f;a.click();URL.revokeObjectURL(u);}
+function today(){return new Date().toISOString().substring(0,10).replace(/-/g,'');}
+
+document.getElementById('save-modal').addEventListener('click',function(e){if(e.target===this)closeSave();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSave();});
+</script>
+</body>
+</html>
