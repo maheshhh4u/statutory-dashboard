@@ -11,6 +11,7 @@ CHARITY_URL= f"{BULK_BASE}/publicextract.charity.zip"
 
 _cache={}; _called_log={}; _comments={}; _statuses={}; _saved_searches={}
 _bg_status={}; _bg_lock=threading.Lock()
+_users=["Muhanna"]  # admin-managed caller list
 
 def cache_get(key,max_age=180):
     if key in _cache:
@@ -446,6 +447,137 @@ def dl_old():
 
 @app.route("/api/debug")
 def debug(): return jsonify({"status":dict(_bg_status),"cache":list(_cache.keys())})
+
+# ── Users / Callers API ────────────────────────────────────────────────────────
+@app.route("/api/users", methods=["GET"])
+def get_users():
+    return jsonify(_users)
+
+@app.route("/api/users", methods=["POST"])
+def add_user():
+    data = request.json or {}
+    name = str(data.get("name","")).strip()
+    if not name or len(name) > 60:
+        return jsonify({"ok":False,"error":"Invalid name"}), 400
+    if name not in _users:
+        _users.append(name)
+    return jsonify({"ok":True,"users":_users})
+
+@app.route("/api/users/<name>", methods=["DELETE"])
+def delete_user(name):
+    if name in _users and name != "Muhanna":
+        _users.remove(name)
+    return jsonify({"ok":True,"users":_users})
+
+# ── Called log now stores caller name ─────────────────────────────────────────
+@app.route("/api/mark_called_by", methods=["POST"])
+def mark_called_by():
+    """Mark called with a specific caller name."""
+    data      = request.json or {}
+    reg       = str(data.get("reg_number","")).strip()
+    page      = str(data.get("page","")).strip()
+    name      = str(data.get("name","")).strip()       # charity name
+    caller    = str(data.get("caller","Muhanna")).strip()  # who is calling
+    if not reg or not page:
+        return jsonify({"ok":False}), 400
+    key = f"{page}|{reg}"
+    if key in _called_log and data.get("toggle", True):
+        del _called_log[key]
+        return jsonify({"ok":True,"marked":False})
+    _called_log[key] = {
+        "reg_number": reg, "name": name, "page": page,
+        "called_by": caller,
+        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    }
+    return jsonify({"ok":True,"marked":True,"caller":caller})
+
+# ── Milestone charities (approaching age anniversary with zero statutory) ──────
+def compute_milestones(milestone_years):
+    """Find charities that will reach milestone_years in the next 12 months."""
+    today      = datetime.utcnow().date()
+    # Target: charities whose registration anniversary = milestone_years
+    # i.e. registered between (today - milestone_years - 1yr) and (today - milestone_years)
+    cutoff_hi = today.replace(year=today.year - milestone_years)
+    cutoff_lo = today.replace(year=today.year - milestone_years - 1)
+
+    PC={"registered_charity_number","income_from_government_grants",
+        "income_from_government_contracts","total_gross_income","fin_period_end_date"}
+    CC={"registered_charity_number","charity_name","date_of_registration",
+        "charity_registration_status","charity_contact_web"}
+
+    # Get parta latest per charity
+    pl = {}
+    for row in stream_zip_csv(PARTA_URL, PC):
+        reg = row.get("registered_charity_number","").strip()
+        if not reg: continue
+        yr = row.get("fin_period_end_date","")[:10]
+        if reg not in pl or yr > pl[reg].get("fin_period_end_date",""): pl[reg] = row
+
+    results = []
+    for row in stream_zip_csv(CHARITY_URL, CC):
+        if row.get("charity_registration_status","").upper().strip() not in ("REGISTERED","R"): continue
+        dt = row.get("date_of_registration","")[:10]
+        if not dt or len(dt) < 10: continue
+        try:
+            reg_date = datetime.strptime(dt, "%Y-%m-%d").date()
+        except: continue
+        # Check if registration date falls in the milestone window
+        if not (cutoff_lo < reg_date <= cutoff_hi): continue
+        reg = row.get("registered_charity_number","").strip()
+        if not reg: continue
+        fin = pl.get(reg,{})
+        gg  = float(fin.get("income_from_government_grants","") or 0)
+        gc  = float(fin.get("income_from_government_contracts","") or 0)
+        if gg + gc > 0: continue  # skip if has statutory income
+        ti  = float(fin.get("total_gross_income","") or 0)
+        # Calculate exact anniversary date
+        try:
+            anniversary = reg_date.replace(year=reg_date.year + milestone_years)
+        except ValueError:
+            anniversary = reg_date.replace(year=reg_date.year + milestone_years, day=28)
+        months_to_go = round((anniversary - today).days / 30.4, 1)
+        web = row.get("charity_contact_web","")
+        results.append({
+            "reg_number":   reg,
+            "name":         row.get("charity_name","") or reg,
+            "website":      web if web not in ("nan","None") else "",
+            "date_registered": dt,
+            "age_years":    today.year - reg_date.year,
+            "milestone":    milestone_years,
+            "anniversary_date": str(anniversary),
+            "months_to_anniversary": months_to_go,
+            "total_income": ti,
+            "fin_year":     fin.get("fin_period_end_date","")[:4],
+        })
+    results.sort(key=lambda x: x.get("anniversary_date",""))
+    return {"charities": results, "count": len(results),
+            "milestone": milestone_years, "generated": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}
+
+@app.route("/api/milestones")
+def api_milestones():
+    years = int(request.args.get("years","40"))
+    key   = f"milestones_{years}"
+    r = bg_check(key, {"charities":[],"count":0,"milestone":years})
+    if r: return r
+    bg_run(key, lambda: compute_milestones(years))
+    return jsonify({"status":"loading","message":f"Loading {years}-year milestone charities…",
+                    "charities":[],"count":0,"milestone":years}), 202
+
+@app.route("/download/milestones")
+def dl_milestones():
+    years = int(request.args.get("years","40"))
+    cached = cache_get(f"milestones_{years}")
+    if not cached: return "Load milestones tab first.", 400
+    hdrs = ["Charity Number","Charity Name","Website","Date Registered","Current Age (Yrs)",
+            f"Milestone ({years} yrs)","Anniversary Date","Months Until Anniversary",
+            "Latest Income","Fin Year"] + CONTACT_HDRS
+    rows = []
+    for c in cached["charities"]:
+        rows.append([c["reg_number"],c["name"],c["website"],c["date_registered"],
+                     c["age_years"],f"{years} years",c["anniversary_date"],
+                     c["months_to_anniversary"],c["total_income"],c["fin_year"]]
+                    + contact_row(c["reg_number"],"milestones"))
+    return csv_response(rows, hdrs, f"Milestones_{years}yr_{datetime.utcnow().strftime('%Y%m%d')}.csv")
 
 if __name__=="__main__":
     port=int(os.environ.get("PORT",5000))

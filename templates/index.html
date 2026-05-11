@@ -147,7 +147,14 @@ select:focus{outline:none;border-color:var(--green)}
 <body>
 <header class="hdr">
   <div class="hdr-brand"><div class="hdr-logo">SP</div><div><div class="hdr-title">Statutory Prospecting Dashboard</div><div class="hdr-sub">Charity Commission for England &amp; Wales · Live Data</div></div></div>
-  <div style="font-size:11px;color:rgba(255,255,255,.4)" id="hdrDate"></div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <div style="display:flex;align-items:center;gap:7px">
+      <span style="font-size:11px;color:rgba(255,255,255,.5)">Calling as:</span>
+      <span id="caller-display" onclick="openCallerPopup()" style="font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.1);color:#fff;cursor:pointer;min-width:100px;text-align:center">— Select —</span>
+    </div>
+    <button onclick="openAdmin()" style="font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);cursor:pointer">⚙ Admin</button>
+    <div style="font-size:11px;color:rgba(255,255,255,.4)" id="hdrDate"></div>
+  </div>
 </header>
 <nav class="nav">
   <button class="nav-btn active" onclick="switchTab('home',this)">🏠 Home</button>
@@ -156,8 +163,14 @@ select:focus{outline:none;border-color:var(--green)}
   <button class="nav-btn" onclick="switchTab('new',this)">🆕 Newly Registered</button>
   <button class="nav-btn" onclick="switchTab('late',this)">⏰ Late Accounts</button>
   <button class="nav-btn" onclick="switchTab('old',this)">🏛️ 40+ Yrs · Zero Statutory</button>
+  <button class="nav-btn" onclick="switchTab('milestones',this)">🎂 Anniversary Watch</button>
 </nav>
 <main class="main">
+<!-- Caller warning banner -->
+<div id="caller-warning" style="display:none;background:var(--goldl);border:1px solid #d4b040;border-radius:var(--radius);padding:10px 16px;margin-bottom:14px;align-items:center;gap:10px;font-size:12px;color:var(--gold)">
+  <span style="font-size:18px">⚠️</span>
+  <span><strong>Please select your name</strong> from the "Calling as:" dropdown in the header before marking calls.</span>
+</div>
 
 <!-- HOME -->
 <section id="tab-home" class="section active">
@@ -233,6 +246,7 @@ select:focus{outline:none;border-color:var(--green)}
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
         <th>Called</th>
+        <th style="width:80px">Caller</th>
         <th style="min-width:130px">Also In / Elsewhere</th>
       </tr></thead>
       <tbody id="p-body"></tbody>
@@ -304,6 +318,7 @@ select:focus{outline:none;border-color:var(--green)}
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
         <th>Called</th>
+        <th style="width:80px">Caller</th>
       </tr></thead>
       <tbody id="s-body"></tbody>
     </table></div>
@@ -349,6 +364,7 @@ select:focus{outline:none;border-color:var(--green)}
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
         <th>Called</th>
+        <th style="width:80px">Caller</th>
       </tr></thead>
       <tbody id="new-body"></tbody>
     </table></div>
@@ -398,6 +414,7 @@ select:focus{outline:none;border-color:var(--green)}
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
         <th>Called</th>
+        <th style="width:80px">Caller</th>
       </tr></thead>
       <tbody id="late-body"></tbody>
     </table></div>
@@ -447,12 +464,85 @@ select:focus{outline:none;border-color:var(--green)}
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
         <th>Called</th>
+        <th style="width:80px">Caller</th>
       </tr></thead>
       <tbody id="old-body"></tbody>
     </table></div>
     <div class="pag"><div class="pag-info" id="old-pag-info"></div><div class="pag-btns" id="old-pag-btns"></div></div>
   </div>
 </section>
+<!-- MILESTONES TAB -->
+<section id="tab-milestones" class="section">
+  <div class="ctrl">
+    <div class="ctrl-left"><h2>🎂 Anniversary Watch</h2><p>Charities approaching a milestone anniversary with zero statutory income — ideal prospect timing</p></div>
+    <div class="ctrl-right">
+      <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
+      <select id="milestone-years" onchange="loadMilestones()" style="font-size:12px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius)">
+        <option value="5">Turning 5 years old</option>
+        <option value="10">Turning 10 years old</option>
+        <option value="15">Turning 15 years old</option>
+        <option value="20">Turning 20 years old</option>
+        <option value="25">Turning 25 years old</option>
+        <option value="30">Turning 30 years old</option>
+        <option value="35">Turning 35 years old</option>
+        <option value="40" selected>Turning 40 years old</option>
+        <option value="45">Turning 45 years old</option>
+        <option value="50">Turning 50 years old</option>
+      </select>
+      <button class="btn btn-outline btn-sm" onclick="loadMilestones()">↺ Refresh</button>
+      <button class="btn btn-green btn-sm" id="ms-dl-btn" style="display:none" onclick="dlMilestones()">↓ Download CSV</button>
+    </div>
+  </div>
+  <div class="info-box" style="margin-bottom:12px">
+    ℹ️ Showing charities reaching their selected milestone anniversary <strong>within the next 12 months</strong> with <strong>zero government grants or contracts</strong> — these organisations are entering a new chapter and may be receptive to statutory funding support for the first time.
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Total Found</div><div class="stat-value" id="ms-total">—</div><div class="stat-sub" id="ms-sub">Select milestone above</div></div>
+    <div class="stat"><div class="stat-label">Due This Month</div><div class="stat-value" id="ms-thismonth" style="color:var(--green)">—</div></div>
+    <div class="stat"><div class="stat-label">Due in 3 Months</div><div class="stat-value" id="ms-3mo">—</div></div>
+    <div class="stat"><div class="stat-label">With Income Data</div><div class="stat-value" id="ms-withinc">—</div></div>
+    <div class="stat"><div class="stat-label">Called by Muhanna</div><div class="stat-value" id="ms-called" style="color:var(--green)">0</div></div>
+  </div>
+  <div id="ms-msg"></div>
+  <div id="ms-loading" class="loading"><div class="spinner"></div><div class="loading-txt">Loading milestone charities…</div></div>
+  <div id="ms-content" style="display:none">
+    <div class="filter-bar">
+      <span class="filter-label">🔍 Filter:</span>
+      <input type="text" id="mf-name" placeholder="Charity name…" oninput="applyMF()">
+      <input type="text" id="mf-reg" placeholder="Reg number…" oninput="applyMF()" style="width:90px">
+      <select id="mf-timing" onchange="applyMF()">
+        <option value="">All timings</option>
+        <option value="1">Due within 1 month</option>
+        <option value="3">Due within 3 months</option>
+        <option value="6">Due within 6 months</option>
+        <option value="12">Due within 12 months</option>
+      </select>
+      <select id="mf-status" onchange="applyMF()"><option value="">All statuses</option><option>Call back</option><option>Contacted</option><option>Interested</option><option>Meeting secured</option><option>Client</option><option>Not interested</option></select>
+      <select id="mf-called" onchange="applyMF()"><option value="">All</option><option value="yes">Called</option><option value="no">Not called</option></select>
+      <span class="filter-clear" onclick="clearMF()">✕ Clear</span>
+    </div>
+    <div class="rmeta" id="ms-rmeta"></div>
+    <div class="tbl-wrap tbl-scroll"><table>
+      <thead><tr>
+        <th onclick="sortMs('reg_number')">Reg No.</th>
+        <th onclick="sortMs('name')" style="min-width:190px">Charity Name</th>
+        <th onclick="sortMs('date_registered')">Date Registered</th>
+        <th onclick="sortMs('age_years')">Current Age</th>
+        <th onclick="sortMs('anniversary_date')">Anniversary Date</th>
+        <th onclick="sortMs('months_to_anniversary')">Months Away</th>
+        <th onclick="sortMs('total_income')">Latest Income</th>
+        <th>Website</th>
+        <th style="min-width:130px">Status</th>
+        <th style="min-width:160px">Comment</th>
+        <th>Called</th>
+        <th>Caller</th>
+      </tr></thead>
+      <tbody id="ms-body"></tbody>
+    </table></div>
+    <div class="pag"><div class="pag-info" id="ms-pag-info"></div><div class="pag-btns" id="ms-pag-btns"></div></div>
+  </div>
+</section>
+
 </main>
 
 <!-- Save search modal -->
@@ -464,6 +554,55 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-outline btn-sm" onclick="closeSave()">Cancel</button>
       <button class="btn btn-green btn-sm" onclick="confirmSave()">Save</button>
     </div>
+  </div>
+</div>
+
+<!-- Caller pop-up modal (shown on first open) -->
+<div class="modal-bg" id="caller-modal">
+  <div class="modal" style="max-width:400px">
+    <h3>👤 Who is calling today?</h3>
+    <p style="font-size:12px;color:var(--t2);margin-bottom:16px">Select your name to track which calls you make. This will appear in the "Caller" column across all pages.</p>
+    <div id="caller-popup-list" style="margin-bottom:16px;display:flex;flex-direction:column;gap:8px"></div>
+    <div style="display:flex;align-items:center;gap:8px;padding:10px;background:var(--s2);border-radius:var(--radius);margin-bottom:14px">
+      <input type="checkbox" id="remember-caller" style="width:16px;height:16px;cursor:pointer">
+      <label for="remember-caller" style="font-size:12px;color:var(--t2);cursor:pointer">Remember my selection on this browser (until I clear it or an admin resets it)</label>
+    </div>
+    <div class="modal-btns"><button class="btn btn-outline btn-sm" onclick="closeCallerPopup()">Cancel</button></div>
+  </div>
+</div>
+
+<!-- Admin modal -->
+<div class="modal-bg" id="admin-modal">
+  <div class="modal" style="max-width:500px">
+    <h3>⚙ Admin — Settings</h3>
+    <p style="font-size:12px;color:var(--t2);margin-bottom:14px">Manage callers and browser session settings.</p>
+
+    <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Caller Names</div>
+    <div id="admin-user-list" style="margin-bottom:12px"></div>
+    <div style="display:flex;gap:7px;margin-bottom:16px">
+      <input id="admin-new-user" placeholder="Add new caller name…" maxlength="60" style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px" onkeydown="if(event.key==='Enter')addUser()">
+      <button class="btn btn-green btn-sm" onclick="addUser()">+ Add</button>
+    </div>
+
+    <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Browser Session Settings</div>
+    <div style="background:var(--s2);border-radius:var(--radius);padding:12px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div>
+          <div style="font-size:12px;font-weight:600">Currently logged in as</div>
+          <div id="admin-current-caller" style="font-size:13px;color:var(--green);font-weight:700;margin-top:2px">—</div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="openCallerPopup();closeAdmin()">Change</button>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-size:12px;font-weight:600">Remember selection in browser</div>
+          <div id="admin-remember-status" style="font-size:11px;color:var(--t3);margin-top:2px">—</div>
+        </div>
+        <button class="btn btn-outline btn-sm" id="admin-clear-remember-btn" onclick="clearRemembered()">Clear remembered name</button>
+      </div>
+    </div>
+
+    <div class="modal-btns"><button class="btn btn-green btn-sm" onclick="closeAdmin()">Done</button></div>
   </div>
 </div>
 
@@ -488,13 +627,14 @@ document.getElementById('hdrDate').textContent=new Date().toLocaleDateString('en
 function switchTab(id,btn){
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
-  const tabs=['home','prospects','search','new','late','old'];
+  const tabs=['home','prospects','search','new','late','old','milestones'];
   if(btn)btn.classList.add('active');
   else document.querySelectorAll('.nav-btn')[tabs.indexOf(id)].classList.add('active');
   document.getElementById('tab-'+id).classList.add('active');
   if(id==='new'&&!nAll.length)loadNew();
   if(id==='late'&&!lAll.length)loadLate();
   if(id==='old'&&!oAll.length)loadOld();
+  if(id==='milestones'&&!msAll.length)loadMilestones();
   if(id==='prospects'&&!pLoaded)loadProspects();
   if(id==='search')loadSavedList();
 }
@@ -558,7 +698,7 @@ function cBtn(pg,reg,name){
 }
 function countC(pg){return Object.keys(called).filter(k=>k.startsWith(pg+'|')).length;}
 function refreshCalled(){
-  const m={prospects:'p-called',new:'new-called',late:'late-called',old:'old-called'};
+  const m={prospects:'p-called',new:'new-called',late:'late-called',old:'old-called',milestones:'ms-called'};
   Object.entries(m).forEach(([p,id])=>{const el=document.getElementById(id);if(el)el.textContent=countC(p);});
 }
 
@@ -683,6 +823,7 @@ function renderPT(pg){
       <td>${sSelect('prospects',c.reg_number)}</td>
       <td>${cmBox('prospects',c.reg_number)}</td>
       <td>${cBtn('prospects',c.reg_number,c.name||'')}</td>
+      <td>${callerCol('prospects',c.reg_number)}</td>
       <td style="white-space:normal">${ai||'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
     </tr>`;
   }).join('');
@@ -737,6 +878,7 @@ function renderSR(data){
       <td>${sSelect('search',c.reg_number)}</td>
       <td>${cmBox('search',c.reg_number)}</td>
       <td>${cBtn('search',c.reg_number,c.name||'')}</td>
+      <td>${callerCol('search',c.reg_number)}</td>
     </tr>`;
   }).join('');
   document.getElementById('s-loading').style.display='none';
@@ -826,7 +968,7 @@ function renderNT(pg){
   document.getElementById('new-body').innerHTML=nFil.slice(s,e).map(c=>{
     const web=c.website?`<a href="${esc(c.website)}" target="_blank" style="color:var(--green)">${c.website.substring(0,22)}… ↗</a>`:'—';
     const st=statuses['new|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.date_registered}</td><td>${web}</td><td><span class="tag tag-green">Active</span></td><td>${sSelect('new',c.reg_number)}</td><td>${cmBox('new',c.reg_number)}</td><td>${cBtn('new',c.reg_number,c.name||'')}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.date_registered}</td><td>${web}</td><td><span class="tag tag-green">Active</span></td><td>${sSelect('new',c.reg_number)}</td><td>${cmBox('new',c.reg_number)}</td><td>${cBtn('new',c.reg_number,c.name||'')}</td><td>${callerCol('new',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('new-pag-info','new-pag-btns',pg,nFil.length,renderNT);
 }
@@ -873,7 +1015,7 @@ function renderLT(pg){
   document.getElementById('late-rmeta').textContent=`Showing ${lFil.length} of ${lAll.length} charities`;
   document.getElementById('late-body').innerHTML=lFil.slice(s,e).map(c=>{
     const st=statuses['late|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td><td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td><td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td><td>${callerCol('late',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('late-pag-info','late-pag-btns',pg,lFil.length,renderLT);
 }
@@ -922,7 +1064,7 @@ function renderOT(pg){
   document.getElementById('old-body').innerHTML=oFil.slice(s,e).map(c=>{
     const web=c.website?`<a href="${esc(c.website)}" target="_blank" style="color:var(--green)">${c.website.substring(0,22)}… ↗</a>`:'—';
     const st=statuses['old|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td><td class="mono">${c.date_registered}</td><td class="mono" style="font-weight:600">${c.age_years}</td><td class="mono">${fmt(c.total_income)}</td><td class="mono">${c.fin_year||'—'}</td><td>${web}</td><td>${sSelect('old',c.reg_number)}</td><td>${cmBox('old',c.reg_number)}</td><td>${cBtn('old',c.reg_number,c.name||'')}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td><td class="mono">${c.date_registered}</td><td class="mono" style="font-weight:600">${c.age_years}</td><td class="mono">${fmt(c.total_income)}</td><td class="mono">${c.fin_year||'—'}</td><td>${web}</td><td>${sSelect('old',c.reg_number)}</td><td>${cmBox('old',c.reg_number)}</td><td>${cBtn('old',c.reg_number,c.name||'')}</td><td>${callerCol('old',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('old-pag-info','old-pag-btns',pg,oFil.length,renderOT);
 }
@@ -947,34 +1089,286 @@ function dlB(c,f){const b=new Blob([c],{type:'text/csv'});const u=URL.createObje
 function today(){return new Date().toISOString().substring(0,10).replace(/-/g,'');}
 
 document.getElementById('save-modal').addEventListener('click',function(e){if(e.target===this)closeSave();});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSave();});
+document.getElementById('admin-modal').addEventListener('click',function(e){if(e.target===this)closeAdmin();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeSave();closeAdmin();}});
 
-// ── Polling fetch — handles 202 "still loading" responses ─────────────────────
-function fetchWithPolling(url, onSuccess, onError, attempt){
-  attempt = attempt || 1;
+// ── Polling fetch ─────────────────────────────────────────────────────────────
+function fetchWithPolling(url,onSuccess,onError,attempt){
+  attempt=attempt||1;
   fetch(url).then(function(r){
-    if(r.status === 202){
-      // Server is still loading in background — poll again after delay
+    if(r.status===202){
       r.json().then(function(d){
-        const msg = d.message || 'Loading charity data from Charity Commission…';
-        const dots = '.'.repeat((attempt%4)+1);
-        // Update any loading text on the page
-        document.querySelectorAll('.loading-txt').forEach(function(el){
-          if(el.style.display!=='none' || el.offsetParent!==null)
-            el.textContent = msg + dots;
-        });
+        const msg=d.message||'Loading…';
+        const dots='.'.repeat((attempt%4)+1);
+        document.querySelectorAll('.loading-txt').forEach(function(el){el.textContent=msg+dots;});
       }).catch(function(){});
-      const delay = Math.min(3000 + attempt * 500, 8000); // 3-8 sec between polls
-      setTimeout(function(){ fetchWithPolling(url, onSuccess, onError, attempt+1); }, delay);
+      const delay=Math.min(3000+attempt*500,8000);
+      setTimeout(function(){fetchWithPolling(url,onSuccess,onError,attempt+1);},delay);
       return;
     }
-    if(!r.ok){ throw new Error('Server error: ' + r.status); }
+    if(!r.ok){throw new Error('Server error: '+r.status);}
     return r.json().then(onSuccess);
-  }).catch(function(e){
-    if(onError) onError(e);
-    else console.error('fetchWithPolling error:', e);
+  }).catch(function(e){if(onError)onError(e);else console.error('fetchWithPolling error:',e);});
+}
+
+// ── Caller / User management ──────────────────────────────────────────────────
+const LS_CALLER  = 'sp_caller_name';
+const LS_REMEMBER= 'sp_caller_remember';
+let currentCaller = '';
+let userList = [];
+
+function initCaller(){
+  const remember = localStorage.getItem(LS_REMEMBER) === 'true';
+  const saved    = remember ? localStorage.getItem(LS_CALLER) : null;
+  if(saved){
+    currentCaller = saved;
+    updateCallerDisplay();
+    document.getElementById('caller-warning').style.display='none';
+  } else {
+    // Show pop-up after short delay so page renders first
+    setTimeout(openCallerPopup, 600);
+  }
+}
+
+function updateCallerDisplay(){
+  const el=document.getElementById('caller-display');
+  if(el) el.textContent = currentCaller || '— Select —';
+  const adminEl=document.getElementById('admin-current-caller');
+  if(adminEl) adminEl.textContent = currentCaller || 'Not selected';
+  const remStatus=document.getElementById('admin-remember-status');
+  const isRem=localStorage.getItem(LS_REMEMBER)==='true';
+  if(remStatus) remStatus.textContent = isRem
+    ? '✓ Remembered in this browser — will not ask again'
+    : 'Not remembered — will ask on next visit';
+  const clearBtn=document.getElementById('admin-clear-remember-btn');
+  if(clearBtn) clearBtn.style.opacity=isRem?'1':'0.4';
+}
+
+function openCallerPopup(){
+  const modal=document.getElementById('caller-modal');
+  if(!modal)return;
+  // Build user buttons
+  const list=document.getElementById('caller-popup-list');
+  list.innerHTML=userList.map(u=>`
+    <button onclick="selectCallerFromPopup('${esc(u)}')" style="width:100%;padding:11px 16px;background:${u===currentCaller?'var(--gl)':'var(--s2)'};border:1px solid ${u===currentCaller?'var(--green)':'var(--border)'};border-radius:var(--radius);font-family:inherit;font-size:13px;font-weight:${u===currentCaller?'700':'500'};color:${u===currentCaller?'var(--green)':'var(--text)'};cursor:pointer;text-align:left;transition:all .15s">
+      ${u===currentCaller?'✓ ':''}${esc(u)}
+    </button>`).join('');
+  // Set remember checkbox to current state
+  const cb=document.getElementById('remember-caller');
+  if(cb) cb.checked = localStorage.getItem(LS_REMEMBER)==='true';
+  modal.classList.add('open');
+}
+
+function selectCallerFromPopup(name){
+  currentCaller=name;
+  const remember=document.getElementById('remember-caller')?.checked;
+  if(remember){
+    localStorage.setItem(LS_REMEMBER,'true');
+    localStorage.setItem(LS_CALLER,name);
+  } else {
+    localStorage.removeItem(LS_REMEMBER);
+    localStorage.removeItem(LS_CALLER);
+  }
+  document.getElementById('caller-warning').style.display='none';
+  updateCallerDisplay();
+  document.getElementById('caller-modal').classList.remove('open');
+  // Re-render all visible tables to update caller buttons
+  if(pFil.length)renderPT(pPg);
+  if(nFil.length)renderNT(nPg);
+  if(lFil.length)renderLT(lPg);
+  if(oFil.length)renderOT(oPg);
+  if(msFil.length)renderMsT(msPg);
+}
+
+function closeCallerPopup(){
+  document.getElementById('caller-modal').classList.remove('open');
+  // If still no caller, show warning
+  if(!currentCaller){
+    document.getElementById('caller-warning').style.display='flex';
+  }
+}
+
+function clearRemembered(){
+  localStorage.removeItem(LS_REMEMBER);
+  localStorage.removeItem(LS_CALLER);
+  updateCallerDisplay();
+  alert('Remembered name cleared. You will be asked to select your name on the next visit.');
+}
+
+function loadUsers(){
+  fetch('/api/users').then(r=>r.json()).then(users=>{
+    userList=users;
+    renderAdminUserList();
+    // Re-render caller popup list if open
+    if(document.getElementById('caller-modal').classList.contains('open')){
+      openCallerPopup();
+    }
+    initCaller();
   });
 }
+
+function openAdmin(){
+  document.getElementById('admin-modal').classList.add('open');
+  renderAdminUserList();
+  updateCallerDisplay();
+}
+function closeAdmin(){document.getElementById('admin-modal').classList.remove('open');}
+
+function renderAdminUserList(){
+  const el=document.getElementById('admin-user-list');
+  if(!el)return;
+  el.innerHTML=userList.map(u=>`
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--s2);border-radius:6px;margin-bottom:5px;border:1px solid ${u===currentCaller?'var(--green)':'transparent'}">
+      <div>
+        <span style="font-size:13px;font-weight:500">${esc(u)}</span>
+        ${u===currentCaller?'<span style="font-size:10px;color:var(--green);margin-left:6px">● Currently selected</span>':''}
+      </div>
+      ${u==='Muhanna'?'<span style="font-size:10px;color:var(--t3)">Default</span>':
+      `<button onclick="removeUser('${esc(u)}')" style="font-size:11px;color:var(--red);background:none;border:1px solid var(--redl);border-radius:5px;cursor:pointer;padding:3px 8px">✕ Remove</button>`}
+    </div>`).join('');
+}
+
+function addUser(){
+  const name=document.getElementById('admin-new-user').value.trim();
+  if(!name)return;
+  fetch('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name})}).then(r=>r.json()).then(d=>{
+    if(d.ok){userList=d.users;document.getElementById('admin-new-user').value='';renderAdminUserList();}
+  });
+}
+function removeUser(name){
+  if(!confirm(`Remove "${name}" from the caller list?`))return;
+  if(name===currentCaller){
+    currentCaller='';
+    localStorage.removeItem(LS_CALLER);
+    localStorage.removeItem(LS_REMEMBER);
+    updateCallerDisplay();
+  }
+  fetch(`/api/users/${encodeURIComponent(name)}`,{method:'DELETE'})
+    .then(r=>r.json()).then(d=>{if(d.ok){userList=d.users;renderAdminUserList();}});
+}
+
+// ── Called tracking with caller name ─────────────────────────────────────────
+function toggleCalled(pg,reg,name){
+  if(!currentCaller){
+    openCallerPopup();
+    return;
+  }
+  const k=pg+'|'+reg;
+  if(called[k]) delete called[k];
+  else called[k]={pg,reg,name,caller:currentCaller,ts:new Date().toLocaleString('en-GB')};
+  fetch('/api/mark_called_by',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({reg_number:reg,page:pg,name,caller:currentCaller})});
+  refreshCalled();
+  if(pFil.length)renderPT(pPg);
+  if(nFil.length)renderNT(nPg);
+  if(lFil.length)renderLT(lPg);
+  if(oFil.length)renderOT(oPg);
+  if(msFil.length)renderMsT(msPg);
+}
+
+function cBtn(pg,reg,name){
+  const c=isCalled(pg,reg);
+  const others=['prospects','new','late','old','search','milestones'].filter(p=>p!==pg&&isCalled(p,reg));
+  const pgL={'prospects':'Prospects','new':'Newly Reg.','late':'Late Accts','old':'40+ Yrs','search':'Search','milestones':'Milestones'};
+  const note=(!c&&others.length)?`<span title="Called via: ${others.map(p=>pgL[p]).join(', ')}" style="font-size:9px;background:var(--purplel);color:var(--purple);border-radius:6px;padding:1px 5px;cursor:help">★</span>`:'';
+  return`<div style="display:flex;align-items:center;gap:3px"><button id="cb-${pg}-${reg}" class="cbtn${c?' called':''}" onclick="toggleCalled('${pg}','${esc(reg)}','${esc(name)}')">${c?'✓ Called':'Call'}</button>${note}</div>`;
+}
+
+function callerCol(pg,reg){
+  const k=pg+'|'+reg;const c=called[k];
+  if(!c)return'<span style="color:var(--t3);font-size:10px">—</span>';
+  const isMe=c.caller===currentCaller;
+  return`<span class="tag ${isMe?'tag-green':'tag-blue'}" style="font-size:10px" title="${esc(c.ts||'')}">${esc(c.caller||'Muhanna')}</span>`;
+}
+
+// ── Milestones ────────────────────────────────────────────────────────────────
+let msAll=[],msFil=[],msPg=1;
+let srtMs={c:'months_to_anniversary',d:1};
+
+function loadMilestones(){
+  const years=document.getElementById('milestone-years').value;
+  document.getElementById('ms-loading').style.display='flex';
+  document.getElementById('ms-content').style.display='none';
+  document.getElementById('ms-msg').innerHTML='';
+  document.getElementById('ms-dl-btn').style.display='none';
+  fetchWithPolling('/api/milestones?years='+years,function(d){
+    msAll=d.charities||[];
+    document.getElementById('ms-total').textContent=d.count||0;
+    document.getElementById('ms-sub').textContent=`Turning ${years} years old`;
+    const thismo=msAll.filter(c=>c.months_to_anniversary<=1).length;
+    const threeM=msAll.filter(c=>c.months_to_anniversary<=3).length;
+    const withInc=msAll.filter(c=>c.total_income>0).length;
+    document.getElementById('ms-thismonth').textContent=thismo;
+    document.getElementById('ms-3mo').textContent=threeM;
+    document.getElementById('ms-withinc').textContent=withInc;
+    applyMF();
+    document.getElementById('ms-loading').style.display='none';
+    document.getElementById('ms-content').style.display='block';
+    document.getElementById('ms-dl-btn').style.display='inline-flex';
+    refreshCalled();
+  },function(e){
+    document.getElementById('ms-msg').innerHTML=`<div class="err-box">⚠ ${e.message}</div>`;
+    document.getElementById('ms-loading').style.display='none';
+  });
+}
+function applyMF(){
+  const n=(v('mf-name')||'').toLowerCase(),r=(v('mf-reg')||'').toLowerCase();
+  const timing=parseFloat(v('mf-timing'))||0;
+  const sf=v('mf-status'),cf=v('mf-called');
+  let data=msAll;
+  if(n) data=data.filter(c=>(c.name||'').toLowerCase().includes(n));
+  if(r) data=data.filter(c=>String(c.reg_number||'').includes(r));
+  if(timing) data=data.filter(c=>c.months_to_anniversary<=timing);
+  if(sf) data=data.filter(c=>(statuses['milestones|'+c.reg_number]||'')==sf);
+  if(cf==='yes') data=data.filter(c=>isCalled('milestones',c.reg_number));
+  if(cf==='no')  data=data.filter(c=>!isCalled('milestones',c.reg_number));
+  if(srtMs.c) data=sa(data,srtMs.c,srtMs.d,null);
+  msFil=data;msPg=1;renderMsT(1);
+}
+function clearMF(){['mf-name','mf-reg'].forEach(id=>document.getElementById(id).value='');document.getElementById('mf-timing').value='';document.getElementById('mf-status').value='';document.getElementById('mf-called').value='';applyMF();}
+function sortMs(col){srtMs.d=(srtMs.c===col)?-srtMs.d:1;srtMs.c=col;applyMF();}
+function renderMsT(pg){
+  msPg=pg;const s=(pg-1)*PER,e=s+PER;
+  document.getElementById('ms-rmeta').textContent=`Showing ${msFil.length} of ${msAll.length} charities`;
+  const years=document.getElementById('milestone-years').value;
+  document.getElementById('ms-body').innerHTML=msFil.slice(s,e).map(c=>{
+    const web=c.website?`<a href="${esc(c.website)}" target="_blank" style="color:var(--green)">${c.website.substring(0,20)}… ↗</a>`:'—';
+    const mo=c.months_to_anniversary;
+    const urgency=mo<=1?'var(--green)':mo<=3?'var(--gold)':'var(--text)';
+    const st=statuses['milestones|'+c.reg_number]||'';
+    return`<tr class="${st==='Client'?'row-client':''}">
+      <td class="mono">${c.reg_number}</td>
+      <td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td>
+      <td class="mono">${c.date_registered}</td>
+      <td class="mono">${c.age_years} yrs</td>
+      <td class="mono" style="color:${urgency};font-weight:600">${c.anniversary_date}</td>
+      <td class="mono" style="color:${urgency};font-weight:600">${mo} mo</td>
+      <td class="mono">${fmt(c.total_income)}</td>
+      <td>${web}</td>
+      <td>${sSelect('milestones',c.reg_number)}</td>
+      <td>${cmBox('milestones',c.reg_number)}</td>
+      <td>${cBtn('milestones',c.reg_number,c.name||'')}</td>
+      <td>${callerCol('milestones',c.reg_number)}</td>
+    </tr>`;
+  }).join('');
+  renderPag('ms-pag-info','ms-pag-btns',pg,msFil.length,renderMsT);
+  refreshCalled();
+}
+function dlMilestones(){location.href='/download/milestones?years='+document.getElementById('milestone-years').value;}
+
+// ── Add Caller column to all existing render functions ────────────────────────
+// Patch renderPT to include caller column
+const _origRenderPT=renderPT;
+// We'll add callerCol inline in the table rows instead
+
+// ── Initialise ────────────────────────────────────────────────────────────────
+// Add caller-modal to escape/click-outside handlers
+document.getElementById('caller-modal').addEventListener('click',function(e){
+  if(e.target===this)closeCallerPopup();
+});
+// Load users first — initCaller() is called inside loadUsers() after users arrive
+loadUsers();
 </script>
 </body>
 </html>
