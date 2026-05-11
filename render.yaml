@@ -1,11 +1,9 @@
 services:
   - type: web
-    name: statutory-prospecting-dashboard
+    name: statutory-dashboard
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 300 --graceful-timeout 300
     envVars:
-      - key: CC_API_KEY
-        value: 80c5abfc86864f8d9330288c3521bb78
       - key: PYTHON_VERSION
         value: 3.11.0

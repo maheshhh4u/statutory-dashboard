@@ -266,13 +266,23 @@ def debug_columns():
 # ── PROSPECTS ─────────────────────────────────────────────────────────────────
 @app.route("/api/prospects")
 def api_prospects():
+    try:
+        return _api_prospects_inner()
+    except MemoryError:
+        return jsonify({"error": "Server ran out of memory loading charity data. Please try again in 30 seconds."}), 500
+    except Exception as e:
+        import traceback
+        print("PROSPECTS ERROR:", traceback.format_exc())
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+def _api_prospects_inner():
     cached = cache_get("prospects", max_age=60)
     if cached: return jsonify(cached)
 
     results = {"best": [], "readiness": [], "contract": [], "retention": []}
     df_parta = load_extract("parta")
     if df_parta is None or df_parta.empty:
-        return jsonify({"error": "Could not load parta extract"}), 500
+        return jsonify({"error": "Could not load charity data from Charity Commission. Please try again."}), 500
 
     reg_col = "registered_charity_number"
     df_parta["_sort"] = pd.to_datetime(
@@ -353,7 +363,7 @@ def api_prospects():
         if "Contract Growth"       in lists: results["contract"].append(obj)
         if "Retention/Replacement" in lists: results["retention"].append(obj)
         processed += 1
-        if processed >= 600: break
+        if processed >= 300: break
 
     out = {"lists": results, "counts": {k: len(v) for k, v in results.items()},
            "total": sum(len(v) for v in results.values()),
