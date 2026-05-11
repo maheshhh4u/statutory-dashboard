@@ -176,7 +176,7 @@ select:focus{outline:none;border-color:var(--green)}
 <section id="tab-home" class="section active">
   <div class="home-hero">
     <h1>Statutory Prospecting Dashboard</h1>
-    <p>Live charity data from the Charity Commission · Caller: <strong>Muhanna</strong></p>
+    <p>Live charity data from the Charity Commission · Calling as: <strong id="home-caller-name">— not selected —</strong></p>
     <div class="home-grid">
       <div class="home-card" onclick="navTo('prospects')"><div class="home-card-icon">📋</div><div class="home-card-title">Statutory Prospect Lists</div><div class="home-card-desc">Rules-based screening across 4 lists. Full pagination, sorting and filters on all rows.</div><span class="home-card-count" id="home-prospect-count">Click to load</span></div>
       <div class="home-card" onclick="navTo('search')"><div class="home-card-icon">🔍</div><div class="home-card-title">Charity Search</div><div class="home-card-desc">Simple or Advanced Search matching all Charity Commission criteria. Save searches for one-click retrieval.</div><span class="home-card-count" style="background:var(--bluel);color:var(--blue)">Simple + Advanced</span></div>
@@ -203,7 +203,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="stat"><div class="stat-label">Readiness Package</div><div class="stat-value" id="p-ready">—</div></div>
     <div class="stat"><div class="stat-label">Contract Growth</div><div class="stat-value" id="p-contract">—</div></div>
     <div class="stat"><div class="stat-label">Retention/Replace</div><div class="stat-value" id="p-retention">—</div></div>
-    <div class="stat"><div class="stat-label">Called by Muhanna</div><div class="stat-value" id="p-called" style="color:var(--green)">0</div></div>
+    <div class="stat"><div class="stat-label">Called (this session)</div><div class="stat-value" id="p-called" style="color:var(--green)">0</div></div>
   </div>
   <div id="p-msg"></div>
   <div id="p-loading" class="loading"><div class="spinner"></div><div class="loading-txt">Loading from Charity Commission…</div></div>
@@ -341,7 +341,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="stat"><div class="stat-label">Total Registered</div><div class="stat-value" id="new-count">—</div><div class="stat-sub" id="new-sub">Loading…</div></div>
     <div class="stat"><div class="stat-label">With Website</div><div class="stat-value" id="new-web">—</div></div>
     <div class="stat"><div class="stat-label">Most Recent</div><div class="stat-value" id="new-recent" style="font-size:13px;padding-top:3px">—</div></div>
-    <div class="stat"><div class="stat-label">Called by Muhanna</div><div class="stat-value" id="new-called" style="color:var(--green)">0</div></div>
+    <div class="stat"><div class="stat-label">Called (this session)</div><div class="stat-value" id="new-called" style="color:var(--green)">0</div></div>
   </div>
   <div id="new-msg"></div>
   <div id="new-loading" class="loading"><div class="spinner"></div><div class="loading-txt">Fetching registration data…</div></div>
@@ -387,7 +387,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="stat"><div class="stat-label">Over 12 Months</div><div class="stat-value" id="late-12" style="color:var(--red)">—</div></div>
     <div class="stat"><div class="stat-label">6–12 Months</div><div class="stat-value" id="late-612" style="color:var(--orange)">—</div></div>
     <div class="stat"><div class="stat-label">Under 6 Months</div><div class="stat-value" id="late-u6" style="color:var(--gold)">—</div></div>
-    <div class="stat"><div class="stat-label">Called by Muhanna</div><div class="stat-value" id="late-called" style="color:var(--green)">0</div></div>
+    <div class="stat"><div class="stat-label">Called (this session)</div><div class="stat-value" id="late-called" style="color:var(--green)">0</div></div>
   </div>
   <div id="late-msg"></div>
   <div id="late-loading" class="loading"><div class="spinner"></div><div class="loading-txt">Fetching late accounts…</div></div>
@@ -436,7 +436,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="stat"><div class="stat-label">Total Charities</div><div class="stat-value" id="old-total">—</div></div>
     <div class="stat"><div class="stat-label">With Income Data</div><div class="stat-value" id="old-with-inc">—</div></div>
     <div class="stat"><div class="stat-label">Oldest Charity</div><div class="stat-value" id="old-oldest" style="font-size:12px;padding-top:4px">—</div></div>
-    <div class="stat"><div class="stat-label">Called by Muhanna</div><div class="stat-value" id="old-called" style="color:var(--green)">0</div></div>
+    <div class="stat"><div class="stat-label">Called (this session)</div><div class="stat-value" id="old-called" style="color:var(--green)">0</div></div>
   </div>
   <div id="old-msg"></div>
   <div id="old-loading" class="loading"><div class="spinner"></div><div class="loading-txt">Loading established charities…</div></div>
@@ -501,7 +501,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="stat"><div class="stat-label">Due This Month</div><div class="stat-value" id="ms-thismonth" style="color:var(--green)">—</div></div>
     <div class="stat"><div class="stat-label">Due in 3 Months</div><div class="stat-value" id="ms-3mo">—</div></div>
     <div class="stat"><div class="stat-label">With Income Data</div><div class="stat-value" id="ms-withinc">—</div></div>
-    <div class="stat"><div class="stat-label">Called by Muhanna</div><div class="stat-value" id="ms-called" style="color:var(--green)">0</div></div>
+    <div class="stat"><div class="stat-label">Called (this session)</div><div class="stat-value" id="ms-called" style="color:var(--green)">0</div></div>
   </div>
   <div id="ms-msg"></div>
   <div id="ms-loading" class="loading"><div class="spinner"></div><div class="loading-txt">Loading milestone charities…</div></div>
@@ -562,7 +562,13 @@ select:focus{outline:none;border-color:var(--green)}
   <div class="modal" style="max-width:400px">
     <h3>👤 Who is calling today?</h3>
     <p style="font-size:12px;color:var(--t2);margin-bottom:16px">Select your name to track which calls you make. This will appear in the "Caller" column across all pages.</p>
-    <div id="caller-popup-list" style="margin-bottom:16px;display:flex;flex-direction:column;gap:8px"></div>
+    <div style="margin-bottom:16px">
+      <label style="display:block;font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase;margin-bottom:6px">Select your name</label>
+      <select id="caller-popup-select" style="width:100%;font-family:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);cursor:pointer">
+        <option value="">— Select your name —</option>
+      </select>
+    </div>
+    <button class="btn btn-green" style="width:100%;justify-content:center;margin-bottom:14px" onclick="confirmCallerSelection()">Confirm</button>
     <div style="display:flex;align-items:center;gap:8px;padding:10px;background:var(--s2);border-radius:var(--radius);margin-bottom:14px">
       <input type="checkbox" id="remember-caller" style="width:16px;height:16px;cursor:pointer">
       <label for="remember-caller" style="font-size:12px;color:var(--t2);cursor:pointer">Remember my selection on this browser (until I clear it or an admin resets it)</label>
@@ -1133,6 +1139,8 @@ function initCaller(){
 function updateCallerDisplay(){
   const el=document.getElementById('caller-display');
   if(el) el.textContent = currentCaller || '— Select —';
+  const homeEl=document.getElementById('home-caller-name');
+  if(homeEl) homeEl.textContent = currentCaller || '— not selected —';
   const adminEl=document.getElementById('admin-current-caller');
   if(adminEl) adminEl.textContent = currentCaller || 'Not selected';
   const remStatus=document.getElementById('admin-remember-status');
@@ -1147,16 +1155,23 @@ function updateCallerDisplay(){
 function openCallerPopup(){
   const modal=document.getElementById('caller-modal');
   if(!modal)return;
-  // Build user buttons
-  const list=document.getElementById('caller-popup-list');
-  list.innerHTML=userList.map(u=>`
-    <button onclick="selectCallerFromPopup('${esc(u)}')" style="width:100%;padding:11px 16px;background:${u===currentCaller?'var(--gl)':'var(--s2)'};border:1px solid ${u===currentCaller?'var(--green)':'var(--border)'};border-radius:var(--radius);font-family:inherit;font-size:13px;font-weight:${u===currentCaller?'700':'500'};color:${u===currentCaller?'var(--green)':'var(--text)'};cursor:pointer;text-align:left;transition:all .15s">
-      ${u===currentCaller?'✓ ':''}${esc(u)}
-    </button>`).join('');
+  // Populate dropdown
+  const sel=document.getElementById('caller-popup-select');
+  if(sel){
+    sel.innerHTML='<option value="">— Select your name —</option>'+
+      userList.map(u=>`<option value="${esc(u)}"${u===currentCaller?' selected':''}>${esc(u)}</option>`).join('');
+  }
   // Set remember checkbox to current state
   const cb=document.getElementById('remember-caller');
   if(cb) cb.checked = localStorage.getItem(LS_REMEMBER)==='true';
   modal.classList.add('open');
+}
+
+function confirmCallerSelection(){
+  const sel=document.getElementById('caller-popup-select');
+  const name=sel?sel.value:'';
+  if(!name){alert('Please select your name from the list.');return;}
+  selectCallerFromPopup(name);
 }
 
 function selectCallerFromPopup(name){
@@ -1279,7 +1294,7 @@ function callerCol(pg,reg){
   const k=pg+'|'+reg;const c=called[k];
   if(!c)return'<span style="color:var(--t3);font-size:10px">—</span>';
   const isMe=c.caller===currentCaller;
-  return`<span class="tag ${isMe?'tag-green':'tag-blue'}" style="font-size:10px" title="${esc(c.ts||'')}">${esc(c.caller||'Muhanna')}</span>`;
+  return`<span class="tag ${isMe?'tag-green':'tag-blue'}" style="font-size:10px" title="${esc(c.ts||'')}">${esc(c.caller||'Unknown')}</span>`;
 }
 
 // ── Milestones ────────────────────────────────────────────────────────────────
