@@ -600,7 +600,7 @@ function loadProspects(){
   document.getElementById('p-loading').style.display='flex';
   document.getElementById('p-content').style.display='none';
   document.getElementById('p-msg').innerHTML='';
-  fetch('/api/prospects').then(r=>r.json()).then(d=>{
+  fetchWithPolling('/api/prospects', function(d){
     if(d.error){document.getElementById('p-msg').innerHTML=`<div class="err-box">⚠ ${d.error}</div>`;document.getElementById('p-loading').style.display='none';return;}
     pLoaded=true;
     pAll={best:d.lists.best||[],readiness:d.lists.readiness||[],contract:d.lists.contract||[],retention:d.lists.retention||[]};
@@ -791,7 +791,7 @@ function loadNew(){
   document.getElementById('new-content').style.display='none';
   document.getElementById('new-msg').innerHTML='';
   document.getElementById('new-dl-btn').style.display='none';
-  fetch('/api/new_charities?days='+days).then(r=>r.json()).then(d=>{
+  fetchWithPolling('/api/new_charities?days='+days, function(d){
     nAll=d.charities||[];
     document.getElementById('new-count').textContent=d.count||0;
     document.getElementById('new-sub').textContent='Last '+d.days+' days';
@@ -838,7 +838,7 @@ function loadLate(){
   document.getElementById('late-content').style.display='none';
   document.getElementById('late-msg').innerHTML='';
   document.getElementById('late-dl-btn').style.display='none';
-  fetch('/api/late_accounts').then(r=>r.json()).then(d=>{
+  fetchWithPolling('/api/late_accounts', function(d){
     lAll=d.charities||[];
     document.getElementById('late-total').textContent=d.count||0;
     document.getElementById('late-12').textContent=d.over_12||0;
@@ -885,7 +885,7 @@ function loadOld(){
   document.getElementById('old-content').style.display='none';
   document.getElementById('old-msg').innerHTML='';
   document.getElementById('old-dl-btn').style.display='none';
-  fetch('/api/old_charities').then(r=>r.json()).then(d=>{
+  fetchWithPolling('/api/old_charities', function(d){
     oAll=d.charities||[];
     document.getElementById('old-total').textContent=d.count||0;
     document.getElementById('old-with-inc').textContent=oAll.filter(c=>c.total_income>0).length;
@@ -948,6 +948,33 @@ function today(){return new Date().toISOString().substring(0,10).replace(/-/g,''
 
 document.getElementById('save-modal').addEventListener('click',function(e){if(e.target===this)closeSave();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSave();});
+
+// ── Polling fetch — handles 202 "still loading" responses ─────────────────────
+function fetchWithPolling(url, onSuccess, onError, attempt){
+  attempt = attempt || 1;
+  fetch(url).then(function(r){
+    if(r.status === 202){
+      // Server is still loading in background — poll again after delay
+      r.json().then(function(d){
+        const msg = d.message || 'Loading charity data from Charity Commission…';
+        const dots = '.'.repeat((attempt%4)+1);
+        // Update any loading text on the page
+        document.querySelectorAll('.loading-txt').forEach(function(el){
+          if(el.style.display!=='none' || el.offsetParent!==null)
+            el.textContent = msg + dots;
+        });
+      }).catch(function(){});
+      const delay = Math.min(3000 + attempt * 500, 8000); // 3-8 sec between polls
+      setTimeout(function(){ fetchWithPolling(url, onSuccess, onError, attempt+1); }, delay);
+      return;
+    }
+    if(!r.ok){ throw new Error('Server error: ' + r.status); }
+    return r.json().then(onSuccess);
+  }).catch(function(e){
+    if(onError) onError(e);
+    else console.error('fetchWithPolling error:', e);
+  });
+}
 </script>
 </body>
 </html>

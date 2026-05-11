@@ -1,4 +1,4 @@
-import os, io, csv, zipfile, requests, pandas as pd
+import os, io, csv, zipfile, requests, pandas as pd, threading
 from datetime import datetime, timedelta
 from flask import Flask, render_template, jsonify, request, Response, stream_with_context
 
@@ -21,6 +21,10 @@ _called_log     = {}   # "page|reg" → {reg_number, page, called_by, timestamp}
 _comments       = {}   # "page|reg" → string
 _statuses       = {}   # "page|reg" → status string
 _saved_searches = {}   # name → criteria dict
+
+# ── Background loading state ───────────────────────────────────────────────────
+_bg_status = {}  # key → "loading" | "done" | "error"
+_bg_lock   = threading.Lock()
 
 # ── Cache helpers ──────────────────────────────────────────────────────────────
 def cache_get(key, max_age=180):
@@ -275,25 +279,52 @@ def debug_columns():
     return jsonify(out)
 
 # ── PROSPECTS ─────────────────────────────────────────────────────────────────
-@app.route("/api/prospects")
-def api_prospects():
+def _build_prospects():
+    """Run in background thread — builds prospect data without blocking gunicorn."""
     try:
-        return _api_prospects_inner()
-    except MemoryError:
-        return jsonify({"error": "Server ran out of memory loading charity data. Please try again in 30 seconds."}), 500
+        with _bg_lock:
+            if _bg_status.get("prospects") == "loading":
+                return
+            _bg_status["prospects"] = "loading"
+        print("Background: building prospects...")
+        result = _compute_prospects()
+        cache_set("prospects", result)
+        with _bg_lock:
+            _bg_status["prospects"] = "done"
+        print("Background: prospects done.")
     except Exception as e:
         import traceback
-        print("PROSPECTS ERROR:", traceback.format_exc())
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        print("Background ERROR:", traceback.format_exc())
+        with _bg_lock:
+            _bg_status["prospects"] = "error"
 
-def _api_prospects_inner():
+@app.route("/api/prospects")
+def api_prospects():
+    # Return cached result immediately if available
     cached = cache_get("prospects", max_age=60)
-    if cached: return jsonify(cached)
+    if cached:
+        return jsonify(cached)
+    # Check background status
+    with _bg_lock:
+        status = _bg_status.get("prospects","idle")
+    if status == "loading":
+        return jsonify({"status": "loading", "message": "Loading charity data, please wait…"}), 202
+    if status == "error":
+        with _bg_lock:
+            _bg_status["prospects"] = "idle"
+        return jsonify({"error": "Failed to load data. Please try again."}), 500
+    # Kick off background thread
+    with _bg_lock:
+        _bg_status["prospects"] = "loading"
+    t = threading.Thread(target=_build_prospects, daemon=True)
+    t.start()
+    return jsonify({"status": "loading", "message": "Loading charity data from Charity Commission…"}), 202
 
+def _compute_prospects():
     results = {"best": [], "readiness": [], "contract": [], "retention": []}
     df_parta = load_extract("parta")
     if df_parta is None or df_parta.empty:
-        return jsonify({"error": "Could not load charity data from Charity Commission. Please try again."}), 500
+        raise Exception("Could not load parta extract")
 
     reg_col = "registered_charity_number"
     df_parta["_sort"] = pd.to_datetime(
@@ -379,8 +410,7 @@ def _api_prospects_inner():
     out = {"lists": results, "counts": {k: len(v) for k, v in results.items()},
            "total": sum(len(v) for v in results.values()),
            "generated": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}
-    cache_set("prospects", out)
-    return jsonify(out)
+    return out
 
 # ── SEARCH ─────────────────────────────────────────────────────────────────────
 @app.route("/api/search")
@@ -559,6 +589,24 @@ def api_new_charities():
     days = int(request.args.get("days", 30))
     cached = cache_get(f"new_{days}", max_age=120)
     if cached: return jsonify(cached)
+    key = f"new_{days}"
+    with _bg_lock:
+        status = _bg_status.get(key,"idle")
+    if status == "loading":
+        return jsonify({"status":"loading","message":"Loading…","charities":[],"count":0,"days":days,"cutoff":""}), 202
+    def _bg():
+        with _bg_lock: _bg_status[key]="loading"
+        try:
+            out = _compute_new(days)
+            cache_set(key, out)
+        except Exception as e:
+            print(f"BG new error: {e}")
+        with _bg_lock: _bg_status[key]="done"
+    threading.Thread(target=_bg, daemon=True).start()
+    return jsonify({"status":"loading","message":"Loading charity registrations…","charities":[],"count":0,"days":days,"cutoff":""}), 202
+
+def _compute_new(days):
+    days = int(days)
     cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
     results = []
     df = load_extract("charity")
@@ -582,15 +630,29 @@ def api_new_charities():
                                  "date_registered": str(row.get("_dt",""))[:10],
                                  "website":    web, "status": "Active"})
     results.sort(key=lambda x: x.get("date_registered",""), reverse=True)
-    out = {"charities": results, "count": len(results), "days": days, "cutoff": cutoff}
-    cache_set(f"new_{days}", out)
-    return jsonify(out)
+    return {"charities": results, "count": len(results), "days": days, "cutoff": cutoff}
 
 # ── LATE ACCOUNTS ──────────────────────────────────────────────────────────────
 @app.route("/api/late_accounts")
 def api_late_accounts():
     cached = cache_get("late", max_age=120)
     if cached: return jsonify(cached)
+    with _bg_lock:
+        status = _bg_status.get("late","idle")
+    if status == "loading":
+        return jsonify({"status":"loading","message":"Loading…","charities":[],"count":0,"over_12":0,"bet_6_12":0,"under_6":0}), 202
+    def _bg():
+        with _bg_lock: _bg_status["late"]="loading"
+        try:
+            out = _compute_late()
+            cache_set("late", out)
+        except Exception as e:
+            print(f"BG late error: {e}")
+        with _bg_lock: _bg_status["late"]="done"
+    threading.Thread(target=_bg, daemon=True).start()
+    return jsonify({"status":"loading","message":"Loading late accounts…","charities":[],"count":0,"over_12":0,"bet_6_12":0,"under_6":0}), 202
+
+def _compute_late():
     today = datetime.utcnow().date()
     results = []
     df = load_extract("parta")
@@ -637,15 +699,29 @@ def api_late_accounts():
     over12=len([r for r in results if r["months_late"]>12])
     b612  =len([r for r in results if 6<=r["months_late"]<=12])
     u6    =len([r for r in results if r["months_late"]<6])
-    out = {"charities":results,"count":len(results),"over_12":over12,"bet_6_12":b612,"under_6":u6}
-    cache_set("late", out)
-    return jsonify(out)
+    return {"charities":results,"count":len(results),"over_12":over12,"bet_6_12":b612,"under_6":u6}
 
 # ── OLD CHARITIES (40+ years, zero statutory) ──────────────────────────────────
 @app.route("/api/old_charities")
 def api_old_charities():
     cached = cache_get("old_charities", max_age=120)
     if cached: return jsonify(cached)
+    with _bg_lock:
+        status = _bg_status.get("old_charities","idle")
+    if status == "loading":
+        return jsonify({"status":"loading","message":"Loading…","charities":[],"count":0}), 202
+    def _bg():
+        with _bg_lock: _bg_status["old_charities"]="loading"
+        try:
+            out = _compute_old()
+            cache_set("old_charities", out)
+        except Exception as e:
+            print(f"BG old error: {e}")
+        with _bg_lock: _bg_status["old_charities"]="done"
+    threading.Thread(target=_bg, daemon=True).start()
+    return jsonify({"status":"loading","message":"Loading established charities…","charities":[],"count":0}), 202
+
+def _compute_old():
     today = datetime.utcnow().date()
     cutoff_year = today.year - 40
     results = []
@@ -694,9 +770,7 @@ def api_old_charities():
                             "total_income":fin.get("total_income",0),
                             "fin_year":fin.get("fin_year","")})
     results.sort(key=lambda x:x.get("date_registered",""))
-    out = {"charities":results,"count":len(results)}
-    cache_set("old_charities", out)
-    return jsonify(out)
+    return {"charities":results,"count":len(results)}
 
 # ── CALLED API ─────────────────────────────────────────────────────────────────
 @app.route("/api/mark_called", methods=["POST"])
