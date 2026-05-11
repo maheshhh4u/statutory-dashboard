@@ -34,17 +34,17 @@ def cache_set(key, val):
     _cache[key] = (datetime.utcnow(), val)
 
 # ── Bulk extract loader ────────────────────────────────────────────────────────
-# Only load the columns we actually need — saves ~70% RAM on free Render tier
+# Only load the columns we actually need — critical for 512MB Render free tier
 NEEDED_COLS = {
     "parta": [
-        "registered_charity_number","organisation_number",
+        "registered_charity_number",
         "income_from_government_grants","income_from_government_contracts",
         "total_gross_income","total_gross_expenditure",
-        "fin_period_end_date","ar_due_date","ar_received_date",
-        "latest_fin_period_submitted_ind","fin_period_order_number",
+        "fin_period_end_date","ar_due_date",
+        "latest_fin_period_submitted_ind",
     ],
     "charity": [
-        "registered_charity_number","organisation_number",
+        "registered_charity_number",
         "charity_name","charity_registration_status",
         "date_of_registration","date_of_removal",
         "charity_contact_phone","charity_contact_email","charity_contact_web",
@@ -56,6 +56,7 @@ NEEDED_COLS = {
 }
 
 def load_extract(name):
+    """Download ZIP, read only needed columns in chunks to save RAM."""
     cached = cache_get(f"ex_{name}")
     if cached is not None:
         return cached
@@ -66,49 +67,59 @@ def load_extract(name):
         print(f"Downloading {name} ...")
         r = requests.get(url, timeout=180)
         r.raise_for_status()
-        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+        zip_bytes = r.content
+        print(f"  {name}: downloaded {len(zip_bytes)//1024}KB")
+
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
             inner = z.namelist()[0]
             with z.open(inner) as f:
-                raw = f.read()
-        buf = io.BytesIO(raw)
-        # First pass: read just the header to find which columns exist
-        header_buf = io.BytesIO(raw)
-        try:
-            header_df = pd.read_csv(header_buf, sep="\t", encoding="utf-8",
-                                    nrows=0, dtype=str, on_bad_lines="skip")
-        except TypeError:
-            header_buf.seek(0)
-            header_df = pd.read_csv(header_buf, sep="\t", encoding="utf-8",
-                                    nrows=0, dtype=str, error_bad_lines=False)
-        all_cols = [c.strip().lower() for c in header_df.columns]
-        # Only keep needed columns if defined for this extract
-        usecols = None
+                # Read header first to find column positions
+                header_line = f.readline().decode("utf-8", errors="replace")
+                all_cols = [c.strip().lower() for c in header_line.rstrip("\n\r").split("\t")]
+
         needed = NEEDED_COLS.get(name)
-        if needed:
-            usecols = [c for c in needed if c in all_cols]
-            print(f"  {name}: loading {len(usecols)} of {len(all_cols)} columns")
-        # Second pass: read full data with column filter
-        buf.seek(0)
-        try:
-            df = pd.read_csv(buf, sep="\t", encoding="utf-8",
-                             low_memory=False, dtype=str,
-                             on_bad_lines="skip",
-                             usecols=usecols if usecols else None)
-        except TypeError:
-            buf.seek(0)
-            df = pd.read_csv(buf, sep="\t", encoding="utf-8",
-                             low_memory=False, dtype=str,
-                             error_bad_lines=False, warn_bad_lines=False,
-                             usecols=usecols if usecols else None)
-        df.columns = [c.strip().lower() for c in df.columns]
+        usecols = [c for c in needed if c in all_cols] if needed else None
+        print(f"  {name}: using {len(usecols) if usecols else len(all_cols)} of {len(all_cols)} cols")
+
+        # Read in chunks to keep peak RAM low
+        chunks = []
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+            with z.open(inner) as f:
+                try:
+                    reader = pd.read_csv(
+                        f, sep="\t", encoding="utf-8", dtype=str,
+                        on_bad_lines="skip", chunksize=50_000,
+                        usecols=usecols
+                    )
+                except TypeError:
+                    # pandas < 1.3
+                    f.seek(0) if hasattr(f,'seek') else None
+                    reader = pd.read_csv(
+                        f, sep="\t", encoding="utf-8", dtype=str,
+                        error_bad_lines=False, chunksize=50_000,
+                        usecols=usecols
+                    )
+                for chunk in reader:
+                    chunk.columns = [c.strip().lower() for c in chunk.columns]
+                    chunks.append(chunk)
+
+        del zip_bytes  # free the raw bytes immediately
+
+        if not chunks:
+            print(f"  {name}: no data")
+            return None
+
+        df = pd.concat(chunks, ignore_index=True)
+        del chunks
+
         for col in df.columns:
             df[col] = df[col].astype(str).str.strip()
         df.replace("nan", "", inplace=True)
-        print(f"  {name}: {len(df)} rows, {len(df.columns)} cols loaded")
+        print(f"  {name}: {len(df)} rows loaded OK")
         cache_set(f"ex_{name}", df)
         return df
     except Exception as e:
-        print(f"  ERROR {name}: {e}")
+        print(f"  ERROR loading {name}: {e}")
         import traceback; traceback.print_exc()
         return None
 
