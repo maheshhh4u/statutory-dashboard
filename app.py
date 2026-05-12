@@ -917,55 +917,54 @@ def mx_read_full():
 
 @app.route("/api/maximizer/create_test_charity")
 def mx_create_test_charity():
-    """Directly create charity 1202982 and show full result."""
+    """Create charity 1202982 — discover valid fields by testing each one."""
     import requests as req
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
-
     reg  = "1202982"
-    raw_name = "ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"
-    name = title_case(raw_name)
-    full_name = name  # No reg number suffix anymore
-
-    # Step 1: Check if already exists
-    try:
-        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-            json={"abEntry": {"criteria": {"searchQuery": {"companyName": f"[{reg}]"}, "top": 5},
-                              "scope": {"fields": {"key": 1, "companyName": 1}}}}, timeout=10)
-        existing = r.json().get("abEntry", {}).get("Data", [])
-    except Exception as e:
-        existing = []
-
-    if existing:
-        return jsonify({"already_exists": True, "entries": existing})
-
-    # Step 2: Create with correct write syntax
+    name = title_case("ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON")
     results = {}
-    for data in [
-        {"Type": "Company", "CompanyName": full_name,
-         "Phone1": "07448976144", "WebSite": "www.indianorthodox.london",
-         "Email1": "st.georges.ioc.london@gmail.com",
-         "City": "City of London", "AccountNo": reg},
-    ]:
+
+    # Step 1: Create minimal entry (we know Type+CompanyName works)
+    r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
+        json={"AbEntry": {"Data": {"Type": "Company", "CompanyName": name}}}, timeout=10)
+    resp = r.json()
+    results["create"] = {"Code": resp.get("Code"), "Msg": str(resp.get("Msg",""))}
+    if resp.get("Code") != 0:
+        return jsonify(results)
+
+    new_key = (resp.get("AbEntry") or resp.get("abEntry") or {}).get("Data",{}).get("Key","")
+    results["key"] = new_key
+    results["SUCCESS"] = True
+
+    if not new_key:
+        return jsonify(results)
+
+    # Step 2: Probe each optional field name by updating one at a time
+    field_candidates = [
+        ("AccountNo",    reg),
+        ("Phone1",       "07448976144"),
+        ("Email1",       "st.georges.ioc.london@gmail.com"),
+        ("WebSite",      "www.indianorthodox.london"),
+        ("CityTown",     "City of London"),
+        ("City",         "City of London"),
+        ("StateProvince","London"),
+        ("StProv",       "London"),
+        ("Addr1",        "Rood Lane, Eastcheap"),
+        ("Address1",     "Rood Lane, Eastcheap"),
+        ("ZipCode",      "EC3M 5AD"),
+        ("Zip",          "EC3M 5AD"),
+        ("Country",      "United Kingdom"),
+    ]
+    results["fields"] = {}
+    for field, val in field_candidates:
         try:
-            r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
-                        json={"AbEntry": {"Data": data}}, timeout=10)
-            resp = r.json()
-            results[f"try_{list(data.keys())[0]}_{data.get('Type')}"] = {
-                "Code": resp.get("Code"),
-                "Msg": resp.get("Msg",""),
-                "Data": resp.get("AbEntry", resp.get("abEntry", {}))
-            }
-            if resp.get("Code") == 0:
-                results["SUCCESS"] = True
-                # Now verify it was created
-                r2 = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-                    json={"abEntry": {"criteria": {"searchQuery": {"accountNo": reg}, "top": 5},
-                                      "scope": {"fields": {"key": 1, "companyName": 1, "type": 1}}}},
-                    timeout=10)
-                results["verify"] = r2.json().get("abEntry", {}).get("Data", [])
-                break
+            r2 = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
+                json={"AbEntry": {"Data": {"Key": new_key, field: val}}}, timeout=8)
+            d = r2.json()
+            ok = d.get("Code") == 0
+            results["fields"][field] = "✓ VALID" if ok else f"✗ {str(d.get('Msg',''))[:60]}"
         except Exception as e:
-            results[f"err"] = str(e)
+            results["fields"][field] = f"ERR: {str(e)[:60]}"
 
     return jsonify(results)
 
