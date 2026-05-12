@@ -921,99 +921,76 @@ def mx_read_full():
 
 @app.route("/api/maximizer/probe_fields")
 def mx_probe_fields():
-    """Find the mandatory UDF field blocking creation."""
+    """Copy exact structure of existing entry to create new ones."""
     import requests as req
     results = {}
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
 
-    # We know: endpoint accepts calls, token has write access (200 returned)
-    # The issue is a mandatory UDF field we're not sending
-    # UDF fields in Maximizer API use different key formats
+    # CRITICAL FINDING: All existing entries are type=Contact with lastName="-"
+    # They are NOT Company type. Must create Contact, not Company.
+    # lastName="-" seems to be the convention used.
 
-    # First: read existing entry WITHOUT udf field to see base structure
-    try:
-        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-                    json={"abEntry": {
-                        "criteria": {"searchQuery": {}, "top": 2},
-                        "scope": {"fields": {"key": 1, "companyName": 1,
-                                             "type": 1, "firstName": 1,
-                                             "lastName": 1}}
-                    }}, timeout=10)
-        results["read_entries"] = r.json()
-    except Exception as e:
-        results["read_entries"] = {"error": str(e)}
+    # Step 1: Read existing entry with ALL possible field name variants
+    for scope_fields in [
+        {"key":1,"companyName":1,"type":1,"firstName":1,"lastName":1,
+         "phone":1,"email":1,"webSite":1,"city":1,"state":1},
+        {"key":1,"companyName":1,"firstName":1,"lastName":1,
+         "BusinessPhone":1,"EmailAddress":1,"Website":1},
+        {"key":1,"companyName":1,"firstName":1,"lastName":1,
+         "phoneNumber":1,"emailAddress":1},
+    ]:
+        try:
+            r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
+                json={"abEntry":{"criteria":{"searchQuery":{},"top":1},
+                                 "scope":{"fields":scope_fields}}}, timeout=10)
+            d = r.json()
+            if d.get("Code")==0:
+                results[f"read_{list(scope_fields.keys())[2]}"] = d.get("abEntry",{}).get("Data",[])
+                break
+            else:
+                results[f"read_err_{list(scope_fields.keys())[2]}"] = d.get("Msg")
+        except Exception as e:
+            results[f"read_exc"] = str(e)
 
-    # Try creates with UDF fields using different formats
-    # Format 1: UserDefinedFields array
-    udf_attempts = [
-        # No UDFs at all - baseline
-        {},
-        # Sales Status UDF (Table type - might be mandatory)
-        {"userDefinedFields": [{"fieldName": "Sales Status", "value": ""}]},
-        # With Classification folder
-        {"userDefinedFields": [{"fieldName": "Classification", "value": "Charity"}]},
-        # All as empty
-        {"userDefinedFields": [
-            {"fieldName": "Sales Status", "value": ""},
-            {"fieldName": "Client ?", "value": ""},
-        ]},
+    # Step 2: Create Contact (copying existing pattern: type=Contact, lastName="-")
+    contact_attempts = [
+        # Exact copy of existing pattern
+        {"type":"Contact","companyName":"TEST CHARITY 1","lastName":"-","firstName":"Charity"},
+        # With email (Contact has email as mandatory per the doc)
+        {"type":"Contact","companyName":"TEST CHARITY 2","lastName":"-",
+         "firstName":"Charity","email":"test@noemail.com"},
+        # Contact mandatory fields per doc: lastName, firstName, email, position
+        {"type":"Contact","companyName":"TEST CHARITY 3","lastName":"TEST3",
+         "firstName":"Charity","email":"test3@noemail.com","position":"N/A"},
+        # All Contact mandatory fields
+        {"type":"Contact","companyName":"TEST CHARITY 4","lastName":"TEST4",
+         "firstName":"Charity","email":"test4@noemail.com",
+         "position":"N/A","phone1":"00000000000"},
+        # Try without type
+        {"companyName":"TEST CHARITY 5","lastName":"TEST5",
+         "firstName":"Charity","email":"test5@noemail.com"},
+        # Minimal: just lastName
+        {"lastName":"TEST CHARITY 6"},
+        # lastName + email
+        {"lastName":"TEST CHARITY 7","email":"test7@noemail.com"},
     ]
 
-    base_entry = {
-        "type": "Company",
-        "companyName": "TEST CHARITY API",
-        "phone1": "00000000000",
-        "webSite": "http://test.com",
-    }
-
-    for i, udf in enumerate(udf_attempts):
-        entry = {**base_entry}
-        if udf:
-            entry.update(udf)
+    for i, entry in enumerate(contact_attempts, 1):
         try:
             r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
                         json={"abEntry": entry}, timeout=10)
             resp = r.json()
-            results[f"udf_try_{i}"] = {
-                "extra_fields": list(udf.keys()),
+            results[f"create_{i}"] = {
+                "fields": list(entry.keys()),
                 "Code": resp.get("Code"),
-                "Msg": resp.get("Msg", "")
+                "Msg": resp.get("Msg"),
+                "Data": resp.get("abEntry",{})
             }
             if resp.get("Code") == 0:
-                results["SUCCESS"] = f"udf_try_{i} worked!"
+                results["SUCCESS"] = f"create_{i} worked! entry={entry}"
                 break
         except Exception as e:
-            results[f"udf_try_{i}"] = {"error": str(e)[:100]}
-
-    # Also try reading with UserDefinedFields
-    try:
-        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-                    json={"abEntry": {
-                        "criteria": {"searchQuery": {}, "top": 1},
-                        "scope": {"fields": {
-                            "key": 1,
-                            "companyName": 1,
-                            "userDefinedFields": 1
-                        }}
-                    }}, timeout=10)
-        results["read_with_udf_field"] = r.json()
-    except Exception as e:
-        results["read_with_udf_field"] = {"error": str(e)}
-
-    # Try reading with Udfs (capital)
-    try:
-        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-                    json={"abEntry": {
-                        "criteria": {"searchQuery": {}, "top": 1},
-                        "scope": {"fields": {
-                            "key": 1,
-                            "companyName": 1,
-                            "Udfs": 1
-                        }}
-                    }}, timeout=10)
-        results["read_with_Udfs"] = r.json()
-    except Exception as e:
-        results["read_with_Udfs"] = {"error": str(e)}
+            results[f"create_{i}"] = {"error": str(e)[:100]}
 
     return jsonify(results)
 
