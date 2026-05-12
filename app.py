@@ -1020,35 +1020,60 @@ def mx_create_test_charity():
 
 @app.route("/api/maximizer/update_by_id")
 def mx_update_by_id():
-    """Update an entry using its Identification number (shown in Maximizer UI)."""
+    """Update a Maximizer entry by Identification + probe all field names."""
     import requests as req, base64 as b64
     identification = request.args.get("id","").strip()
-    reg = request.args.get("reg","1202982")
     if not identification:
         return jsonify({"error": "Provide ?id=IDENTIFICATION_FROM_MAXIMIZER_UI"}), 400
 
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
-    # Construct the key: base64("Company	{identification}	0")
-    raw_key = f"Company	{identification}	0"
-    key = b64.b64encode(raw_key.encode()).decode()
-    results = {"key": key, "identification": identification}
+    key = b64.b64encode(f"Company	{identification}	0".encode()).decode()
+    results = {"key": key}
 
-    # Probe and set fields
-    updates = {
-        "Phone1":    request.args.get("phone","07448976144"),
-        "Email1":    request.args.get("email","st.georges.ioc.london@gmail.com"),
-        "WebSite":   request.args.get("web","www.indianorthodox.london"),
-        "AccountNo": reg,
-    }
-    for field, val in updates.items():
-        if not val: continue
+    # Test every possible field name
+    field_tests = [
+        ("Phone1",        "07448976144"),
+        ("Email1",        "test@test.com"),
+        ("WebSite",       "http://test.com"),
+        ("AddressLine1",  "Rood Lane"),
+        ("Address1",      "Rood Lane"),
+        ("Addr1",         "Rood Lane"),
+        ("CityTown",      "London"),
+        ("City",          "London"),
+        ("StateProvince", "London"),
+        ("StProv",        "London"),
+        ("ZipCode",       "EC3M 5AD"),
+        ("Country",       "United Kingdom"),
+        ("AccountNo",     "TEST123"),
+        # UDF format 1: nested Udf object
+        ("Udf", {"Organisation Number New": "TEST123"}),
+        # UDF format 2: dot notation
+    ]
+    results["fields"] = {}
+    for item in field_tests:
+        field, val = item
         try:
+            data = {"Key": key, field: val}
             r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
-                json={"AbEntry": {"Data": {"Key": key, field: val}}}, timeout=8)
+                json={"AbEntry": {"Data": data}}, timeout=8)
             d = r.json()
-            results[field] = "✓" if d.get("Code")==0 else f"✗ {str(d.get('Msg',''))[:80]}"
+            results["fields"][field] = "✓" if d.get("Code")==0 else f"✗ {str(d.get('Msg',''))[:80]}"
         except Exception as e:
-            results[field] = f"ERR:{str(e)[:60]}"
+            results["fields"][field] = f"ERR:{str(e)[:50]}"
+
+    # Also try UDF update via separate endpoint
+    udf_attempts = [
+        {"AbEntry": {"Data": {"Key": key, "Udf": {"Organisation Number New": "1202982"}}}},
+        {"AbEntry": {"Data": {"Key": key, "Udf": [{"FieldName": "Organisation Number New", "Value": "1202982"}]}}},
+        {"AbEntry": {"Data": {"Key": key, "Udf": {"Caller": "Muhanna"}}}},
+    ]
+    for i, body in enumerate(udf_attempts):
+        try:
+            r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs, json=body, timeout=8)
+            d = r.json()
+            results[f"udf_format_{i+1}"] = "✓" if d.get("Code")==0 else f"✗ {str(d.get('Msg',''))[:80]}"
+        except Exception as e:
+            results[f"udf_format_{i+1}"] = f"ERR:{str(e)[:50]}"
 
     return jsonify(results)
 
