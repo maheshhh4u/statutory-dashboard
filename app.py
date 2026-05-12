@@ -615,31 +615,31 @@ def mx_call(endpoint, body):
     return r.json()
 
 def mx_find_by_org_number(reg_no):
-    """Find Address Book entry by OrganizationNumber (= CC Reg No.)."""
+    """Find Address Book entry by CompanyName search containing reg number."""
     try:
+        # Search by CompanyName containing the reg number (stored as suffix)
         body = {
             "abEntry": {
                 "criteria": {
-                    "searchQuery": {
-                        "organizationNumber": str(reg_no)
-                    },
-                    "top": 1
+                    "searchQuery": {"CompanyName": f"%{reg_no}%"},
+                    "top": 5
                 },
                 "scope": {
                     "fields": {
-                        "key": 1,
-                        "companyName": 1,
-                        "organizationNumber": 1,
-                        "udf": {
-                            MX_CALLER_UDF: 1
-                        }
+                        "Key": 1,
+                        "CompanyName": 1,
+                        "Type": 1,
                     }
                 }
             }
         }
         result = mx_call("AbEntryRead", body)
         items = result.get("abEntry", {}).get("Data", [])
-        return items[0] if items else None
+        # Return first match where reg number appears
+        for item in items:
+            if str(reg_no) in str(item.get("CompanyName","")):
+                return item
+        return None
     except Exception as e:
         print(f"mx_find_by_org_number({reg_no}): {e}")
         return None
@@ -647,62 +647,60 @@ def mx_find_by_org_number(reg_no):
 def mx_get_caller(entry):
     """Extract caller from UDF field."""
     try:
-        udfs = entry.get("udf", {})
-        return str(udfs.get(MX_CALLER_UDF, "") or "").strip()
+        udfs = entry.get("Udf", entry.get("udf", {}))
+        val = udfs.get(MX_CALLER_UDF, "") if isinstance(udfs, dict) else ""
+        return str(val or "").strip()
     except Exception:
         return ""
 
 def mx_create_entry(c, caller=""):
-    """Create new Address Book company in Maximizer using Octopus API format."""
-    # Build entry - only include non-empty fields to avoid API errors
+    """Create new Address Book company using correct PascalCase Octopus API fields."""
+    reg  = str(c.get("reg_number","")).strip()
+    name = (c.get("name","") or "Unknown Charity")[:80]
+    # Store reg number in company name as suffix for easy lookup
+    # e.g. "ST GEORGE'S CHURCH [1202982]"
+    full_name = f"{name} [{reg}]" if reg else name
+
     entry = {
-        "type":           "Company",
-        "companyName":    c.get("name", "")[:100] if c.get("name") else "Unknown",
-        "organizationNumber": str(c.get("reg_number", ""))[:50],
+        "Type":        "Company",
+        "CompanyName": full_name[:100],
+        "LastName":    full_name[:50],  # some versions require LastName
     }
-    if c.get("website"): entry["website"] = c["website"][:200]
-    if c.get("phone"):   entry["phone1"]  = c["phone"][:30]
-    if c.get("email"):   entry["email1"]  = c["email"][:100]
-    # Address
-    addr = {}
-    if c.get("address1"): addr["line1"]        = c["address1"][:100]
-    if c.get("address2"): addr["line2"]        = c["address2"][:100]
-    if c.get("town"):     addr["city"]         = c["town"][:60]
-    if c.get("county"):   addr["stateProvince"]= c["county"][:60]
-    addr["country"] = "United Kingdom"
-    entry["address1"] = addr
-    # UDF caller field
-    if caller:
-        entry["udf"] = {MX_CALLER_UDF: caller}
+    if c.get("website"): entry["WebSite"] = c["website"][:200]
+    if c.get("phone"):   entry["Phone"]   = c["phone"][:30]
+    if c.get("email"):   entry["Email"]   = c["email"][:100]
+    if c.get("town"):    entry["City"]    = c["town"][:60]
+    if c.get("county"):  entry["StateProvince"] = c["county"][:60]
+    if c.get("address1"):entry["AddressLine1"]  = c["address1"][:100]
+
     body = {"abEntry": entry}
-    print(f"  mx_create: {c.get('name','?')} (reg:{c.get('reg_number','?')})")
-    return mx_call("AbEntryCreate", body)
+    print(f"  mx_create: {full_name}")
+    result = mx_call("AbEntryCreate", body)
+    print(f"  mx_create result: {result}")
+    return result
 
 def mx_update_entry(key, c, caller=""):
-    """Update existing Maximizer entry."""
-    entry = {"key": key}
-    if c.get("name"):    entry["companyName"] = c["name"][:100]
-    if c.get("website"): entry["website"]     = c["website"][:200]
-    if caller:           entry["udf"]         = {MX_CALLER_UDF: caller}
+    """Update existing Maximizer entry using PascalCase fields."""
+    entry = {"Key": key}
+    name = c.get("name","")
+    reg  = str(c.get("reg_number","")).strip()
+    if name:
+        full_name = f"{name} [{reg}]"[:100] if reg else name[:100]
+        entry["CompanyName"] = full_name
+    if c.get("website"): entry["WebSite"] = c["website"][:200]
     body = {"abEntry": entry}
     return mx_call("AbEntryUpdate", body)
 
 def mx_search_by_name(name):
-    """Search for an entry by company name — useful for finding recently created entries."""
+    """Search by company name."""
     try:
         body = {
             "abEntry": {
                 "criteria": {
-                    "searchQuery": {"companyName": str(name)[:50]},
+                    "searchQuery": {"CompanyName": f"%{name[:30]}%"},
                     "top": 5
                 },
-                "scope": {
-                    "fields": {
-                        "key": 1,
-                        "companyName": 1,
-                        "organizationNumber": 1,
-                    }
-                }
+                "scope": {"fields": {"Key": 1, "CompanyName": 1, "Type": 1}}
             }
         }
         result = mx_call("AbEntryRead", body)
@@ -899,38 +897,63 @@ def mx_read_full():
 
 @app.route("/api/maximizer/probe_fields")
 def mx_probe_fields():
-    """Probe each field individually to find which ones are valid."""
-    known_key = "Q29udGFjdAkyNDAzMjcyNTIyMzc1Nzk5MzU4MDJDCTE="
-    field_groups = [
-        ["key","companyName","type"],
-        ["key","lastName","firstName"],
-        ["key","phone1","phone2","phone3"],
-        ["key","email1","email2"],
-        ["key","website"],
-        ["key","addr1Line1","addr1Line2","addr1City","addr1State","addr1Country","addr1Zip"],
-        ["key","addressLine1","city","state","postalCode","country"],
-        ["key","address","street","zipCode"],
-        ["key","udf"],
-        ["key","leadSource","isLead","notes"],
-    ]
+    """Test correct PascalCase field names and attempt real create."""
+    # First read existing entry with correct PascalCase fields
     results = {}
-    for fields in field_groups:
-        scope = {f: 1 for f in fields}
-        body = {
-            "abEntry": {
-                "criteria": {"searchQuery": {"key": known_key}, "top": 1},
-                "scope": {"fields": scope}
+    body = {
+        "abEntry": {
+            "criteria": {"searchQuery": {}, "top": 1},
+            "scope": {
+                "fields": {
+                    "Key": 1,
+                    "CompanyName": 1,
+                    "Type": 1,
+                    "Phone": 1,
+                    "Email": 1,
+                    "WebSite": 1,
+                    "AddressLine1": 1,
+                    "City": 1,
+                    "StateProvince": 1,
+                    "ZipCode": 1,
+                    "LastName": 1,
+                    "FirstName": 1,
+                }
             }
         }
-        try:
-            r = mx_call("AbEntryRead", body)
-            if r.get("Code") == 0:
-                data = r.get("abEntry", {}).get("Data", [{}])
-                results[",".join(fields[1:])] = {"ok": True, "sample": data[0] if data else {}}
-            else:
-                results[",".join(fields[1:])] = {"ok": False, "msg": r.get("Msg")}
-        except Exception as e:
-            results[",".join(fields[1:])] = {"ok": False, "error": str(e)[:100]}
+    }
+    try:
+        r = mx_call("AbEntryRead", body)
+        results["read_pascal"] = {"Code": r.get("Code"), "data": r.get("abEntry",{}).get("Data",[])}
+    except Exception as e:
+        results["read_pascal"] = {"error": str(e)}
+
+    # Now try create with PascalCase fields
+    create_body = {
+        "abEntry": {
+            "Type": "Company",
+            "CompanyName": "TEST PASCAL CASE 9999",
+        }
+    }
+    try:
+        r2 = mx_call("AbEntryCreate", create_body)
+        results["create_pascal"] = r2
+    except Exception as e:
+        results["create_pascal"] = {"error": str(e)}
+
+    # Try with Last/FirstName for mandatory field
+    create_body2 = {
+        "abEntry": {
+            "Type": "Company",
+            "CompanyName": "TEST WITH LASTNAME 9999",
+            "LastName": "TestCharity",
+        }
+    }
+    try:
+        r3 = mx_call("AbEntryCreate", create_body2)
+        results["create_with_lastname"] = r3
+    except Exception as e:
+        results["create_with_lastname"] = {"error": str(e)}
+
     return jsonify(results)
 
 @app.route("/api/maximizer/find")
