@@ -921,82 +921,54 @@ def mx_read_full():
 
 @app.route("/api/maximizer/probe_fields")
 def mx_probe_fields():
-    """Test AccountManager and security fields which are always mandatory."""
+    """Test correct write syntax: AbEntry.Data wrapper with PascalCase."""
     import requests as req
     results = {}
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
 
-    # Always Mandatory fields per Maximizer docs:
-    # - Full Access (accountManager/fullAccess)
-    # - Read Access
-    # - Identification
-    # These must be set. The current user's key should work.
+    # CRITICAL DISCOVERY from docs:
+    # Write syntax uses: {"AbEntry": {"Data": {...}}} NOT {"abEntry": {...}}
+    # PascalCase keys inside Data wrapper
 
-    # First: get the current user's key
+    # Test 1: Correct write syntax - Company
     try:
-        r = req.post(f"{MX_BASE}/UserRead", headers=hdrs,
-                    json={"user": {"criteria": {"searchQuery": {}}, "top": 1,
-                                   "scope": {"fields": {"key": 1, "uid": 1, "name": 1}}}},
-                    timeout=10)
-        results["user_read"] = r.json()
-        user_key = r.json().get("user", {}).get("Data", [{}])[0].get("key", "")
-        results["user_key"] = user_key
+        body = {"AbEntry": {"Data": {
+            "Type": "Company",
+            "CompanyName": "TEST WRITE SYNTAX CO",
+        }}}
+        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs, json=body, timeout=10)
+        results["write_company"] = r.json()
     except Exception as e:
-        results["user_read"] = {"error": str(e)}
-        user_key = ""
+        results["write_company"] = {"error": str(e)}
 
-    # Try with accountManager set to current user
-    for user_val in [
-        {"uid": "MAHESH"},
-        {"key": user_key} if user_key else {},
-        "MAHESH",
-    ]:
-        if not user_val:
-            continue
-        entry = {
-            "type": "Contact",
-            "companyName": "TEST CHARITY AM",
-            "lastName": "TEST",
-            "accountManager": user_val,
-        }
-        try:
-            r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
-                        json={"abEntry": entry}, timeout=10)
-            resp = r.json()
-            results[f"am_{str(user_val)[:20]}"] = {"Code": resp.get("Code"), "Msg": resp.get("Msg")}
-            if resp.get("Code") == 0:
-                results["SUCCESS"] = "AccountManager fixed it!"
-        except Exception as e:
-            results[f"am_{str(user_val)[:20]}"] = {"error": str(e)[:80]}
-
-    # Try with fullAccess and readAccess
-    entry2 = {
-        "type": "Contact",
-        "companyName": "TEST CHARITY FA",
-        "lastName": "TEST2",
-        "fullAccess": {"uid": "MAHESH"},
-        "readAccess": {"uid": "MAHESH"},
-    }
+    # Test 2: Contact with Data wrapper
     try:
-        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
-                    json={"abEntry": entry2}, timeout=10)
-        results["fullAccess_test"] = r.json()
+        body = {"AbEntry": {"Data": {
+            "Type": "Contact",
+            "LastName": "TestContact",
+            "CompanyName": "TEST WRITE SYNTAX CT",
+        }}}
+        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs, json=body, timeout=10)
+        results["write_contact"] = r.json()
     except Exception as e:
-        results["fullAccess_test"] = {"error": str(e)}
+        results["write_contact"] = {"error": str(e)}
 
-    # Try with security fields as array
-    entry3 = {
-        "type": "Contact",
-        "companyName": "TEST CHARITY SEC",
-        "lastName": "TEST3",
-        "security": {"fullAccess": [{"uid": "MAHESH"}], "readAccess": [{"uid": "MAHESH"}]},
-    }
+    # Test 3: Try the /AbEntry endpoint (not /AbEntryCreate)
     try:
-        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
-                    json={"abEntry": entry3}, timeout=10)
-        results["security_test"] = r.json()
+        body = {"AbEntry": {"Data": {"Type": "Company", "CompanyName": "TEST ENDPOINT"}}}
+        r = req.post(f"{MX_BASE}/AbEntry", headers=hdrs, json=body, timeout=10)
+        results["endpoint_AbEntry"] = {"status": r.status_code, "body": r.text[:200]}
     except Exception as e:
-        results["security_test"] = {"error": str(e)}
+        results["endpoint_AbEntry"] = {"error": str(e)}
+
+    # Test 4: Read syntax also with Data wrapper (to check consistency)
+    try:
+        body = {"AbEntry": {"Data": {"Criteria": {"SearchQuery": {}}, "Top": 1,
+                                     "Scope": {"Fields": {"Key": 1, "CompanyName": 1, "Type": 1}}}}}
+        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json=body, timeout=10)
+        results["read_data_wrapper"] = r.json()
+    except Exception as e:
+        results["read_data_wrapper"] = {"error": str(e)}
 
     return jsonify(results)
 
