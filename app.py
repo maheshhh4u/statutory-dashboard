@@ -919,74 +919,84 @@ def mx_read_full():
 
 @app.route("/api/maximizer/create_test_charity")
 def mx_create_test_charity():
-    """Create charity 1202982 — discover valid fields by testing each one."""
-    import requests as req
+    """Create charity, find its key, probe valid fields."""
+    import requests as req, base64
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
     reg  = "1202982"
     name = title_case("ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON")
     results = {}
 
-    # Step 1: Create minimal entry (we know Type+CompanyName works)
-    r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
-        json={"AbEntry": {"Data": {"Type": "Company", "CompanyName": name}}}, timeout=10)
-    resp = r.json()
-    results["create"] = {"Code": resp.get("Code"), "Msg": str(resp.get("Msg",""))}
-    if resp.get("Code") != 0:
-        return jsonify(results)
-
-    results["full_resp"] = resp
-    results["SUCCESS"] = True
-
-    # The Identification field from the UI = "260512251420242170269C"
-    # Key in API = base64 of "Company	{identification}	0"
-    # Get the key by reading recent entries
-    new_key = ""
+    # Step 1: Delete any existing test entry first
+    # Search for Company type entries
     try:
         rf = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
             json={"abEntry": {
-                "criteria": {"searchQuery": {}, "top": 10},
+                "criteria": {"searchQuery": {"type": "Company"}, "top": 20},
                 "scope": {"fields": {"key":1,"companyName":1,"type":1}}
             }}, timeout=10)
-        found = rf.json().get("abEntry",{}).get("Data",[])
-        results["all_recent"] = found
-        # Find our entry by name
-        for e in found:
-            cn = e.get("companyName","")
-            if "george" in cn.lower() or "orthodox" in cn.lower() or "1202982" in cn:
-                new_key = e.get("key","")
+        companies = rf.json().get("abEntry",{}).get("Data",[])
+        results["existing_companies"] = companies
+        # Delete any previous test entries
+        for c in companies:
+            if "george" in c.get("companyName","").lower() or "orthodox" in c.get("companyName","").lower():
+                req.post(f"{MX_BASE}/AbEntryDelete", headers=hdrs,
+                    json={"AbEntry": {"Data": {"Key": c["key"]}}}, timeout=8)
+                results["deleted"] = c.get("companyName")
+    except Exception as e:
+        results["search_companies_err"] = str(e)
+
+    # Step 2: Create
+    r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
+        json={"AbEntry": {"Data": {"Type": "Company", "CompanyName": name}}}, timeout=10)
+    resp = r.json()
+    results["create_code"] = resp.get("Code")
+    if resp.get("Code") != 0:
+        results["create_err"] = str(resp.get("Msg",""))
+        return jsonify(results)
+    results["SUCCESS"] = True
+
+    # Step 3: Find the new entry by searching Company type
+    new_key = ""
+    try:
+        rf2 = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
+            json={"abEntry": {
+                "criteria": {"searchQuery": {"type": "Company"}, "top": 20},
+                "scope": {"fields": {"key":1,"companyName":1,"type":1}}
+            }}, timeout=10)
+        companies2 = rf2.json().get("abEntry",{}).get("Data",[])
+        results["companies_after_create"] = companies2
+        for c in companies2:
+            cn = c.get("companyName","")
+            if "george" in cn.lower() or "orthodox" in cn.lower():
+                new_key = c.get("key","")
                 results["found_key"] = new_key
+                results["found_name"] = cn
                 break
     except Exception as e:
         results["find_err"] = str(e)
 
     if not new_key:
-        results["note"] = "Entry created (Code 0) but key not found in recent entries"
+        results["note"] = "Created OK but key not found. Check companies_after_create list."
         return jsonify(results)
 
-    results["key"] = new_key
-
-    # Step 2: Probe each optional field name by updating one at a time
+    # Step 4: Probe each field
     field_candidates = [
-        # Standard fields
         ("Phone1",       "07448976144"),
-        ("Email1",       "st.georges.ioc.london@gmail.com"),
-        ("WebSite",      "www.indianorthodox.london"),
-        ("CityTown",     "City of London"),
-        ("City",         "City of London"),
-        ("StateProvince","City of London"),
-        ("StProv",       "City of London"),
-        ("Addr1",        "Rood Lane, Eastcheap"),
-        ("Address1",     "Rood Lane, Eastcheap"),
-        ("AddressLine1", "Rood Lane, Eastcheap"),
-        ("ZipCode",      "EC3M 5AD"),
-        ("Zip",          "EC3M 5AD"),
+        ("Email1",       "test@test.com"),
+        ("WebSite",      "http://test.com"),
+        ("CityTown",     "London"),
+        ("City",         "London"),
+        ("StateProvince","London"),
+        ("StProv",       "London"),
+        ("Addr1",        "Test Street"),
+        ("Address1",     "Test Street"),
+        ("AddressLine1", "Test Street"),
+        ("ZipCode",      "EC1A 1BB"),
+        ("Zip",          "EC1A 1BB"),
         ("Country",      "United Kingdom"),
         ("AccountNo",    reg),
-        # UDF fields (stored under Udf key)
-        ("Udf/Organisation Number New", reg),
-        ("Udf/Caller", "Muhanna"),
-        ("Udf/Date Of Registration", "2023-01-01"),
-        ("Udf/Total Income", "0"),
+        ("Notes",        "test note"),
+        ("Note",         "test note"),
     ]
     results["fields"] = {}
     for field, val in field_candidates:
@@ -995,9 +1005,9 @@ def mx_create_test_charity():
                 json={"AbEntry": {"Data": {"Key": new_key, field: val}}}, timeout=8)
             d = r2.json()
             ok = d.get("Code") == 0
-            results["fields"][field] = "✓ VALID" if ok else f"✗ {str(d.get('Msg',''))[:60]}"
+            results["fields"][field] = "✓" if ok else f"✗ {str(d.get('Msg','[no msg]'))[:80]}"
         except Exception as e:
-            results["fields"][field] = f"ERR: {str(e)[:60]}"
+            results["fields"][field] = f"ERR:{str(e)[:60]}"
 
     return jsonify(results)
 
