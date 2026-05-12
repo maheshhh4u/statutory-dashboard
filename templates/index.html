@@ -601,12 +601,11 @@ select:focus{outline:none;border-color:var(--green)}
       <div style="margin-top:8px">
         <label style="font-size:11px;font-weight:600;color:var(--t3);display:block;margin-bottom:3px">Maximizer API Base URL</label>
         <input id="mx-base-url" placeholder="e.g. https://uk.maximizer.com/MaximizerWebData" style="width:100%;font-family:inherit;font-size:11px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius)">
-        <div style="margin-top:6px;padding:7px 10px;background:var(--goldl);border-radius:5px;font-size:10px;color:var(--gold);line-height:1.6">
-          💡 <strong>How to find your URL:</strong> Open Maximizer in your browser → look at the address bar.
-          Copy everything up to and including <code>/MaximizerWebData</code> (or similar path before <code>/api</code>).
-          Example: <code>https://uk.maximizer.com/YourCompany/MaximizerWebData</code>
+        <div style="margin-top:6px;padding:7px 10px;background:var(--gl);border:1px solid var(--green);border-radius:5px;font-size:10px;color:var(--green);line-height:1.6">
+          ✓ Using <strong>Maximizer Octopus API</strong> at <code>api.maximizer.com</code>.<br>
+          If Test Connection fails with a whitelist/403 error, ask your <strong>Maximizer admin</strong> to add
+          the Render server IP (shown in the error) to the API allowed list in Maximizer settings.
         </div>
-        <button class="btn btn-outline btn-sm" style="margin-top:6px" onclick="saveMxUrl()">💾 Save URL</button>
       </div>
     </div>
     <div id="mx-sync-info" style="margin-bottom:14px;font-size:12px;color:var(--t2)"></div>
@@ -1457,7 +1456,7 @@ const _origRenderPT=renderPT;
 // ── Maximizer CRM Sync (browser-direct — bypasses server IP whitelist) ────────
 const MX_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJteHB5ZjV6MGFwbWpub29jOXM3NCIsImlhdCI6MTc3ODUyNzEyMywiZXhwIjoxODczMDY1NjAwLCJteC1jaWQiOiJEMzIxRDMxRS04QzRBLTQyRTMtQUU5Ny03NjMzRDk5Qjk5QjIiLCJteC13c2lkIjoiOENDNkVBRkYtQkFERi00RDY5LTgyRTktNzQxREFERUU2QjU0IiwibXgtZGIiOiJjZmM0MWQwY2Y0OWQ0MjViYjQ0ZTQ0YzA3ZDdiMTBmZCIsIm14LXVpZCI6Ik1BSEVTSCIsIm14LXBsIjoiY2xvdWQifQ.hEwCX0Yg35m_QoPa1yXiCoumJ-_9tP1OL3YM8MgOjMU";
 const MX_DB   = "cfc41d0cf49d425bb44e44c07d7b10fd";
-let MX_BASE   = localStorage.getItem('mx_base_url') || 'https://uk1.maximizercrmlive.com/web343/MaximizerWebData';
+let MX_BASE   = 'https://api.maximizer.com/octopus'; // Maximizer Octopus API
 
 let mxCurrentPage = 'prospects';
 let mxCurrentCharities = [];
@@ -1577,13 +1576,14 @@ async function testMxConnection(){
     .then(r=>r.json())
     .then(d=>{
       if(d.ok){
-        statusEl.innerHTML=`<span style="color:var(--green)">✓ Connected! ${esc(d.message)}</span>`;
+        statusEl.innerHTML=`<span style="color:var(--green)">✓ ${esc(d.message)}</span>`;
       } else {
-        statusEl.innerHTML=`<span style="color:var(--red)">✗ ${esc(d.error||'Connection failed')}</span>
-          <div style="margin-top:6px;padding:6px 8px;background:var(--goldl);border-radius:5px;font-size:10px;color:var(--gold)">
-          ⚠ If you see an IP whitelist error, you need to add Render's server IP to Maximizer's allowed list.
-          Contact your Maximizer admin to whitelist the IP shown in the error above.
-          </div>`;
+        const ipNote = d.hint
+          ? `<div style="margin-top:6px;padding:8px 10px;background:var(--goldl);border:1px solid #d4b040;border-radius:5px;font-size:11px;color:var(--gold);line-height:1.6">
+              ⚠ <strong>Action needed:</strong> ${esc(d.hint)}<br>
+              ${d.server_ip&&d.server_ip!=='unknown'?`<strong>IP to whitelist: <code style="background:#fff;padding:1px 5px;border-radius:3px">${esc(d.server_ip)}</code></strong>`:''}
+             </div>` : '';
+        statusEl.innerHTML=`<span style="color:var(--red)">✗ ${esc(d.error||'Connection failed')}</span>${ipNote}`;
       }
     })
     .catch(e=>{
@@ -1614,7 +1614,8 @@ function startMxSync(){
     body:JSON.stringify({
       charities: mxCurrentCharities.slice(0,100),
       page: mxCurrentPage,
-      caller: currentCaller||''
+      caller: currentCaller||'',
+      base_url: MX_BASE
     })
   }).then(r=>r.json()).then(d=>{
     if(d.ok){

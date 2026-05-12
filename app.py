@@ -586,299 +586,217 @@ if __name__=="__main__":
     port=int(os.environ.get("PORT",5000))
     app.run(host="0.0.0.0",port=port,debug=False)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# MAXIMIZER CRM SYNC
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
+# MAXIMIZER CRM SYNC — Octopus API
+# ═══════════════════════════════════════════════════════════════════════
 MX_TOKEN = os.environ.get("MAXIMIZER_TOKEN",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJteHB5ZjV6MGFwbWpub"
-    "29jOXM3NCIsImlhdCI6MTc3ODUyNzEyMywiZXhwIjoxODczMDY1NjAwLCJteC1jaWQiO"
-    "iJEMzIxRDMxRS04QzRBLTQyRTMtQUU5Ny03NjMzRDk5Qjk5QjIiLCJteC13c2lkIjoiO"
-    "ENDNkVBRkYtQkFERi00RDY5LTgyRTktNzQxREFERUU2QjU0IiwibXgtZGIiOiJjZmM0MW"
-    "QwY2Y0OWQ0MjViYjQ0ZTQ0YzA3ZDdiMTBmZCIsIm14LXVpZCI6Ik1BSEVTSCIsIm14LX"
-    "BsIjoiY2xvdWQifQ.hEwCX0Yg35m_QoPa1yXiCoumJ-_9tP1OL3YM8MgOjMU")
-MX_DB   = os.environ.get("MAXIMIZER_DB",   "cfc41d0cf49d425bb44e44c07d7b10fd")
-MX_BASE = os.environ.get("MAXIMIZER_BASE", "https://uk1.maximizercrmlive.com/web343/MaximizerWebData")
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJteHB5ZjV6MGFwbWpub29jOXM3NCIsImlhdCI6MTc3ODUyNzEyMywiZXhwIjoxODczMDY1NjAwLCJteC1jaWQiOiJEMzIxRDMxRS04QzRBLTQyRTMtQUU5Ny03NjMzRDk5Qjk5QjIiLCJteC13c2lkIjoiOENDNkVBRkYtQkFERi00RDY5LTgyRTktNzQxREFERUU2QjU0IiwibXgtZGIiOiJjZmM0MWQwY2Y0OWQ0MjViYjQ0ZTQ0YzA3ZDdiMTBmZCIsIm14LXVpZCI6Ik1BSEVTSCIsIm14LXBsIjoiY2xvdWQifQ.hEwCX0Yg35m_QoPa1yXiCoumJ-_9tP1OL3YM8MgOjMU"
+)
+MX_DB    = os.environ.get("MAXIMIZER_DB",   "cfc41d0cf49d425bb44e44c07d7b10fd")
+MX_BASE  = os.environ.get("MAXIMIZER_BASE", "https://api.maximizer.com/octopus")
 
-# UDF field keys discovered from the original exe (TYPEID numbers from UDFOptionList.xml)
-# These match the fields synced by the original CCToMaximizerCRM tool
-MX_UDF = {
-    "what":             "/AbEntry/Udf/$TYPEID(111)",   # What charity does
-    "who":              "/AbEntry/Udf/$TYPEID(112)",   # Who it helps
-    "how":              "/AbEntry/Udf/$TYPEID(113)",   # How it helps
-    "country":          "/AbEntry/Udf/$TYPEID(107)",   # Country
-    "local_authority":  "/AbEntry/Udf/$TYPEID(108)",   # Local Authority
-    "region":           "/AbEntry/Udf/$TYPEID(109)",   # Region
-    "caller":           "/AbEntry/Udf/$TYPEID(243)",   # Caller (custom field you created)
-    "is_sync":          "/AbEntry/Udf/$TYPEID(264)",   # Is Sync flag
-}
+# Caller UDF field — the field named "Caller" you created in Maximizer Address Book
+# You can find this key in Maximizer Admin → User-Defined Fields → Address Book
+MX_CALLER_UDF = os.environ.get("MX_CALLER_UDF", "Caller")
 
-def mx_headers():
+def mx_hdrs():
     return {
         "Authorization": f"Bearer {MX_TOKEN}",
         "Content-Type":  "application/json",
         "Accept":        "application/json",
     }
 
-def mx_post(path, body):
-    """POST to Maximizer API."""
-    url = f"{MX_BASE}{path}"
-    r = requests.post(url, headers=mx_headers(), json=body, timeout=20)
-    r.raise_for_status()
+def mx_call(endpoint, body):
+    """POST to Maximizer Octopus API. endpoint e.g. 'AbEntryRead'."""
+    url = f"{MX_BASE.rstrip('/')}/{endpoint}"
+    r = requests.post(url, headers=mx_hdrs(), json=body, timeout=20)
+    if not r.ok:
+        raise Exception(f"{r.status_code} {r.reason}: {r.text[:200]}")
     return r.json()
 
-def mx_get(path, params=None):
-    """GET from Maximizer API."""
-    url = f"{MX_BASE}{path}"
-    r = requests.get(url, headers=mx_headers(), params=params or {}, timeout=20)
-    r.raise_for_status()
-    return r.json()
-
-def mx_find_by_cc_number(cc_number):
-    """Find a Maximizer Address Book entry by Charity Commission number (Organisation Number UDF)."""
+def mx_find_by_org_number(reg_no):
+    """Find Address Book entry by OrganizationNumber (= CC Reg No.)."""
     try:
         body = {
-            "Database": MX_DB,
-            "RequestAction": "Read",
-            "Criteria": {
-                "SearchQuery": {
-                    "AbEntry": {
-                        "Udf": {
-                            "UserDefinedFields": [
-                                {
-                                    "FieldName": "/AbEntry/Udf/$TYPEID(CCID)",
-                                    "Value": str(cc_number)
-                                }
-                            ]
+            "abEntry": {
+                "criteria": {
+                    "searchQuery": {
+                        "organizationNumber": str(reg_no)
+                    },
+                    "top": 1
+                },
+                "scope": {
+                    "fields": {
+                        "key": 1,
+                        "companyName": 1,
+                        "organizationNumber": 1,
+                        "udf": {
+                            MX_CALLER_UDF: 1
                         }
                     }
                 }
-            },
-            "Scope": {"Table": "AbEntry"},
-            "Fields": {
-                "AbEntry": [
-                    "Key", "CompanyName", "Phone1", "Email1", "Website",
-                    "Address1/Street1", "Address1/City", "Address1/Country",
-                    "OrganizationNumber",
-                    {"UdfList": list(MX_UDF.values())}
-                ]
-            },
-            "Limit": 1
+            }
         }
-        result = mx_post("/api/v1/AbEntry/read", body)
-        items = result.get("Data", {}).get("AbEntry", [])
+        result = mx_call("AbEntryRead", body)
+        items = result.get("abEntry", {}).get("Data", [])
         return items[0] if items else None
     except Exception as e:
-        print(f"mx_find_by_cc_number({cc_number}): {e}")
+        print(f"mx_find_by_org_number({reg_no}): {e}")
         return None
 
-def mx_find_by_org_number(org_number):
-    """Find by OrganizationNumber field (maps to CC Reg No.)."""
+def mx_get_caller(entry):
+    """Extract caller from UDF field."""
     try:
-        body = {
-            "Database": MX_DB,
-            "RequestAction": "Read",
-            "Criteria": {
-                "SearchQuery": {
-                    "AbEntry": {
-                        "OrganizationNumber": str(org_number)
-                    }
-                }
-            },
-            "Scope": {"Table": "AbEntry"},
-            "Fields": {
-                "AbEntry": [
-                    "Key", "CompanyName", "Phone1", "Email1", "Website",
-                    "OrganizationNumber",
-                    {"UdfList": list(MX_UDF.values())}
-                ]
-            },
-            "Limit": 1
-        }
-        result = mx_post("/api/v1/AbEntry/read", body)
-        items = result.get("Data", {}).get("AbEntry", [])
-        return items[0] if items else None
-    except Exception as e:
-        print(f"mx_find_by_org_number({org_number}): {e}")
-        return None
+        udfs = entry.get("udf", {})
+        return str(udfs.get(MX_CALLER_UDF, "") or "").strip()
+    except Exception:
+        return ""
 
-def mx_create_company(charity_data):
-    """Create a new Address Book company entry in Maximizer."""
-    reg  = charity_data.get("reg_number", "")
-    name = charity_data.get("name", "")
-    fin  = charity_data.get("financials", {})
-
+def mx_create_entry(c, caller=""):
+    """Create new Address Book company in Maximizer."""
     body = {
-        "Database": MX_DB,
-        "RequestAction": "Create",
-        "AbEntry": {
-            "CompanyName":        name,
-            "OrganizationNumber": reg,
-            "Phone1":             {"Value": charity_data.get("phone", "")},
-            "Email1":             {"Value": charity_data.get("email", "")},
-            "Website":            charity_data.get("website", ""),
-            "Address1": {
-                "Street1": charity_data.get("address1", ""),
-                "Street2": charity_data.get("address2", ""),
-                "City":    charity_data.get("town", ""),
-                "Region":  charity_data.get("county", ""),
-                "Country": "United Kingdom",
+        "abEntry": {
+            "type": "company",
+            "companyName":        c.get("name", ""),
+            "organizationNumber": c.get("reg_number", ""),
+            "website":            c.get("website", ""),
+            "phone1": {"number": c.get("phone", "")},
+            "email1": {"address": c.get("email", "")},
+            "address1": {
+                "line1":   c.get("address1", ""),
+                "line2":   c.get("address2", ""),
+                "city":    c.get("town", ""),
+                "stateProvince": c.get("county", ""),
+                "country": "United Kingdom",
             },
-            "Udf": {
-                "UserDefinedFields": [
-                    {"FieldName": MX_UDF["caller"],  "Value": charity_data.get("caller", "")},
-                ]
+            "udf": {
+                MX_CALLER_UDF: caller
             }
         }
     }
-    return mx_post("/api/v1/AbEntry", body)
+    return mx_call("AbEntryCreate", body)
 
-def mx_update_company(ab_key, charity_data, caller=None):
-    """Update an existing Maximizer Address Book entry."""
-    fin = charity_data.get("financials", {})
-    udfs = []
-    if caller:
-        udfs.append({"FieldName": MX_UDF["caller"], "Value": caller})
-
+def mx_update_entry(key, c, caller=""):
+    """Update existing Maximizer entry."""
     body = {
-        "Database": MX_DB,
-        "RequestAction": "Update",
-        "AbEntry": {
-            "Key":         ab_key,
-            "CompanyName": charity_data.get("name", ""),
-            "Website":     charity_data.get("website", ""),
-            "Udf": {"UserDefinedFields": udfs} if udfs else {}
+        "abEntry": {
+            "key":         key,
+            "companyName": c.get("name", ""),
+            "website":     c.get("website", ""),
+            "udf": {
+                MX_CALLER_UDF: caller
+            }
         }
     }
-    return mx_post("/api/v1/AbEntry", body)
+    return mx_call("AbEntryUpdate", body)
 
-def mx_get_caller_for_entry(ab_entry):
-    """Extract caller name from Maximizer UDF fields."""
-    try:
-        udfs = ab_entry.get("Udf", {}).get("UserDefinedFields", [])
-        for udf in udfs:
-            if udf.get("FieldName") == MX_UDF["caller"]:
-                return udf.get("Value", "")
-    except Exception:
-        pass
-    return ""
-
-# ── Sync a single charity to/from Maximizer ───────────────────────────────────
-def sync_one_charity(reg_number, charity_data, caller=None, page="prospects"):
-    """
-    Sync one charity with Maximizer.
-    - Look up by OrganizationNumber (reg_number)
-    - If found: update caller field; pull back their caller if set in Maximizer
-    - If not found: create new entry
-    Returns dict with status, ab_key, mx_caller
-    """
-    existing = mx_find_by_org_number(reg_number)
-
+def do_sync_one(reg, c, caller, page):
+    """Sync one charity. Returns (action, mx_caller_pulled)."""
+    existing = mx_find_by_org_number(reg)
     if existing:
-        ab_key = existing.get("Key", "")
-        mx_caller = mx_get_caller_for_entry(existing)
-
-        # Bidirectional caller sync:
-        # If Maximizer has a caller and we don't locally → use Maximizer's
-        # If we have a caller locally → push it to Maximizer
-        key = f"{page}|{reg_number}"
-        local_caller = _called_log.get(key, {}).get("called_by", "")
-
-        if caller and caller != mx_caller:
-            # Push our caller to Maximizer
-            mx_update_company(ab_key, charity_data, caller=caller)
-            mx_caller = caller
-        elif mx_caller and not local_caller:
-            # Pull caller from Maximizer into dashboard
-            _called_log[key] = {
-                "reg_number": reg_number,
-                "page": page,
+        ab_key    = existing.get("key", "")
+        mx_caller = mx_get_caller(existing)
+        # Bidirectional: push our caller if set, else pull Maximizer's
+        push_caller = caller if caller else mx_caller
+        mx_update_entry(ab_key, c, push_caller)
+        # If Maximizer had a caller we don't have locally, record it
+        local_key = f"{page}|{reg}"
+        if mx_caller and not _called_log.get(local_key):
+            _called_log[local_key] = {
+                "reg_number": reg, "page": page,
                 "called_by": mx_caller,
                 "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
                 "source": "maximizer"
             }
-            _statuses[key] = _statuses.get(key, "Contacted")
-
-        return {"status": "updated", "ab_key": ab_key,
-                "mx_caller": mx_caller, "created": False}
+            return "updated", mx_caller
+        return "updated", None
     else:
-        # Create new entry
-        result = mx_create_company(charity_data)
-        ab_key = result.get("Data", {}).get("AbEntry", [{}])[0].get("Key", "")
-        if caller:
-            mx_update_company(ab_key, charity_data, caller=caller)
-        return {"status": "created", "ab_key": ab_key,
-                "mx_caller": caller or "", "created": True}
+        mx_create_entry(c, caller)
+        return "created", None
 
-# ── Sync API endpoints ─────────────────────────────────────────────────────────
 @app.route("/api/maximizer/test")
 def mx_test():
-    """Test Maximizer API connection."""
+    """Test connection to Maximizer Octopus API."""
+    global MX_BASE
+    # Get server IP for whitelist instructions
+    server_ip = "unknown"
     try:
-        # Try a minimal read to verify credentials
+        r = requests.get("https://checkip.amazonaws.com", timeout=4)
+        server_ip = r.text.strip()
+    except Exception:
+        pass
+    try:
         body = {
-            "Database": MX_DB,
-            "RequestAction": "Read",
-            "Scope": {"Table": "AbEntry"},
-            "Fields": {"AbEntry": ["Key", "CompanyName"]},
-            "Limit": 1
+            "abEntry": {
+                "criteria": {"searchQuery": {}, "top": 1},
+                "scope": {"fields": {"key": 1, "companyName": 1}}
+            }
         }
-        result = mx_post("/api/v1/AbEntry/read", body)
-        count = len(result.get("Data", {}).get("AbEntry", []))
-        return jsonify({"ok": True, "message": f"Connected to Maximizer. Found {count} entries.",
-                        "database": MX_DB})
+        result = mx_call("AbEntryRead", body)
+        entries = result.get("abEntry", {}).get("Data", [])
+        count   = len(entries)
+        sample  = entries[0].get("companyName","") if entries else ""
+        return jsonify({
+            "ok": True,
+            "message": f"Connected! Found entries in Maximizer. Sample: '{sample}'",
+            "database": MX_DB, "base": MX_BASE
+        })
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        msg = str(e)
+        hint = ""
+        if "403" in msg or "whitelist" in msg.lower():
+            hint = (f"Render server IP ({server_ip}) is not whitelisted in Maximizer. "
+                    f"Ask your Maximizer admin to add IP {server_ip} to the API allowlist.")
+        elif "401" in msg:
+            hint = "Token expired or invalid."
+        return jsonify({"ok": False, "error": msg, "hint": hint,
+                        "server_ip": server_ip}), 200
 
 @app.route("/api/maximizer/sync", methods=["POST"])
 def mx_sync():
-    """
-    Sync one or more charities with Maximizer.
-    Body: { charities: [{reg_number, name, financials, ...}], page: "prospects", caller: "Muhanna" }
-    Runs in background thread to avoid timeout.
-    """
-    data     = request.json or {}
+    """Sync charities with Maximizer (background thread)."""
+    global MX_BASE
+    data      = request.json or {}
     charities = data.get("charities", [])
-    page     = data.get("page", "prospects")
-    caller   = data.get("caller", "")
-    sync_key = f"mx_sync_{page}"
+    page      = data.get("page", "prospects")
+    caller    = data.get("caller", "")
+    base_url  = data.get("base_url", "").strip()
+    if base_url:
+        MX_BASE = base_url.rstrip("/")
+    sync_key  = f"mx_sync_{page}"
 
     with _bg_lock:
         if _bg_status.get(sync_key) == "loading":
-            return jsonify({"ok": False, "message": "Sync already in progress"}), 409
+            return jsonify({"ok": False, "message": "Sync already running"}), 409
 
-    def _do_sync():
-        with _bg_lock:
-            _bg_status[sync_key] = "loading"
-        results = {"created": 0, "updated": 0, "errors": 0, "mx_callers_pulled": 0}
+    def _worker():
+        with _bg_lock: _bg_status[sync_key] = "loading"
+        result = {"created": 0, "updated": 0, "errors": 0, "mx_callers_pulled": 0, "error": ""}
         try:
-            for c in charities:
+            for c in charities[:100]:
                 reg = c.get("reg_number", "")
-                if not reg:
-                    continue
+                if not reg: continue
                 try:
-                    r = sync_one_charity(reg, c, caller=caller, page=page)
-                    if r["created"]:
-                        results["created"] += 1
-                    else:
-                        results["updated"] += 1
-                    if r.get("mx_caller") and r["mx_caller"] != caller:
-                        results["mx_callers_pulled"] += 1
+                    action, pulled_caller = do_sync_one(reg, c, caller, page)
+                    if action == "created": result["created"] += 1
+                    else: result["updated"] += 1
+                    if pulled_caller: result["mx_callers_pulled"] += 1
                 except Exception as e:
-                    print(f"  Sync error for {reg}: {e}")
-                    results["errors"] += 1
+                    print(f"  sync_one({reg}): {e}")
+                    result["errors"] += 1
+        except Exception as e:
+            result["error"] = str(e)
         finally:
-            cache_set(sync_key, results)
-            with _bg_lock:
-                _bg_status[sync_key] = "done"
-        print(f"Maximizer sync done: {results}")
+            cache_set(sync_key, result)
+            with _bg_lock: _bg_status[sync_key] = "idle"
+        print(f"Maximizer sync done: {result}")
 
-    threading.Thread(target=_do_sync, daemon=True).start()
+    threading.Thread(target=_worker, daemon=True).start()
     return jsonify({"ok": True, "status": "loading",
-                    "message": f"Syncing {len(charities)} charities with Maximizer…"}), 202
+                    "message": f"Syncing {len(charities)} charities…"}), 202
 
 @app.route("/api/maximizer/sync_status")
 def mx_sync_status():
-    """Check sync progress."""
     page     = request.args.get("page", "prospects")
     sync_key = f"mx_sync_{page}"
     with _bg_lock:
@@ -886,56 +804,12 @@ def mx_sync_status():
     result = cache_get(sync_key, max_age=60)
     return jsonify({"status": status, "result": result})
 
-@app.route("/api/maximizer/pull_callers", methods=["POST"])
-def mx_pull_callers():
-    """
-    Pull caller names FROM Maximizer for a list of reg numbers.
-    Updates dashboard called_log if Maximizer has a caller we don't.
-    """
-    data     = request.json or {}
-    reg_numbers = data.get("reg_numbers", [])
-    page     = data.get("page", "prospects")
-    pulled   = {}
-
-    for reg in reg_numbers[:50]:  # limit to 50 per call
-        try:
-            existing = mx_find_by_org_number(reg)
-            if existing:
-                mx_caller = mx_get_caller_for_entry(existing)
-                if mx_caller:
-                    key = f"{page}|{reg}"
-                    if key not in _called_log:
-                        _called_log[key] = {
-                            "reg_number": reg, "page": page,
-                            "called_by": mx_caller,
-                            "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-                            "source": "maximizer"
-                        }
-                    pulled[reg] = mx_caller
-        except Exception as e:
-            print(f"pull_caller({reg}): {e}")
-
-    return jsonify({"ok": True, "pulled": pulled, "count": len(pulled)})
-
 @app.route("/api/maximizer/config", methods=["GET", "POST"])
 def mx_config():
-    """Get or update Maximizer config (base URL override)."""
     global MX_BASE
     if request.method == "POST":
         data = request.json or {}
         if data.get("base_url"):
             MX_BASE = data["base_url"].rstrip("/")
-            print(f"Maximizer base URL updated to: {MX_BASE}")
-        return jsonify({"ok": True, "base_url": MX_BASE, "database": MX_DB})
     return jsonify({"ok": True, "base_url": MX_BASE, "database": MX_DB,
                     "user": "MAHESH", "token_expires": "2029-05-10"})
-
-@app.route("/api/maximizer/set_url", methods=["POST"])
-def mx_set_url():
-    """Quick endpoint to set Maximizer URL."""
-    global MX_BASE
-    data = request.json or {}
-    url  = data.get("url","").strip().rstrip("/")
-    if url:
-        MX_BASE = url
-    return jsonify({"ok": True, "base_url": MX_BASE})
