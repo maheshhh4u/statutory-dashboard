@@ -919,84 +919,91 @@ def mx_read_full():
 
 @app.route("/api/maximizer/create_test_charity")
 def mx_create_test_charity():
-    """Create charity, find its key, probe valid fields."""
-    import requests as req, base64
+    """Create charity, get key via Identification, probe valid fields."""
+    import requests as req, base64 as b64
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
     reg  = "1202982"
     name = title_case("ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON")
     results = {}
 
-    # Step 1: Delete any existing test entry first
-    # Search for Company type entries
-    try:
-        rf = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-            json={"abEntry": {
-                "criteria": {"searchQuery": {"type": "Company"}, "top": 20},
-                "scope": {"fields": {"key":1,"companyName":1,"type":1}}
-            }}, timeout=10)
-        companies = rf.json().get("abEntry",{}).get("Data",[])
-        results["existing_companies"] = companies
-        # Delete any previous test entries
-        for c in companies:
-            if "george" in c.get("companyName","").lower() or "orthodox" in c.get("companyName","").lower():
-                req.post(f"{MX_BASE}/AbEntryDelete", headers=hdrs,
-                    json={"AbEntry": {"Data": {"Key": c["key"]}}}, timeout=8)
-                results["deleted"] = c.get("companyName")
-    except Exception as e:
-        results["search_companies_err"] = str(e)
-
-    # Step 2: Create
+    # Step 1: Create
     r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
         json={"AbEntry": {"Data": {"Type": "Company", "CompanyName": name}}}, timeout=10)
     resp = r.json()
     results["create_code"] = resp.get("Code")
     if resp.get("Code") != 0:
-        results["create_err"] = str(resp.get("Msg",""))
+        results["err"] = str(resp.get("Msg",""))
         return jsonify(results)
     results["SUCCESS"] = True
 
-    # Step 3: Find the new entry by searching Company type
+    # Step 2: Get Identification from response Data (it comes back without Key)
+    # The response Data contains CompanyName and Type — read Identification by searching
+    # We need to read all companies and find ours
+    # Try with different search approaches
     new_key = ""
-    try:
-        rf2 = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-            json={"abEntry": {
-                "criteria": {"searchQuery": {"type": "Company"}, "top": 20},
-                "scope": {"fields": {"key":1,"companyName":1,"type":1}}
-            }}, timeout=10)
-        companies2 = rf2.json().get("abEntry",{}).get("Data",[])
-        results["companies_after_create"] = companies2
-        for c in companies2:
-            cn = c.get("companyName","")
-            if "george" in cn.lower() or "orthodox" in cn.lower():
-                new_key = c.get("key","")
-                results["found_key"] = new_key
-                results["found_name"] = cn
-                break
-    except Exception as e:
-        results["find_err"] = str(e)
+
+    # Approach A: search with empty query but filter type=Company  
+    for search_body in [
+        # Try searching ALL types including Company
+        {"abEntry": {"criteria": {"searchQuery": {"companyName": name[:20]},
+                                   "top": 5},
+                     "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
+        # Try with no type filter at all - get everything
+        {"abEntry": {"criteria": {"searchQuery": {"companyName": "St George"},
+                                   "top": 5},
+                     "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
+        # Try getting last 50 entries of any type
+        {"abEntry": {"criteria": {"searchQuery": {}, "top": 50},
+                     "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
+    ]:
+        try:
+            rf = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
+                json=search_body, timeout=10)
+            d = rf.json()
+            entries = d.get("abEntry",{}).get("Data",[])
+            results[f"search_{list(search_body['abEntry']['criteria']['searchQuery'].keys())[0] if search_body['abEntry']['criteria']['searchQuery'] else 'empty'}"] = entries
+            for e in entries:
+                cn = e.get("companyName","")
+                if "george" in cn.lower() or "orthodox" in cn.lower():
+                    new_key = e.get("key","")
+                    results["found_key"] = new_key
+                    break
+            if new_key: break
+        except Exception as e:
+            results[f"search_err"] = str(e)[:80]
+
+    # Approach B: construct key from known Identification pattern
+    # Previous entry: Identification=260512251420242170269C → Key=Q29tcGFueQkyNDA4MTMyNTIwMTMzNTMzNjAwNzhDCTA=
+    # Pattern: base64("Company	{id}	0") — but we don't know the new Identification yet
+    # However, we can try using the Identification from the PREVIOUS entry in screenshot
+    # For the entry created right now, we need to read it back
 
     if not new_key:
-        results["note"] = "Created OK but key not found. Check companies_after_create list."
+        results["note"] = "Key not found via search — Company type not returned by AbEntryRead"
+        results["manual_fix"] = (
+            "Go to Maximizer, open the new entry, copy the Identification number, "
+            "then call /api/maximizer/update_by_id?id=IDENTIFICATION_HERE to fill the fields"
+        )
+
+    results["key"] = new_key
+
+    if not new_key:
         return jsonify(results)
 
-    # Step 4: Probe each field
+    # Step 3: Probe field names
     field_candidates = [
-        ("Phone1",       "07448976144"),
-        ("Email1",       "test@test.com"),
-        ("WebSite",      "http://test.com"),
-        ("CityTown",     "London"),
-        ("City",         "London"),
-        ("StateProvince","London"),
-        ("StProv",       "London"),
-        ("Addr1",        "Test Street"),
-        ("Address1",     "Test Street"),
-        ("AddressLine1", "Test Street"),
-        ("ZipCode",      "EC1A 1BB"),
-        ("Zip",          "EC1A 1BB"),
-        ("Country",      "United Kingdom"),
-        ("AccountNo",    reg),
-        ("Notes",        "test note"),
-        ("Note",         "test note"),
+        ("Phone1",        "07448976144"),
+        ("Email1",        "test@test.com"),
+        ("WebSite",       "http://test.com"),
+        ("CityTown",      "London"),
+        ("City",          "London"),
+        ("StateProvince", "London"),
+        ("StProv",        "London"),
+        ("Addr1",         "Test St"),
+        ("Address1",      "Test St"),
+        ("ZipCode",       "EC1A"),
+        ("Country",       "United Kingdom"),
+        ("AccountNo",     reg),
     ]
     results["fields"] = {}
     for field, val in field_candidates:
@@ -1004,10 +1011,44 @@ def mx_create_test_charity():
             r2 = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
                 json={"AbEntry": {"Data": {"Key": new_key, field: val}}}, timeout=8)
             d = r2.json()
-            ok = d.get("Code") == 0
-            results["fields"][field] = "✓" if ok else f"✗ {str(d.get('Msg','[no msg]'))[:80]}"
+            results["fields"][field] = "✓" if d.get("Code")==0 else f"✗ {str(d.get('Msg',''))[:60]}"
         except Exception as e:
-            results["fields"][field] = f"ERR:{str(e)[:60]}"
+            results["fields"][field] = f"ERR:{str(e)[:50]}"
+
+    return jsonify(results)
+
+
+@app.route("/api/maximizer/update_by_id")
+def mx_update_by_id():
+    """Update an entry using its Identification number (shown in Maximizer UI)."""
+    import requests as req, base64 as b64
+    identification = request.args.get("id","").strip()
+    reg = request.args.get("reg","1202982")
+    if not identification:
+        return jsonify({"error": "Provide ?id=IDENTIFICATION_FROM_MAXIMIZER_UI"}), 400
+
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+    # Construct the key: base64("Company	{identification}	0")
+    raw_key = f"Company	{identification}	0"
+    key = b64.b64encode(raw_key.encode()).decode()
+    results = {"key": key, "identification": identification}
+
+    # Probe and set fields
+    updates = {
+        "Phone1":    request.args.get("phone","07448976144"),
+        "Email1":    request.args.get("email","st.georges.ioc.london@gmail.com"),
+        "WebSite":   request.args.get("web","www.indianorthodox.london"),
+        "AccountNo": reg,
+    }
+    for field, val in updates.items():
+        if not val: continue
+        try:
+            r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
+                json={"AbEntry": {"Data": {"Key": key, field: val}}}, timeout=8)
+            d = r.json()
+            results[field] = "✓" if d.get("Code")==0 else f"✗ {str(d.get('Msg',''))[:80]}"
+        except Exception as e:
+            results[field] = f"ERR:{str(e)[:60]}"
 
     return jsonify(results)
 
