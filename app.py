@@ -773,6 +773,50 @@ def mx_test():
         return jsonify({"ok": False, "error": msg, "hint": hint,
                         "server_ip": server_ip}), 200
 
+@app.route("/api/maximizer/test_create")
+def mx_test_create():
+    """Try creating a minimal test entry and show full Maximizer response."""
+    try:
+        body = {
+            "abEntry": {
+                "type": "Company",
+                "companyName": "TEST CHARITY API 1202982",
+                "organizationNumber": "1202982"
+            }
+        }
+        print(f"test_create body: {body}")
+        result = mx_call("AbEntryCreate", body)
+        return jsonify({"ok": True, "result": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 200
+
+@app.route("/api/maximizer/read_sample")
+def mx_read_sample():
+    """Read one existing entry to see exact field structure."""
+    try:
+        body = {
+            "abEntry": {
+                "criteria": {"searchQuery": {}, "top": 1},
+                "scope": {
+                    "fields": {
+                        "key": 1,
+                        "companyName": 1,
+                        "organizationNumber": 1,
+                        "type": 1,
+                        "phone1": 1,
+                        "email1": 1,
+                        "address1": 1,
+                        "website": 1,
+                        "udf": 1
+                    }
+                }
+            }
+        }
+        result = mx_call("AbEntryRead", body)
+        return jsonify({"ok": True, "result": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 200
+
 @app.route("/api/maximizer/find")
 def mx_find():
     """Find a charity in Maximizer by reg number or name — for debugging."""
