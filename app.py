@@ -888,6 +888,65 @@ def mx_read_full():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 200
 
+@app.route("/api/maximizer/create_test_charity")
+def mx_create_test_charity():
+    """Directly create charity 1202982 and show full result."""
+    import requests as req
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+
+    reg  = "1202982"
+    name = "ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"
+    full_name = f"{name} [{reg}]"[:100]
+
+    # Step 1: Check if already exists
+    try:
+        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
+            json={"abEntry": {"criteria": {"searchQuery": {"companyName": f"[{reg}]"}, "top": 5},
+                              "scope": {"fields": {"key": 1, "companyName": 1}}}}, timeout=10)
+        existing = r.json().get("abEntry", {}).get("Data", [])
+    except Exception as e:
+        existing = []
+
+    if existing:
+        return jsonify({"already_exists": True, "entries": existing})
+
+    # Step 2: Create with correct write syntax
+    results = {}
+    for data in [
+        # Try 1: minimal
+        {"Type": "Company", "CompanyName": full_name},
+        # Try 2: with phone
+        {"Type": "Company", "CompanyName": full_name,
+         "Phone1": "07448976144", "WebSite": "www.indianorthodox.london",
+         "Email1": "st.georges.ioc.london@gmail.com",
+         "City": "City of London"},
+        # Try 3: as Contact (matching existing entries pattern)
+        {"Type": "Contact", "CompanyName": name,
+         "LastName": f"[{reg}]", "FirstName": name[:40]},
+    ]:
+        try:
+            r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
+                        json={"AbEntry": {"Data": data}}, timeout=10)
+            resp = r.json()
+            results[f"try_{list(data.keys())[0]}_{data.get('Type')}"] = {
+                "Code": resp.get("Code"),
+                "Msg": resp.get("Msg",""),
+                "Data": resp.get("AbEntry", resp.get("abEntry", {}))
+            }
+            if resp.get("Code") == 0:
+                results["SUCCESS"] = True
+                # Now verify it was created
+                r2 = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
+                    json={"abEntry": {"criteria": {"searchQuery": {"companyName": f"[{reg}]"}, "top": 5},
+                                      "scope": {"fields": {"key": 1, "companyName": 1, "type": 1}}}},
+                    timeout=10)
+                results["verify"] = r2.json().get("abEntry", {}).get("Data", [])
+                break
+        except Exception as e:
+            results[f"err"] = str(e)
+
+    return jsonify(results)
+
 @app.route("/api/maximizer/find")
 def mx_find():
     """Find a charity in Maximizer by reg number or name — for debugging."""
