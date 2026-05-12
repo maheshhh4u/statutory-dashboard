@@ -670,16 +670,18 @@ def title_case(s):
     """Convert ALL CAPS charity name to Title Case."""
     if not s:
         return s
-    # Words to keep lowercase (unless first word)
     minor = {"a","an","the","and","or","but","of","in","on","at","to","for",
-             "by","with","from","into","onto","up","as","its","it's"}
+             "by","with","from","into","onto","up","as","its"}
+    # Known acronyms to keep uppercase
+    acronyms = {"uk","cio","nhs","ymca","rspca","rspb","rnli","rnib","nspcc",
+                "hmrc","plc","ltd","llp","cic","cbf","raf","rbl","ica"}
     words = s.strip().split()
     result = []
     for i, w in enumerate(words):
-        # Keep acronyms uppercase (e.g. UK, CIO, NHS, YMCA)
-        if len(w) <= 4 and w.isupper() and w.isalpha():
-            result.append(w)
-        elif i == 0 or w.lower() not in minor:
+        wl = w.lower().rstrip("'s").rstrip(",").rstrip(".")
+        if wl in acronyms:
+            result.append(w.upper())
+        elif i == 0 or w.lower().rstrip(",") not in minor:
             result.append(w.capitalize())
         else:
             result.append(w.lower())
@@ -932,58 +934,59 @@ def mx_create_test_charity():
     if resp.get("Code") != 0:
         return jsonify(results)
 
-    # Log full response to find where key is returned
     results["full_resp"] = resp
     results["SUCCESS"] = True
 
-    # Try every possible location for the key in the response
+    # The Identification field from the UI = "260512251420242170269C"
+    # Key in API = base64 of "Company	{identification}	0"
+    # Get the key by reading recent entries
     new_key = ""
-    for path in [
-        lambda r: r.get("AbEntry",{}).get("Data",{}).get("Key",""),
-        lambda r: r.get("abEntry",{}).get("Data",{}).get("Key",""),
-        lambda r: r.get("Data",{}).get("Key",""),
-        lambda r: r.get("Key",""),
-        lambda r: (r.get("AbEntry",{}).get("Data") or [{}])[0].get("Key","") if isinstance(r.get("AbEntry",{}).get("Data"),list) else "",
-    ]:
-        try:
-            val = path(resp)
-            if val: new_key = val; break
-        except: pass
-
-    results["key"] = new_key
-
-    # Search for the entry by name to get the key
     try:
         rf = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-            json={"abEntry": {"criteria": {"searchQuery": {"companyName": name[:40]}, "top": 5},
-                              "scope": {"fields": {"key":1,"companyName":1,"type":1}}}}, timeout=10)
+            json={"abEntry": {
+                "criteria": {"searchQuery": {}, "top": 10},
+                "scope": {"fields": {"key":1,"companyName":1,"type":1}}
+            }}, timeout=10)
         found = rf.json().get("abEntry",{}).get("Data",[])
-        results["found_entries"] = found
-        if found and not new_key:
-            new_key = found[0].get("key","")
-            results["key_from_search"] = new_key
+        results["all_recent"] = found
+        # Find our entry by name
+        for e in found:
+            cn = e.get("companyName","")
+            if "george" in cn.lower() or "orthodox" in cn.lower() or "1202982" in cn:
+                new_key = e.get("key","")
+                results["found_key"] = new_key
+                break
     except Exception as e:
         results["find_err"] = str(e)
 
     if not new_key:
-        results["note"] = "Entry created but key not found — check found_entries"
+        results["note"] = "Entry created (Code 0) but key not found in recent entries"
         return jsonify(results)
+
+    results["key"] = new_key
 
     # Step 2: Probe each optional field name by updating one at a time
     field_candidates = [
-        ("AccountNo",    reg),
+        # Standard fields
         ("Phone1",       "07448976144"),
         ("Email1",       "st.georges.ioc.london@gmail.com"),
         ("WebSite",      "www.indianorthodox.london"),
         ("CityTown",     "City of London"),
         ("City",         "City of London"),
-        ("StateProvince","London"),
-        ("StProv",       "London"),
+        ("StateProvince","City of London"),
+        ("StProv",       "City of London"),
         ("Addr1",        "Rood Lane, Eastcheap"),
         ("Address1",     "Rood Lane, Eastcheap"),
+        ("AddressLine1", "Rood Lane, Eastcheap"),
         ("ZipCode",      "EC3M 5AD"),
         ("Zip",          "EC3M 5AD"),
         ("Country",      "United Kingdom"),
+        ("AccountNo",    reg),
+        # UDF fields (stored under Udf key)
+        ("Udf/Organisation Number New", reg),
+        ("Udf/Caller", "Muhanna"),
+        ("Udf/Date Of Registration", "2023-01-01"),
+        ("Udf/Total Income", "0"),
     ]
     results["fields"] = {}
     for field, val in field_candidates:
