@@ -921,84 +921,99 @@ def mx_read_full():
 
 @app.route("/api/maximizer/probe_fields")
 def mx_probe_fields():
-    """Test write permissions and find correct create format."""
+    """Find the mandatory UDF field blocking creation."""
     import requests as req
     results = {}
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
 
-    # Step 1: Try updating the EXISTING Contact entry (not creating)
-    # If update works but create doesn't, it confirms a permission issue on create
-    existing_key = "Q29udGFjdAkyNDAzMjcyNTIyMzc1Nzk5MzU4MDJDCTE="
-    try:
-        r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
-                    json={"abEntry": {"key": existing_key,
-                                      "companyName": "Juvenis Test Update"}},
-                    timeout=10)
-        results["update_existing"] = {"status": r.status_code, "body": r.json()}
-    except Exception as e:
-        results["update_existing"] = {"error": str(e)}
+    # We know: endpoint accepts calls, token has write access (200 returned)
+    # The issue is a mandatory UDF field we're not sending
+    # UDF fields in Maximizer API use different key formats
 
-    # Step 2: Read full Contact entry to understand field names
+    # First: read existing entry WITHOUT udf field to see base structure
+    try:
+        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
+                    json={"abEntry": {
+                        "criteria": {"searchQuery": {}, "top": 2},
+                        "scope": {"fields": {"key": 1, "companyName": 1,
+                                             "type": 1, "firstName": 1,
+                                             "lastName": 1}}
+                    }}, timeout=10)
+        results["read_entries"] = r.json()
+    except Exception as e:
+        results["read_entries"] = {"error": str(e)}
+
+    # Try creates with UDF fields using different formats
+    # Format 1: UserDefinedFields array
+    udf_attempts = [
+        # No UDFs at all - baseline
+        {},
+        # Sales Status UDF (Table type - might be mandatory)
+        {"userDefinedFields": [{"fieldName": "Sales Status", "value": ""}]},
+        # With Classification folder
+        {"userDefinedFields": [{"fieldName": "Classification", "value": "Charity"}]},
+        # All as empty
+        {"userDefinedFields": [
+            {"fieldName": "Sales Status", "value": ""},
+            {"fieldName": "Client ?", "value": ""},
+        ]},
+    ]
+
+    base_entry = {
+        "type": "Company",
+        "companyName": "TEST CHARITY API",
+        "phone1": "00000000000",
+        "webSite": "http://test.com",
+    }
+
+    for i, udf in enumerate(udf_attempts):
+        entry = {**base_entry}
+        if udf:
+            entry.update(udf)
+        try:
+            r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
+                        json={"abEntry": entry}, timeout=10)
+            resp = r.json()
+            results[f"udf_try_{i}"] = {
+                "extra_fields": list(udf.keys()),
+                "Code": resp.get("Code"),
+                "Msg": resp.get("Msg", "")
+            }
+            if resp.get("Code") == 0:
+                results["SUCCESS"] = f"udf_try_{i} worked!"
+                break
+        except Exception as e:
+            results[f"udf_try_{i}"] = {"error": str(e)[:100]}
+
+    # Also try reading with UserDefinedFields
     try:
         r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
                     json={"abEntry": {
                         "criteria": {"searchQuery": {}, "top": 1},
                         "scope": {"fields": {
-                            "key": 1, "companyName": 1, "type": 1,
-                            "firstName": 1, "lastName": 1,
-                            "email": 1, "phone": 1, "webSite": 1,
-                            "udf": 1
+                            "key": 1,
+                            "companyName": 1,
+                            "userDefinedFields": 1
                         }}
                     }}, timeout=10)
-        results["read_full_contact"] = {"status": r.status_code, "body": r.json()}
+        results["read_with_udf_field"] = r.json()
     except Exception as e:
-        results["read_full_contact"] = {"error": str(e)}
+        results["read_with_udf_field"] = {"error": str(e)}
 
-    # Step 3: Try creating a Contact (not Company) since existing is Contact
+    # Try reading with Udfs (capital)
     try:
-        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
+        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
                     json={"abEntry": {
-                        "type": "Contact",
-                        "firstName": "Charity",
-                        "lastName": "TEST CONTACT 9999",
-                        "companyName": "TEST CONTACT ORG",
-                        "email": "test@test.com"
+                        "criteria": {"searchQuery": {}, "top": 1},
+                        "scope": {"fields": {
+                            "key": 1,
+                            "companyName": 1,
+                            "Udfs": 1
+                        }}
                     }}, timeout=10)
-        results["create_contact"] = {"status": r.status_code, "body": r.json()}
+        results["read_with_Udfs"] = r.json()
     except Exception as e:
-        results["create_contact"] = {"error": str(e)}
-
-    # Step 4: Try creating Individual
-    try:
-        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
-                    json={"abEntry": {
-                        "type": "Individual",
-                        "lastName": "TEST INDIVIDUAL 9999",
-                        "email": "test@test.com"
-                    }}, timeout=10)
-        results["create_individual"] = {"status": r.status_code, "body": r.json()}
-    except Exception as e:
-        results["create_individual"] = {"error": str(e)}
-
-    # Step 5: Test if this token can write at all — try a NoteCreate
-    try:
-        r = req.post(f"{MX_BASE}/NoteCreate", headers=hdrs,
-                    json={"note": {
-                        "text": "Test note from API",
-                        "abEntry": {"key": existing_key}
-                    }}, timeout=10)
-        results["note_create"] = {"status": r.status_code, "body": r.text[:300]}
-    except Exception as e:
-        results["note_create"] = {"error": str(e)}
-
-    # Step 6: Check what endpoints are available
-    for ep in ["AbEntryCreate", "AbEntryUpdate", "AbEntryDelete",
-               "CompanyCreate", "ContactCreate"]:
-        try:
-            r = req.post(f"{MX_BASE}/{ep}", headers=hdrs, json={}, timeout=5)
-            results[f"ep_{ep}"] = r.status_code
-        except Exception as e:
-            results[f"ep_{ep}"] = str(e)[:50]
+        results["read_with_Udfs"] = {"error": str(e)}
 
     return jsonify(results)
 
