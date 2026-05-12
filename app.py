@@ -897,62 +897,50 @@ def mx_read_full():
 
 @app.route("/api/maximizer/probe_fields")
 def mx_probe_fields():
-    """Test correct PascalCase field names and attempt real create."""
-    # First read existing entry with correct PascalCase fields
+    """Comprehensive field discovery and create test."""
     results = {}
-    body = {
-        "abEntry": {
-            "criteria": {"searchQuery": {}, "top": 1},
-            "scope": {
-                "fields": {
-                    "Key": 1,
-                    "CompanyName": 1,
-                    "Type": 1,
-                    "Phone": 1,
-                    "Email": 1,
-                    "WebSite": 1,
-                    "AddressLine1": 1,
-                    "City": 1,
-                    "StateProvince": 1,
-                    "ZipCode": 1,
-                    "LastName": 1,
-                    "FirstName": 1,
-                }
-            }
-        }
-    }
+
+    # Step 1: Read with lowercase fields (we know companyName works)
     try:
+        body = {"abEntry": {"criteria": {"searchQuery": {}, "top": 1},
+                            "scope": {"fields": {"key": 1, "companyName": 1,
+                                                 "type": 1, "phone": 1,
+                                                 "email": 1, "webSite": 1,
+                                                 "firstName": 1, "lastName": 1,
+                                                 "addressLine1": 1, "city": 1,
+                                                 "stateProvince": 1, "zipCode": 1,
+                                                 "country": 1}}}}
         r = mx_call("AbEntryRead", body)
-        results["read_pascal"] = {"Code": r.get("Code"), "data": r.get("abEntry",{}).get("Data",[])}
+        results["read_camel"] = {"Code": r.get("Code"), "data": r.get("abEntry",{}).get("Data",[])}
     except Exception as e:
-        results["read_pascal"] = {"error": str(e)}
+        results["read_camel"] = {"error": str(e)}
 
-    # Now try create with PascalCase fields
-    create_body = {
-        "abEntry": {
-            "Type": "Company",
-            "CompanyName": "TEST PASCAL CASE 9999",
-        }
-    }
-    try:
-        r2 = mx_call("AbEntryCreate", create_body)
-        results["create_pascal"] = r2
-    except Exception as e:
-        results["create_pascal"] = {"error": str(e)}
-
-    # Try with Last/FirstName for mandatory field
-    create_body2 = {
-        "abEntry": {
-            "Type": "Company",
-            "CompanyName": "TEST WITH LASTNAME 9999",
-            "LastName": "TestCharity",
-        }
-    }
-    try:
-        r3 = mx_call("AbEntryCreate", create_body2)
-        results["create_with_lastname"] = r3
-    except Exception as e:
-        results["create_with_lastname"] = {"error": str(e)}
+    # Step 2: Try creating with every possible mandatory field combo
+    attempts = [
+        # Try 1: just companyName lowercase
+        {"type": "Company", "companyName": "TEST1 CHARITY"},
+        # Try 2: with lastName (contact-style mandatory)
+        {"type": "Company", "companyName": "TEST2 CHARITY", "lastName": "TEST2"},
+        # Try 3: Individual instead of Company
+        {"type": "Individual", "lastName": "TestCharity", "firstName": "API"},
+        # Try 4: No type field
+        {"companyName": "TEST4 CHARITY", "lastName": "TEST4"},
+        # Try 5: With email (sometimes mandatory)
+        {"type": "Company", "companyName": "TEST5 CHARITY", "email": "test5@test.com"},
+        # Try 6: With phone
+        {"type": "Company", "companyName": "TEST6 CHARITY", "phone": "01234567890"},
+        # Try 7: All basic fields
+        {"type": "Company", "companyName": "TEST7 CHARITY",
+         "lastName": "TEST7", "email": "test7@test.com", "phone": "01234567890"},
+    ]
+    for i, entry in enumerate(attempts, 1):
+        try:
+            r = mx_call("AbEntryCreate", {"abEntry": entry})
+            results[f"create_{i}"] = {"keys": list(entry.keys()), "Code": r.get("Code"), "Msg": r.get("Msg"), "Data": r.get("abEntry",{}).get("Data",[])}
+            if r.get("Code") == 0:
+                break  # Found working combo!
+        except Exception as e:
+            results[f"create_{i}"] = {"keys": list(entry.keys()), "error": str(e)[:150]}
 
     return jsonify(results)
 
