@@ -597,11 +597,16 @@ select:focus{outline:none;border-color:var(--green)}
         <span style="font-weight:600">Maximizer Connection</span>
         <button class="btn btn-outline btn-sm" onclick="testMxConnection()">🔌 Test Connection</button>
       </div>
-      <div id="mx-conn-status" style="font-size:11px;color:var(--t3)">Not tested yet — click Test Connection</div>
+      <div id="mx-conn-status" style="font-size:11px;color:var(--t3)">Enter your URL below then click Test Connection</div>
       <div style="margin-top:8px">
-        <label style="font-size:11px;font-weight:600;color:var(--t3);display:block;margin-bottom:3px">API Base URL (if different from default)</label>
-        <input id="mx-base-url" placeholder="https://cloudhosted.maximizer.com/MaximizerWebData" style="width:100%;font-family:inherit;font-size:11px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius)">
-        <button class="btn btn-outline btn-sm" style="margin-top:5px" onclick="saveMxUrl()">Save URL</button>
+        <label style="font-size:11px;font-weight:600;color:var(--t3);display:block;margin-bottom:3px">Maximizer API Base URL</label>
+        <input id="mx-base-url" placeholder="e.g. https://uk.maximizer.com/MaximizerWebData" style="width:100%;font-family:inherit;font-size:11px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius)">
+        <div style="margin-top:6px;padding:7px 10px;background:var(--goldl);border-radius:5px;font-size:10px;color:var(--gold);line-height:1.6">
+          💡 <strong>How to find your URL:</strong> Open Maximizer in your browser → look at the address bar.
+          Copy everything up to and including <code>/MaximizerWebData</code> (or similar path before <code>/api</code>).
+          Example: <code>https://uk.maximizer.com/YourCompany/MaximizerWebData</code>
+        </div>
+        <button class="btn btn-outline btn-sm" style="margin-top:6px" onclick="saveMxUrl()">💾 Save URL</button>
       </div>
     </div>
     <div id="mx-sync-info" style="margin-bottom:14px;font-size:12px;color:var(--t2)"></div>
@@ -1226,6 +1231,7 @@ function selectCallerFromPopup(name){
   if(lFil.length)renderLT(lPg);
   if(oFil.length)renderOT(oPg);
   if(msFil.length)renderMsT(msPg);
+  if(sAll.length)renderSR(sAll);
 }
 
 function closeCallerPopup(){
@@ -1303,16 +1309,28 @@ function toggleCalled(pg,reg,name){
     return;
   }
   const k=pg+'|'+reg;
-  if(called[k]) delete called[k];
+  const wasCalled = !!called[k];
+  if(wasCalled) delete called[k];
   else called[k]={pg,reg,name,caller:currentCaller,ts:new Date().toLocaleString('en-GB')};
+  const nowCalled = !wasCalled;
+
+  // Immediately update the button in-place (no full re-render needed)
+  const btn=document.getElementById('cb-'+pg+'-'+reg);
+  if(btn){
+    btn.textContent = nowCalled ? '✓ Called' : 'Call';
+    btn.className   = 'cbtn' + (nowCalled ? ' called' : '');
+  }
+  // Update caller column in-place
+  const callerEl=document.getElementById('cc-col-'+pg+'-'+reg);
+  if(callerEl){
+    callerEl.innerHTML = nowCalled
+      ? `<span class="tag tag-green" style="font-size:10px">${esc(currentCaller)}</span>`
+      : '<span style="color:var(--t3);font-size:10px">—</span>';
+  }
+
   fetch('/api/mark_called_by',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({reg_number:reg,page:pg,name,caller:currentCaller})});
+    body:JSON.stringify({reg_number:reg,page:pg,name,caller:currentCaller,toggle:false})});
   refreshCalled();
-  if(pFil.length)renderPT(pPg);
-  if(nFil.length)renderNT(nPg);
-  if(lFil.length)renderLT(lPg);
-  if(oFil.length)renderOT(oPg);
-  if(msFil.length)renderMsT(msPg);
 }
 
 function cBtn(pg,reg,name){
@@ -1325,9 +1343,10 @@ function cBtn(pg,reg,name){
 
 function callerCol(pg,reg){
   const k=pg+'|'+reg;const c=called[k];
-  if(!c)return'<span style="color:var(--t3);font-size:10px">—</span>';
-  const isMe=c.caller===currentCaller;
-  return`<span class="tag ${isMe?'tag-green':'tag-blue'}" style="font-size:10px" title="${esc(c.ts||'')}">${esc(c.caller||'Unknown')}</span>`;
+  const inner = c
+    ? `<span class="tag ${c.caller===currentCaller?'tag-green':'tag-blue'}" style="font-size:10px" title="${esc(c.ts||'')}">${esc(c.caller||'Unknown')}</span>`
+    : '<span style="color:var(--t3);font-size:10px">—</span>';
+  return `<span id="cc-col-${pg}-${reg}">${inner}</span>`;
 }
 
 // ── Milestones ────────────────────────────────────────────────────────────────
@@ -1414,7 +1433,7 @@ const _origRenderPT=renderPT;
 // ── Maximizer CRM Sync (browser-direct — bypasses server IP whitelist) ────────
 const MX_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJteHB5ZjV6MGFwbWpub29jOXM3NCIsImlhdCI6MTc3ODUyNzEyMywiZXhwIjoxODczMDY1NjAwLCJteC1jaWQiOiJEMzIxRDMxRS04QzRBLTQyRTMtQUU5Ny03NjMzRDk5Qjk5QjIiLCJteC13c2lkIjoiOENDNkVBRkYtQkFERi00RDY5LTgyRTktNzQxREFERUU2QjU0IiwibXgtZGIiOiJjZmM0MWQwY2Y0OWQ0MjViYjQ0ZTQ0YzA3ZDdiMTBmZCIsIm14LXVpZCI6Ik1BSEVTSCIsIm14LXBsIjoiY2xvdWQifQ.hEwCX0Yg35m_QoPa1yXiCoumJ-_9tP1OL3YM8MgOjMU";
 const MX_DB   = "cfc41d0cf49d425bb44e44c07d7b10fd";
-let MX_BASE   = localStorage.getItem('mx_base_url') || 'https://cloudhosted.maximizer.com/MaximizerWebData';
+let MX_BASE   = localStorage.getItem('mx_base_url') || '';
 
 let mxCurrentPage = 'prospects';
 let mxCurrentCharities = [];
@@ -1520,7 +1539,12 @@ function closeMxModal(){document.getElementById('mx-modal').classList.remove('op
 async function testMxConnection(){
   const statusEl=document.getElementById('mx-conn-status');
   const urlInput=document.getElementById('mx-base-url').value.trim();
-  if(urlInput){MX_BASE=urlInput;localStorage.setItem('mx_base_url',urlInput);}
+  if(!urlInput){
+    statusEl.innerHTML='<span style="color:var(--red)">✗ Please enter your Maximizer URL first</span>';
+    return;
+  }
+  MX_BASE=urlInput.replace(/\/+$/,'');
+  localStorage.setItem('mx_base_url',MX_BASE);
   statusEl.innerHTML='<span style="color:var(--blue)">Testing…</span>';
   try{
     const res=await mxPost('/api/v1/AbEntry/read',{
