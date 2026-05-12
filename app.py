@@ -932,11 +932,41 @@ def mx_create_test_charity():
     if resp.get("Code") != 0:
         return jsonify(results)
 
-    new_key = (resp.get("AbEntry") or resp.get("abEntry") or {}).get("Data",{}).get("Key","")
-    results["key"] = new_key
+    # Log full response to find where key is returned
+    results["full_resp"] = resp
     results["SUCCESS"] = True
 
+    # Try every possible location for the key in the response
+    new_key = ""
+    for path in [
+        lambda r: r.get("AbEntry",{}).get("Data",{}).get("Key",""),
+        lambda r: r.get("abEntry",{}).get("Data",{}).get("Key",""),
+        lambda r: r.get("Data",{}).get("Key",""),
+        lambda r: r.get("Key",""),
+        lambda r: (r.get("AbEntry",{}).get("Data") or [{}])[0].get("Key","") if isinstance(r.get("AbEntry",{}).get("Data"),list) else "",
+    ]:
+        try:
+            val = path(resp)
+            if val: new_key = val; break
+        except: pass
+
+    results["key"] = new_key
+
+    # Search for the entry by name to get the key
+    try:
+        rf = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
+            json={"abEntry": {"criteria": {"searchQuery": {"companyName": name[:40]}, "top": 5},
+                              "scope": {"fields": {"key":1,"companyName":1,"type":1}}}}, timeout=10)
+        found = rf.json().get("abEntry",{}).get("Data",[])
+        results["found_entries"] = found
+        if found and not new_key:
+            new_key = found[0].get("key","")
+            results["key_from_search"] = new_key
+    except Exception as e:
+        results["find_err"] = str(e)
+
     if not new_key:
+        results["note"] = "Entry created but key not found — check found_entries"
         return jsonify(results)
 
     # Step 2: Probe each optional field name by updating one at a time
