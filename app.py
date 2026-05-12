@@ -633,20 +633,29 @@ def mx_write_update(data_dict):
     return mx_call("AbEntryUpdate", {"AbEntry": {"Data": data_dict}})
 
 def mx_find_by_org_number(reg_no):
-    """Find Address Book entry by Organisation Number UDF field."""
+    """Find Address Book entry by AccountNo (= CC Reg No.)."""
     try:
-        # Search by companyName containing reg number (stored as suffix [regNo])
+        # Search by AccountNo field (where we store the CC reg number)
         result = mx_read(
-            search_query={"companyName": f"%[{reg_no}]%"},
-            fields={"key": 1, "companyName": 1, "type": 1},
-            top=5
+            search_query={"accountNo": str(reg_no)},
+            fields={"key": 1, "companyName": 1, "type": 1, "accountNo": 1},
+            top=3
         )
         items = result.get("abEntry", {}).get("Data", [])
-        for item in items:
-            if f"[{reg_no}]" in str(item.get("companyName", "")):
-                print(f"  Found by companyName: {item.get('companyName')}")
-                return item
-        print(f"  mx_find: no entry found for reg {reg_no}")
+        if items:
+            print(f"  Found by accountNo: {items[0].get('companyName')}")
+            return items[0]
+        # Fallback: search by companyName containing reg (for old entries)
+        result2 = mx_read(
+            search_query={"companyName": f"%[{reg_no}]%"},
+            fields={"key": 1, "companyName": 1, "type": 1},
+            top=3
+        )
+        items2 = result2.get("abEntry", {}).get("Data", [])
+        if items2:
+            print(f"  Found by old suffix: {items2[0].get('companyName')}")
+            return items2[0]
+        print(f"  mx_find: no entry for reg {reg_no}")
         return None
     except Exception as e:
         print(f"mx_find_by_org_number({reg_no}): {e}")
@@ -657,16 +666,34 @@ def mx_get_caller(entry):
     # For now return empty — we set caller on create/update
     return ""
 
+def title_case(s):
+    """Convert ALL CAPS charity name to Title Case."""
+    if not s:
+        return s
+    # Words to keep lowercase (unless first word)
+    minor = {"a","an","the","and","or","but","of","in","on","at","to","for",
+             "by","with","from","into","onto","up","as","its","it's"}
+    words = s.strip().split()
+    result = []
+    for i, w in enumerate(words):
+        # Keep acronyms uppercase (e.g. UK, CIO, NHS, YMCA)
+        if len(w) <= 4 and w.isupper() and w.isalpha():
+            result.append(w)
+        elif i == 0 or w.lower() not in minor:
+            result.append(w.capitalize())
+        else:
+            result.append(w.lower())
+    return " ".join(result)
+
 def mx_create_entry(c, caller=""):
     """Create Address Book Company entry using correct write syntax."""
     reg  = str(c.get("reg_number","")).strip()
-    name = (c.get("name","") or "Unknown Charity")[:80]
-    # Store reg as suffix "[regNo]" in CompanyName for easy lookup
-    full_name = f"{name} [{reg}]"[:100] if reg else name[:100]
+    raw_name = (c.get("name","") or "Unknown Charity")
+    name = title_case(raw_name)[:100]
 
     data = {
         "Type":        "Company",
-        "CompanyName": full_name,
+        "CompanyName": name,
     }
     # Add optional fields if present
     if c.get("phone"):    data["Phone1"]   = str(c["phone"])[:30]
@@ -675,23 +702,23 @@ def mx_create_entry(c, caller=""):
     if c.get("town"):     data["City"]     = str(c["town"])[:60]
     if c.get("county"):   data["State"]    = str(c["county"])[:60]
     if c.get("address1"): data["Addr1"]    = str(c["address1"])[:100]
+    if reg:               data["AccountNo"] = reg   # store reg in AccountNo field
 
-    print(f"  mx_create: {full_name}")
+    print(f"  mx_create: {name} (reg:{reg})")
     result = mx_write_create(data)
     print(f"  mx_create result: Code={result.get('Code')} Msg={result.get('Msg','')}")
     return result
 
 def mx_update_entry(key, c, caller=""):
-    """Update existing Maximizer entry using correct write syntax."""
+    """Update existing Maximizer entry."""
     data = {"Key": key}
-    name = c.get("name","")
-    reg  = str(c.get("reg_number","")).strip()
-    if name:
-        full_name = f"{name} [{reg}]"[:100] if reg else name[:100]
-        data["CompanyName"] = full_name
+    if c.get("name"):
+        data["CompanyName"] = title_case(c["name"])[:100]
     if c.get("website"):  data["WebSite"] = str(c["website"])[:200]
     if c.get("phone"):    data["Phone1"]  = str(c["phone"])[:30]
-    # Store caller in a note since UDF write syntax needs separate investigation
+    if c.get("email"):    data["Email1"]  = str(c["email"])[:100]
+    reg = str(c.get("reg_number","")).strip()
+    if reg:               data["AccountNo"] = reg
     print(f"  mx_update: key={key[:20]}...")
     return mx_write_update(data)
 
@@ -895,8 +922,9 @@ def mx_create_test_charity():
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
 
     reg  = "1202982"
-    name = "ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"
-    full_name = f"{name} [{reg}]"[:100]
+    raw_name = "ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"
+    name = title_case(raw_name)
+    full_name = name  # No reg number suffix anymore
 
     # Step 1: Check if already exists
     try:
@@ -913,16 +941,10 @@ def mx_create_test_charity():
     # Step 2: Create with correct write syntax
     results = {}
     for data in [
-        # Try 1: minimal
-        {"Type": "Company", "CompanyName": full_name},
-        # Try 2: with phone
         {"Type": "Company", "CompanyName": full_name,
          "Phone1": "07448976144", "WebSite": "www.indianorthodox.london",
          "Email1": "st.georges.ioc.london@gmail.com",
-         "City": "City of London"},
-        # Try 3: as Contact (matching existing entries pattern)
-        {"Type": "Contact", "CompanyName": name,
-         "LastName": f"[{reg}]", "FirstName": name[:40]},
+         "City": "City of London", "AccountNo": reg},
     ]:
         try:
             r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
@@ -937,7 +959,7 @@ def mx_create_test_charity():
                 results["SUCCESS"] = True
                 # Now verify it was created
                 r2 = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-                    json={"abEntry": {"criteria": {"searchQuery": {"companyName": f"[{reg}]"}, "top": 5},
+                    json={"abEntry": {"criteria": {"searchQuery": {"accountNo": reg}, "top": 5},
                                       "scope": {"fields": {"key": 1, "companyName": 1, "type": 1}}}},
                     timeout=10)
                 results["verify"] = r2.json().get("abEntry", {}).get("Data", [])
