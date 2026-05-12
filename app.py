@@ -1020,60 +1020,100 @@ def mx_create_test_charity():
 
 @app.route("/api/maximizer/update_by_id")
 def mx_update_by_id():
-    """Update a Maximizer entry by Identification + probe all field names."""
+    """Read existing Contact entry to find valid field names, then update Company."""
     import requests as req, base64 as b64
-    identification = request.args.get("id","").strip()
-    if not identification:
-        return jsonify({"error": "Provide ?id=IDENTIFICATION_FROM_MAXIMIZER_UI"}), 400
-
+    identification = request.args.get("id","260512251459340800321C").strip()
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
-    key = b64.b64encode(f"Company	{identification}	0".encode()).decode()
-    results = {"key": key}
+    results = {}
 
-    # Test every possible field name
-    field_tests = [
-        ("Phone1",        "07448976144"),
-        ("Email1",        "test@test.com"),
-        ("WebSite",       "http://test.com"),
-        ("AddressLine1",  "Rood Lane"),
-        ("Address1",      "Rood Lane"),
-        ("Addr1",         "Rood Lane"),
-        ("CityTown",      "London"),
-        ("City",          "London"),
-        ("StateProvince", "London"),
-        ("StProv",        "London"),
-        ("ZipCode",       "EC3M 5AD"),
-        ("Country",       "United Kingdom"),
-        ("AccountNo",     "TEST123"),
-        # UDF format 1: nested Udf object
-        ("Udf", {"Organisation Number New": "TEST123"}),
-        # UDF format 2: dot notation
-    ]
-    results["fields"] = {}
-    for item in field_tests:
-        field, val = item
+    # Step 1: Read an existing Contact to see ALL its fields
+    # Use the known working Contact key
+    contact_key = "Q29udGFjdAkyNDAzMjcyNTIyMzc1Nzk5MzU4MDJDCTE="
+    try:
+        # Try reading with every possible field name - find which ones exist
+        all_field_guesses = {
+            "key":1, "companyName":1, "type":1,
+            "phone":1, "phone1":1, "phone2":1,
+            "email":1, "email1":1, "email2":1,
+            "webSite":1, "website":1,
+            "addressLine1":1, "addressLine2":1,
+            "cityTown":1, "stProv":1, "zipCode":1, "country":1,
+            "firstName":1, "lastName":1,
+        }
+        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
+            json={"abEntry": {
+                "criteria": {"searchQuery": {"key": contact_key}, "top": 1},
+                "scope": {"fields": all_field_guesses}
+            }}, timeout=10)
+        d = r.json()
+        results["read_contact_all_fields"] = d
+    except Exception as e:
+        results["read_err"] = str(e)
+
+    # Step 2: Read using the /Read endpoint (different from /AbEntryRead)
+    try:
+        r = req.post(f"{MX_BASE}/Read", headers=hdrs,
+            json={"AbEntry": {
+                "Criteria": {"SearchQuery": {}},
+                "Scope": {"Fields": {"Key":1, "CompanyName":1, "Type":1,
+                                     "AddressLine1":1, "CityTown":1, "StProv":1,
+                                     "ZipCode":1, "Country":1, "Phone1":1,
+                                     "Email1":1, "WebSite":1}},
+                "Top": 1
+            }}, timeout=10)
+        results["read_endpoint"] = {"status": r.status_code, "body": r.text[:500]}
+    except Exception as e:
+        results["read_endpoint_err"] = str(e)
+
+    # Step 3: Try updating Company with every address variant
+    company_key = b64.b64encode(f"Company	{identification}	0".encode()).decode()
+    address_variants = {
+        "Addr1Line1":     "Rood Lane, Eastcheap",
+        "Addr1Line2":     "City",
+        "Addr1CityTown":  "London",
+        "Addr1StProv":    "London",
+        "Addr1ZipCode":   "EC3M 5AD",
+        "Addr1Country":   "United Kingdom",
+        "Address":        "Rood Lane, Eastcheap, London",
+        "StreetAddress":  "Rood Lane",
+        "PostalAddress":  "Rood Lane",
+        "Zip":            "EC3M 5AD",
+        "PostCode":       "EC3M 5AD",
+        "CountryName":    "United Kingdom",
+    }
+    results["address_fields"] = {}
+    for field, val in address_variants.items():
         try:
-            data = {"Key": key, field: val}
             r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
-                json={"AbEntry": {"Data": data}}, timeout=8)
+                json={"AbEntry": {"Data": {"Key": company_key, field: val}}}, timeout=6)
             d = r.json()
-            results["fields"][field] = "✓" if d.get("Code")==0 else f"✗ {str(d.get('Msg',''))[:80]}"
+            results["address_fields"][field] = "✓" if d.get("Code")==0 else f"✗ {str(d.get('Msg',''))[:60]}"
         except Exception as e:
-            results["fields"][field] = f"ERR:{str(e)[:50]}"
+            results["address_fields"][field] = f"ERR:{str(e)[:40]}"
 
-    # Also try UDF update via separate endpoint
-    udf_attempts = [
-        {"AbEntry": {"Data": {"Key": key, "Udf": {"Organisation Number New": "1202982"}}}},
-        {"AbEntry": {"Data": {"Key": key, "Udf": [{"FieldName": "Organisation Number New", "Value": "1202982"}]}}},
-        {"AbEntry": {"Data": {"Key": key, "Udf": {"Caller": "Muhanna"}}}},
+    # Step 4: Try UDF update using the TYPEID format from UDFOptionList.xml
+    # TYPEIDs: 111=What, 112=Who, 113=How, 107=Country, 108=LocalAuth, 109=Region
+    udf_variants = [
+        # Format A: Udfs array with FieldName/Value
+        {"Udfs": [{"FieldName": "/AbEntry/Udf/$TYPEID(111)", "Value": "1"}]},
+        # Format B: UdfValues dict
+        {"UdfValues": {"/AbEntry/Udf/$TYPEID(111)": "1"}},
+        # Format C: UserDefinedFields
+        {"UserDefinedFields": [{"FieldName": "Organisation Number New", "Value": "1202982"}]},
+        # Format D: direct path notation
+        {"/AbEntry/Udf/$TYPEID(111)": "1"},
     ]
-    for i, body in enumerate(udf_attempts):
+    results["udf_formats"] = {}
+    for i, udf_data in enumerate(udf_variants):
         try:
-            r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs, json=body, timeout=8)
+            data = {"Key": company_key}
+            data.update(udf_data)
+            r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
+                json={"AbEntry": {"Data": data}}, timeout=6)
             d = r.json()
-            results[f"udf_format_{i+1}"] = "✓" if d.get("Code")==0 else f"✗ {str(d.get('Msg',''))[:80]}"
+            results["udf_formats"][f"format_{i+1}_{list(udf_data.keys())[0]}"] =                 "✓" if d.get("Code")==0 else f"✗ {str(d.get('Msg',''))[:80]}"
         except Exception as e:
-            results[f"udf_format_{i+1}"] = f"ERR:{str(e)[:50]}"
+            results["udf_formats"][f"format_{i+1}"] = f"ERR:{str(e)[:40]}"
 
     return jsonify(results)
 
