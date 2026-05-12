@@ -775,25 +775,52 @@ def mx_test():
 
 @app.route("/api/maximizer/test_create")
 def mx_test_create():
-    """Try creating a minimal test entry and show full Maximizer response."""
+    """Try several minimal bodies to find what Maximizer requires."""
+    results = []
+    # Attempt 1: Company with just companyName
+    for body in [
+        {"abEntry": {"type": "Company", "companyName": "TEST CHARITY BODY1"}},
+        {"abEntry": {"type": "Company", "companyName": "TEST CHARITY BODY2", "lastName": ""}},
+        {"abEntry": {"CompanyName": "TEST CHARITY BODY3", "Type": "Company"}},
+        {"abEntry": {"type": "Individual", "lastName": "TestCharity", "firstName": "API"}},
+    ]:
+        try:
+            r = mx_call("AbEntryCreate", body)
+            results.append({"body_keys": list(body["abEntry"].keys()),
+                            "response": r})
+            break  # stop on first success
+        except Exception as e:
+            results.append({"body_keys": list(body["abEntry"].keys()),
+                            "error": str(e)[:200]})
+    return jsonify({"ok": True, "attempts": results})
+
+@app.route("/api/maximizer/test_create2")
+def mx_test_create2():
+    """Try Ferret v1 style create."""
     try:
+        # Ferret v1 uses different endpoint and body structure
+        import requests as req
+        url = "https://api.maximizer.com/ferret/v1/abEntry"
+        hdrs = {"Authorization": f"Bearer {MX_TOKEN}",
+                "Content-Type": "application/json"}
         body = {
-            "abEntry": {
+            "data": {
                 "type": "Company",
-                "companyName": "TEST CHARITY API 1202982",
-                "organizationNumber": "1202982"
+                "attributes": {
+                    "companyName": "TEST FERRET CHARITY"
+                }
             }
         }
-        print(f"test_create body: {body}")
-        result = mx_call("AbEntryCreate", body)
-        return jsonify({"ok": True, "result": result})
+        r = req.post(url, headers=hdrs, json=body, timeout=10)
+        return jsonify({"status": r.status_code, "body": r.text[:500]})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 200
+        return jsonify({"error": str(e)}), 200
 
 @app.route("/api/maximizer/read_sample")
 def mx_read_sample():
-    """Read one existing entry to see exact field structure."""
+    """Read one existing entry to see exact field structure Maximizer uses."""
     try:
+        # Request ALL fields to discover what Maximizer actually supports
         body = {
             "abEntry": {
                 "criteria": {"searchQuery": {}, "top": 1},
@@ -801,15 +828,34 @@ def mx_read_sample():
                     "fields": {
                         "key": 1,
                         "companyName": 1,
-                        "organizationNumber": 1,
                         "type": 1,
                         "phone1": 1,
                         "email1": 1,
                         "address1": 1,
                         "website": 1,
-                        "udf": 1
+                        "udf": 1,
+                        "lastName": 1,
+                        "firstName": 1,
+                        "leadSource": 1,
+                        "notes": 1,
                     }
                 }
+            }
+        }
+        result = mx_call("AbEntryRead", body)
+        return jsonify({"ok": True, "result": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 200
+
+@app.route("/api/maximizer/read_full")
+def mx_read_full():
+    """Read one entry requesting every field to map structure."""
+    try:
+        # Minimal scope - let Maximizer return default fields
+        body = {
+            "abEntry": {
+                "criteria": {"searchQuery": {}, "top": 1},
+                "scope": {"fields": {"key": 1}}
             }
         }
         result = mx_call("AbEntryRead", body)
