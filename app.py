@@ -921,76 +921,82 @@ def mx_read_full():
 
 @app.route("/api/maximizer/probe_fields")
 def mx_probe_fields():
-    """Copy exact structure of existing entry to create new ones."""
+    """Test AccountManager and security fields which are always mandatory."""
     import requests as req
     results = {}
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
 
-    # CRITICAL FINDING: All existing entries are type=Contact with lastName="-"
-    # They are NOT Company type. Must create Contact, not Company.
-    # lastName="-" seems to be the convention used.
+    # Always Mandatory fields per Maximizer docs:
+    # - Full Access (accountManager/fullAccess)
+    # - Read Access
+    # - Identification
+    # These must be set. The current user's key should work.
 
-    # Step 1: Read existing entry with ALL possible field name variants
-    for scope_fields in [
-        {"key":1,"companyName":1,"type":1,"firstName":1,"lastName":1,
-         "phone":1,"email":1,"webSite":1,"city":1,"state":1},
-        {"key":1,"companyName":1,"firstName":1,"lastName":1,
-         "BusinessPhone":1,"EmailAddress":1,"Website":1},
-        {"key":1,"companyName":1,"firstName":1,"lastName":1,
-         "phoneNumber":1,"emailAddress":1},
+    # First: get the current user's key
+    try:
+        r = req.post(f"{MX_BASE}/UserRead", headers=hdrs,
+                    json={"user": {"criteria": {"searchQuery": {}}, "top": 1,
+                                   "scope": {"fields": {"key": 1, "uid": 1, "name": 1}}}},
+                    timeout=10)
+        results["user_read"] = r.json()
+        user_key = r.json().get("user", {}).get("Data", [{}])[0].get("key", "")
+        results["user_key"] = user_key
+    except Exception as e:
+        results["user_read"] = {"error": str(e)}
+        user_key = ""
+
+    # Try with accountManager set to current user
+    for user_val in [
+        {"uid": "MAHESH"},
+        {"key": user_key} if user_key else {},
+        "MAHESH",
     ]:
-        try:
-            r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-                json={"abEntry":{"criteria":{"searchQuery":{},"top":1},
-                                 "scope":{"fields":scope_fields}}}, timeout=10)
-            d = r.json()
-            if d.get("Code")==0:
-                results[f"read_{list(scope_fields.keys())[2]}"] = d.get("abEntry",{}).get("Data",[])
-                break
-            else:
-                results[f"read_err_{list(scope_fields.keys())[2]}"] = d.get("Msg")
-        except Exception as e:
-            results[f"read_exc"] = str(e)
-
-    # Step 2: Create Contact (copying existing pattern: type=Contact, lastName="-")
-    contact_attempts = [
-        # Exact copy of existing pattern
-        {"type":"Contact","companyName":"TEST CHARITY 1","lastName":"-","firstName":"Charity"},
-        # With email (Contact has email as mandatory per the doc)
-        {"type":"Contact","companyName":"TEST CHARITY 2","lastName":"-",
-         "firstName":"Charity","email":"test@noemail.com"},
-        # Contact mandatory fields per doc: lastName, firstName, email, position
-        {"type":"Contact","companyName":"TEST CHARITY 3","lastName":"TEST3",
-         "firstName":"Charity","email":"test3@noemail.com","position":"N/A"},
-        # All Contact mandatory fields
-        {"type":"Contact","companyName":"TEST CHARITY 4","lastName":"TEST4",
-         "firstName":"Charity","email":"test4@noemail.com",
-         "position":"N/A","phone1":"00000000000"},
-        # Try without type
-        {"companyName":"TEST CHARITY 5","lastName":"TEST5",
-         "firstName":"Charity","email":"test5@noemail.com"},
-        # Minimal: just lastName
-        {"lastName":"TEST CHARITY 6"},
-        # lastName + email
-        {"lastName":"TEST CHARITY 7","email":"test7@noemail.com"},
-    ]
-
-    for i, entry in enumerate(contact_attempts, 1):
+        if not user_val:
+            continue
+        entry = {
+            "type": "Contact",
+            "companyName": "TEST CHARITY AM",
+            "lastName": "TEST",
+            "accountManager": user_val,
+        }
         try:
             r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
                         json={"abEntry": entry}, timeout=10)
             resp = r.json()
-            results[f"create_{i}"] = {
-                "fields": list(entry.keys()),
-                "Code": resp.get("Code"),
-                "Msg": resp.get("Msg"),
-                "Data": resp.get("abEntry",{})
-            }
+            results[f"am_{str(user_val)[:20]}"] = {"Code": resp.get("Code"), "Msg": resp.get("Msg")}
             if resp.get("Code") == 0:
-                results["SUCCESS"] = f"create_{i} worked! entry={entry}"
-                break
+                results["SUCCESS"] = "AccountManager fixed it!"
         except Exception as e:
-            results[f"create_{i}"] = {"error": str(e)[:100]}
+            results[f"am_{str(user_val)[:20]}"] = {"error": str(e)[:80]}
+
+    # Try with fullAccess and readAccess
+    entry2 = {
+        "type": "Contact",
+        "companyName": "TEST CHARITY FA",
+        "lastName": "TEST2",
+        "fullAccess": {"uid": "MAHESH"},
+        "readAccess": {"uid": "MAHESH"},
+    }
+    try:
+        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
+                    json={"abEntry": entry2}, timeout=10)
+        results["fullAccess_test"] = r.json()
+    except Exception as e:
+        results["fullAccess_test"] = {"error": str(e)}
+
+    # Try with security fields as array
+    entry3 = {
+        "type": "Contact",
+        "companyName": "TEST CHARITY SEC",
+        "lastName": "TEST3",
+        "security": {"fullAccess": [{"uid": "MAHESH"}], "readAccess": [{"uid": "MAHESH"}]},
+    }
+    try:
+        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
+                    json={"abEntry": entry3}, timeout=10)
+        results["security_test"] = r.json()
+    except Exception as e:
+        results["security_test"] = {"error": str(e)}
 
     return jsonify(results)
 
