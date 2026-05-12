@@ -653,42 +653,63 @@ def mx_get_caller(entry):
         return ""
 
 def mx_create_entry(c, caller=""):
-    """Create new Address Book company in Maximizer."""
-    body = {
-        "abEntry": {
-            "type": "company",
-            "companyName":        c.get("name", ""),
-            "organizationNumber": c.get("reg_number", ""),
-            "website":            c.get("website", ""),
-            "phone1": {"number": c.get("phone", "")},
-            "email1": {"address": c.get("email", "")},
-            "address1": {
-                "line1":   c.get("address1", ""),
-                "line2":   c.get("address2", ""),
-                "city":    c.get("town", ""),
-                "stateProvince": c.get("county", ""),
-                "country": "United Kingdom",
-            },
-            "udf": {
-                MX_CALLER_UDF: caller
-            }
-        }
+    """Create new Address Book company in Maximizer using Octopus API format."""
+    # Build entry - only include non-empty fields to avoid API errors
+    entry = {
+        "type":           "Company",
+        "companyName":    c.get("name", "")[:100] if c.get("name") else "Unknown",
+        "organizationNumber": str(c.get("reg_number", ""))[:50],
     }
+    if c.get("website"): entry["website"] = c["website"][:200]
+    if c.get("phone"):   entry["phone1"]  = c["phone"][:30]
+    if c.get("email"):   entry["email1"]  = c["email"][:100]
+    # Address
+    addr = {}
+    if c.get("address1"): addr["line1"]        = c["address1"][:100]
+    if c.get("address2"): addr["line2"]        = c["address2"][:100]
+    if c.get("town"):     addr["city"]         = c["town"][:60]
+    if c.get("county"):   addr["stateProvince"]= c["county"][:60]
+    addr["country"] = "United Kingdom"
+    entry["address1"] = addr
+    # UDF caller field
+    if caller:
+        entry["udf"] = {MX_CALLER_UDF: caller}
+    body = {"abEntry": entry}
+    print(f"  mx_create: {c.get('name','?')} (reg:{c.get('reg_number','?')})")
     return mx_call("AbEntryCreate", body)
 
 def mx_update_entry(key, c, caller=""):
     """Update existing Maximizer entry."""
-    body = {
-        "abEntry": {
-            "key":         key,
-            "companyName": c.get("name", ""),
-            "website":     c.get("website", ""),
-            "udf": {
-                MX_CALLER_UDF: caller
+    entry = {"key": key}
+    if c.get("name"):    entry["companyName"] = c["name"][:100]
+    if c.get("website"): entry["website"]     = c["website"][:200]
+    if caller:           entry["udf"]         = {MX_CALLER_UDF: caller}
+    body = {"abEntry": entry}
+    return mx_call("AbEntryUpdate", body)
+
+def mx_search_by_name(name):
+    """Search for an entry by company name — useful for finding recently created entries."""
+    try:
+        body = {
+            "abEntry": {
+                "criteria": {
+                    "searchQuery": {"companyName": str(name)[:50]},
+                    "top": 5
+                },
+                "scope": {
+                    "fields": {
+                        "key": 1,
+                        "companyName": 1,
+                        "organizationNumber": 1,
+                    }
+                }
             }
         }
-    }
-    return mx_call("AbEntryUpdate", body)
+        result = mx_call("AbEntryRead", body)
+        return result.get("abEntry", {}).get("Data", [])
+    except Exception as e:
+        print(f"mx_search_by_name: {e}")
+        return []
 
 def do_sync_one(reg, c, caller, page):
     """Sync one charity. Returns (action, mx_caller_pulled)."""
@@ -751,6 +772,26 @@ def mx_test():
             hint = "Token expired or invalid."
         return jsonify({"ok": False, "error": msg, "hint": hint,
                         "server_ip": server_ip}), 200
+
+@app.route("/api/maximizer/find")
+def mx_find():
+    """Find a charity in Maximizer by reg number or name — for debugging."""
+    reg  = request.args.get("reg", "")
+    name = request.args.get("name", "")
+    try:
+        if reg:
+            entry = mx_find_by_org_number(reg)
+            if entry:
+                return jsonify({"found": True, "entry": entry})
+            # Try searching by name if provided
+            if name:
+                entries = mx_search_by_name(name[:30])
+                return jsonify({"found": bool(entries), "entries": entries,
+                               "note": "Found by name search (org number not matched)"})
+            return jsonify({"found": False, "note": f"No entry with OrganizationNumber={reg}"})
+        return jsonify({"error": "Provide ?reg= parameter"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/maximizer/sync", methods=["POST"])
 def mx_sync():
