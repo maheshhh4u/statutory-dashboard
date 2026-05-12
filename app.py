@@ -849,19 +849,89 @@ def mx_read_sample():
 
 @app.route("/api/maximizer/read_full")
 def mx_read_full():
-    """Read one entry requesting every field to map structure."""
+    """Read the known entry key with ALL possible fields to discover structure."""
+    known_key = "Q29udGFjdAkyNDAzMjcyNTIyMzc1Nzk5MzU4MDJDCTE="
     try:
-        # Minimal scope - let Maximizer return default fields
+        # Request every field we can think of
         body = {
             "abEntry": {
-                "criteria": {"searchQuery": {}, "top": 1},
-                "scope": {"fields": {"key": 1}}
+                "criteria": {
+                    "searchQuery": {"key": known_key},
+                    "top": 1
+                },
+                "scope": {
+                    "fields": {
+                        "key": 1,
+                        "companyName": 1,
+                        "lastName": 1,
+                        "firstName": 1,
+                        "type": 1,
+                        "phone1": 1,
+                        "phone2": 1,
+                        "phone3": 1,
+                        "email1": 1,
+                        "email2": 1,
+                        "website": 1,
+                        "addr1Line1": 1,
+                        "addr1Line2": 1,
+                        "addr1City": 1,
+                        "addr1State": 1,
+                        "addr1Country": 1,
+                        "addr1Zip": 1,
+                        "addressLine1": 1,
+                        "addressLine2": 1,
+                        "city": 1,
+                        "state": 1,
+                        "country": 1,
+                        "postalCode": 1,
+                        "udf": 1,
+                        "notes": 1,
+                        "leadSource": 1,
+                        "isLead": 1,
+                    }
+                }
             }
         }
         result = mx_call("AbEntryRead", body)
         return jsonify({"ok": True, "result": result})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 200
+
+@app.route("/api/maximizer/probe_fields")
+def mx_probe_fields():
+    """Probe each field individually to find which ones are valid."""
+    known_key = "Q29udGFjdAkyNDAzMjcyNTIyMzc1Nzk5MzU4MDJDCTE="
+    field_groups = [
+        ["key","companyName","type"],
+        ["key","lastName","firstName"],
+        ["key","phone1","phone2","phone3"],
+        ["key","email1","email2"],
+        ["key","website"],
+        ["key","addr1Line1","addr1Line2","addr1City","addr1State","addr1Country","addr1Zip"],
+        ["key","addressLine1","city","state","postalCode","country"],
+        ["key","address","street","zipCode"],
+        ["key","udf"],
+        ["key","leadSource","isLead","notes"],
+    ]
+    results = {}
+    for fields in field_groups:
+        scope = {f: 1 for f in fields}
+        body = {
+            "abEntry": {
+                "criteria": {"searchQuery": {"key": known_key}, "top": 1},
+                "scope": {"fields": scope}
+            }
+        }
+        try:
+            r = mx_call("AbEntryRead", body)
+            if r.get("Code") == 0:
+                data = r.get("abEntry", {}).get("Data", [{}])
+                results[",".join(fields[1:])] = {"ok": True, "sample": data[0] if data else {}}
+            else:
+                results[",".join(fields[1:])] = {"ok": False, "msg": r.get("Msg")}
+        except Exception as e:
+            results[",".join(fields[1:])] = {"ok": False, "error": str(e)[:100]}
+    return jsonify(results)
 
 @app.route("/api/maximizer/find")
 def mx_find():
