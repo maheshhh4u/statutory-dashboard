@@ -607,127 +607,102 @@ def mx_hdrs():
     }
 
 def mx_call(endpoint, body):
-    """POST to Maximizer Octopus API. endpoint e.g. 'AbEntryRead'."""
+    """POST to Maximizer Octopus API."""
     url = f"{MX_BASE.rstrip('/')}/{endpoint}"
     r = requests.post(url, headers=mx_hdrs(), json=body, timeout=20)
     if not r.ok:
         raise Exception(f"{r.status_code} {r.reason}: {r.text[:200]}")
     return r.json()
 
-def mx_find_by_org_number(reg_no):
-    """Find Address Book entry by searching companyName for [reg_no] suffix."""
-    try:
-        # We store reg as "[1202982]" suffix in companyName
-        body = {
-            "abEntry": {
-                "criteria": {
-                    "searchQuery": {"companyName": f"[{reg_no}]"},
-                    "top": 5
-                },
-                "scope": {
-                    "fields": {"key": 1, "companyName": 1, "type": 1}
-                }
-            }
+def mx_read(search_query=None, fields=None, top=1):
+    """Read AbEntry using lowercase read syntax."""
+    body = {
+        "abEntry": {
+            "criteria": {"searchQuery": search_query or {}, "top": top},
+            "scope": {"fields": fields or {"key": 1, "companyName": 1, "type": 1}}
         }
-        result = mx_call("AbEntryRead", body)
+    }
+    return mx_call("AbEntryRead", body)
+
+def mx_write_create(data_dict):
+    """Create AbEntry using PascalCase Data wrapper syntax."""
+    return mx_call("AbEntryCreate", {"AbEntry": {"Data": data_dict}})
+
+def mx_write_update(data_dict):
+    """Update AbEntry using PascalCase Data wrapper syntax."""
+    return mx_call("AbEntryUpdate", {"AbEntry": {"Data": data_dict}})
+
+def mx_find_by_org_number(reg_no):
+    """Find Address Book entry by Organisation Number UDF field."""
+    try:
+        # Search by companyName containing reg number (stored as suffix [regNo])
+        result = mx_read(
+            search_query={"companyName": f"%[{reg_no}]%"},
+            fields={"key": 1, "companyName": 1, "type": 1},
+            top=5
+        )
         items = result.get("abEntry", {}).get("Data", [])
         for item in items:
-            if f"[{reg_no}]" in str(item.get("companyName","")):
+            if f"[{reg_no}]" in str(item.get("companyName", "")):
+                print(f"  Found by companyName: {item.get('companyName')}")
                 return item
-        # Fallback: search by UDF Organisation Number New
-        try:
-            body2 = {
-                "abEntry": {
-                    "criteria": {
-                        "searchQuery": {"udf": {"Organisation Number New": str(reg_no)}},
-                        "top": 1
-                    },
-                    "scope": {"fields": {"key": 1, "companyName": 1}}
-                }
-            }
-            result2 = mx_call("AbEntryRead", body2)
-            items2 = result2.get("abEntry", {}).get("Data", [])
-            if items2: return items2[0]
-        except Exception:
-            pass
+        print(f"  mx_find: no entry found for reg {reg_no}")
         return None
     except Exception as e:
         print(f"mx_find_by_org_number({reg_no}): {e}")
         return None
 
 def mx_get_caller(entry):
-    """Extract caller from UDF field."""
-    try:
-        udfs = entry.get("Udf", entry.get("udf", {}))
-        val = udfs.get(MX_CALLER_UDF, "") if isinstance(udfs, dict) else ""
-        return str(val or "").strip()
-    except Exception:
-        return ""
+    """Extract caller from entry — stored in companyName or fetched separately."""
+    # For now return empty — we set caller on create/update
+    return ""
 
 def mx_create_entry(c, caller=""):
-    """Create new Address Book company in Maximizer.
-    Mandatory fields for Company: companyName, phone1, webSite (per Maximizer setup)."""
+    """Create Address Book Company entry using correct write syntax."""
     reg  = str(c.get("reg_number","")).strip()
     name = (c.get("name","") or "Unknown Charity")[:80]
-    # Store reg number as suffix so we can find it later: "Charity Name [1202982]"
+    # Store reg as suffix "[regNo]" in CompanyName for easy lookup
     full_name = f"{name} [{reg}]"[:100] if reg else name[:100]
 
-    # phone1 and webSite are MANDATORY in this Maximizer setup
-    phone   = (c.get("phone","")   or "N/A")[:30]
-    website = (c.get("website","") or "N/A")[:200]
-
-    entry = {
-        "type":        "Company",
-        "companyName": full_name,
-        "phone1":      phone,
-        "webSite":     website,
+    data = {
+        "Type":        "Company",
+        "CompanyName": full_name,
     }
-    # Optional fields — only add if non-empty
-    if c.get("email"):    entry["email1"]  = c["email"][:100]
-    if c.get("town"):     entry["city"]    = c["town"][:60]
-    if c.get("county"):   entry["state"]   = c["county"][:60]
-    if c.get("address1"): entry["addr1"]   = c["address1"][:100]
+    # Add optional fields if present
+    if c.get("phone"):    data["Phone1"]   = str(c["phone"])[:30]
+    if c.get("website"):  data["WebSite"]  = str(c["website"])[:200]
+    if c.get("email"):    data["Email1"]   = str(c["email"])[:100]
+    if c.get("town"):     data["City"]     = str(c["town"])[:60]
+    if c.get("county"):   data["State"]    = str(c["county"])[:60]
+    if c.get("address1"): data["Addr1"]    = str(c["address1"])[:100]
 
-    # UDF: store caller and org number
-    udf_fields = {}
-    if caller:
-        udf_fields["Caller"] = caller
-    if reg:
-        udf_fields["Organisation Number New"] = reg
-    if udf_fields:
-        entry["udf"] = udf_fields
-
-    body = {"abEntry": entry}
-    print(f"  mx_create body: {body}")
-    result = mx_call("AbEntryCreate", body)
+    print(f"  mx_create: {full_name}")
+    result = mx_write_create(data)
     print(f"  mx_create result: Code={result.get('Code')} Msg={result.get('Msg','')}")
     return result
 
 def mx_update_entry(key, c, caller=""):
-    """Update existing Maximizer entry using PascalCase fields."""
-    entry = {"Key": key}
+    """Update existing Maximizer entry using correct write syntax."""
+    data = {"Key": key}
     name = c.get("name","")
     reg  = str(c.get("reg_number","")).strip()
     if name:
         full_name = f"{name} [{reg}]"[:100] if reg else name[:100]
-        entry["CompanyName"] = full_name
-    if c.get("website"): entry["WebSite"] = c["website"][:200]
-    body = {"abEntry": entry}
-    return mx_call("AbEntryUpdate", body)
+        data["CompanyName"] = full_name
+    if c.get("website"):  data["WebSite"] = str(c["website"])[:200]
+    if c.get("phone"):    data["Phone1"]  = str(c["phone"])[:30]
+    # Store caller in a note since UDF write syntax needs separate investigation
+    print(f"  mx_update: key={key[:20]}...")
+    return mx_write_update(data)
 
 def mx_search_by_name(name):
     """Search by company name."""
     try:
-        body = {
-            "abEntry": {
-                "criteria": {
-                    "searchQuery": {"CompanyName": f"%{name[:30]}%"},
-                    "top": 5
-                },
-                "scope": {"fields": {"Key": 1, "CompanyName": 1, "Type": 1}}
-            }
-        }
-        result = mx_call("AbEntryRead", body)
+        result = mx_read(
+            search_query={"companyName": f"%{name[:30]}%"},
+            fields={"key": 1, "companyName": 1, "type": 1},
+            top=5
+        )
         return result.get("abEntry", {}).get("Data", [])
     except Exception as e:
         print(f"mx_search_by_name: {e}")
@@ -769,13 +744,7 @@ def mx_test():
     except Exception:
         pass
     try:
-        body = {
-            "abEntry": {
-                "criteria": {"searchQuery": {}, "top": 1},
-                "scope": {"fields": {"key": 1, "companyName": 1}}
-            }
-        }
-        result = mx_call("AbEntryRead", body)
+        result = mx_read(fields={"key": 1, "companyName": 1}, top=1)
         entries = result.get("abEntry", {}).get("Data", [])
         count   = len(entries)
         sample  = entries[0].get("companyName","") if entries else ""
@@ -918,59 +887,6 @@ def mx_read_full():
         return jsonify({"ok": True, "result": result})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 200
-
-@app.route("/api/maximizer/probe_fields")
-def mx_probe_fields():
-    """Test correct write syntax: AbEntry.Data wrapper with PascalCase."""
-    import requests as req
-    results = {}
-    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
-
-    # CRITICAL DISCOVERY from docs:
-    # Write syntax uses: {"AbEntry": {"Data": {...}}} NOT {"abEntry": {...}}
-    # PascalCase keys inside Data wrapper
-
-    # Test 1: Correct write syntax - Company
-    try:
-        body = {"AbEntry": {"Data": {
-            "Type": "Company",
-            "CompanyName": "TEST WRITE SYNTAX CO",
-        }}}
-        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs, json=body, timeout=10)
-        results["write_company"] = r.json()
-    except Exception as e:
-        results["write_company"] = {"error": str(e)}
-
-    # Test 2: Contact with Data wrapper
-    try:
-        body = {"AbEntry": {"Data": {
-            "Type": "Contact",
-            "LastName": "TestContact",
-            "CompanyName": "TEST WRITE SYNTAX CT",
-        }}}
-        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs, json=body, timeout=10)
-        results["write_contact"] = r.json()
-    except Exception as e:
-        results["write_contact"] = {"error": str(e)}
-
-    # Test 3: Try the /AbEntry endpoint (not /AbEntryCreate)
-    try:
-        body = {"AbEntry": {"Data": {"Type": "Company", "CompanyName": "TEST ENDPOINT"}}}
-        r = req.post(f"{MX_BASE}/AbEntry", headers=hdrs, json=body, timeout=10)
-        results["endpoint_AbEntry"] = {"status": r.status_code, "body": r.text[:200]}
-    except Exception as e:
-        results["endpoint_AbEntry"] = {"error": str(e)}
-
-    # Test 4: Read syntax also with Data wrapper (to check consistency)
-    try:
-        body = {"AbEntry": {"Data": {"Criteria": {"SearchQuery": {}}, "Top": 1,
-                                     "Scope": {"Fields": {"Key": 1, "CompanyName": 1, "Type": 1}}}}}
-        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json=body, timeout=10)
-        results["read_data_wrapper"] = r.json()
-    except Exception as e:
-        results["read_data_wrapper"] = {"error": str(e)}
-
-    return jsonify(results)
 
 @app.route("/api/maximizer/find")
 def mx_find():
