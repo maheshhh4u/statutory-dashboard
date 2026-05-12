@@ -615,30 +615,41 @@ def mx_call(endpoint, body):
     return r.json()
 
 def mx_find_by_org_number(reg_no):
-    """Find Address Book entry by CompanyName search containing reg number."""
+    """Find Address Book entry by searching companyName for [reg_no] suffix."""
     try:
-        # Search by CompanyName containing the reg number (stored as suffix)
+        # We store reg as "[1202982]" suffix in companyName
         body = {
             "abEntry": {
                 "criteria": {
-                    "searchQuery": {"CompanyName": f"%{reg_no}%"},
+                    "searchQuery": {"companyName": f"[{reg_no}]"},
                     "top": 5
                 },
                 "scope": {
-                    "fields": {
-                        "Key": 1,
-                        "CompanyName": 1,
-                        "Type": 1,
-                    }
+                    "fields": {"key": 1, "companyName": 1, "type": 1}
                 }
             }
         }
         result = mx_call("AbEntryRead", body)
         items = result.get("abEntry", {}).get("Data", [])
-        # Return first match where reg number appears
         for item in items:
-            if str(reg_no) in str(item.get("CompanyName","")):
+            if f"[{reg_no}]" in str(item.get("companyName","")):
                 return item
+        # Fallback: search by UDF Organisation Number New
+        try:
+            body2 = {
+                "abEntry": {
+                    "criteria": {
+                        "searchQuery": {"udf": {"Organisation Number New": str(reg_no)}},
+                        "top": 1
+                    },
+                    "scope": {"fields": {"key": 1, "companyName": 1}}
+                }
+            }
+            result2 = mx_call("AbEntryRead", body2)
+            items2 = result2.get("abEntry", {}).get("Data", [])
+            if items2: return items2[0]
+        except Exception:
+            pass
         return None
     except Exception as e:
         print(f"mx_find_by_org_number({reg_no}): {e}")
@@ -654,29 +665,42 @@ def mx_get_caller(entry):
         return ""
 
 def mx_create_entry(c, caller=""):
-    """Create new Address Book company using correct PascalCase Octopus API fields."""
+    """Create new Address Book company in Maximizer.
+    Mandatory fields for Company: companyName, phone1, webSite (per Maximizer setup)."""
     reg  = str(c.get("reg_number","")).strip()
     name = (c.get("name","") or "Unknown Charity")[:80]
-    # Store reg number in company name as suffix for easy lookup
-    # e.g. "ST GEORGE'S CHURCH [1202982]"
-    full_name = f"{name} [{reg}]" if reg else name
+    # Store reg number as suffix so we can find it later: "Charity Name [1202982]"
+    full_name = f"{name} [{reg}]"[:100] if reg else name[:100]
+
+    # phone1 and webSite are MANDATORY in this Maximizer setup
+    phone   = (c.get("phone","")   or "N/A")[:30]
+    website = (c.get("website","") or "N/A")[:200]
 
     entry = {
-        "Type":        "Company",
-        "CompanyName": full_name[:100],
-        "LastName":    full_name[:50],  # some versions require LastName
+        "type":        "Company",
+        "companyName": full_name,
+        "phone1":      phone,
+        "webSite":     website,
     }
-    if c.get("website"): entry["WebSite"] = c["website"][:200]
-    if c.get("phone"):   entry["Phone"]   = c["phone"][:30]
-    if c.get("email"):   entry["Email"]   = c["email"][:100]
-    if c.get("town"):    entry["City"]    = c["town"][:60]
-    if c.get("county"):  entry["StateProvince"] = c["county"][:60]
-    if c.get("address1"):entry["AddressLine1"]  = c["address1"][:100]
+    # Optional fields — only add if non-empty
+    if c.get("email"):    entry["email1"]  = c["email"][:100]
+    if c.get("town"):     entry["city"]    = c["town"][:60]
+    if c.get("county"):   entry["state"]   = c["county"][:60]
+    if c.get("address1"): entry["addr1"]   = c["address1"][:100]
+
+    # UDF: store caller and org number
+    udf_fields = {}
+    if caller:
+        udf_fields["Caller"] = caller
+    if reg:
+        udf_fields["Organisation Number New"] = reg
+    if udf_fields:
+        entry["udf"] = udf_fields
 
     body = {"abEntry": entry}
-    print(f"  mx_create: {full_name}")
+    print(f"  mx_create body: {body}")
     result = mx_call("AbEntryCreate", body)
-    print(f"  mx_create result: {result}")
+    print(f"  mx_create result: Code={result.get('Code')} Msg={result.get('Msg','')}")
     return result
 
 def mx_update_entry(key, c, caller=""):
@@ -897,90 +921,67 @@ def mx_read_full():
 
 @app.route("/api/maximizer/probe_fields")
 def mx_probe_fields():
-    """Test with configuration/drivers block from Power BI query format."""
+    """Test create with all mandatory fields including Phone1, Website, Access fields."""
     import requests as req
     results = {}
-
-    # The Power BI query had a configuration.drivers block — try it
-    # Also the Power BI used a different structure: opportunity{} not abEntry{}
-    # Let's try AbEntryRead with the exact Power BI-style wrapper
-
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
 
-    # Test 1: Read with configuration block (Power BI style)
-    body1 = {
-        "abEntry": {
-            "criteria": {"searchQuery": {}, "top": 1},
-            "scope": {"fields": {"key": 1, "companyName": 1}},
-        },
-        "configuration": {
-            "drivers": {
-                "IAbEntrySearcher": "Maximizer.Model.Access.Sql.AbEntrySearcher"
+    # Mandatory for Company: companyName, phone1, website, fullAccess, readAccess, identification
+    # Try with all mandatory fields
+    attempts = [
+        # Try 1: phone1 + website (the two non-system mandatory fields)
+        {"type": "Company", "companyName": "TEST1 CHARITY API",
+         "phone1": "00000000000", "webSite": "http://test.com"},
+        # Try 2: different phone field name
+        {"type": "Company", "companyName": "TEST2 CHARITY API",
+         "Phone1": "00000000000", "WebSite": "http://test.com"},
+        # Try 3: with all access fields
+        {"type": "Company", "companyName": "TEST3 CHARITY API",
+         "phone1": "00000000000", "webSite": "http://test.com",
+         "fullAccess": {"Value": "1"}, "readAccess": {"Value": "1"}},
+        # Try 4: fullAccess as string
+        {"type": "Company", "companyName": "TEST4 CHARITY API",
+         "phone1": "00000000000", "webSite": "http://test.com",
+         "fullAccess": "1", "readAccess": "1"},
+        # Try 5: with leadSource (sometimes used for identification)
+        {"type": "Company", "companyName": "TEST5 CHARITY API",
+         "phone1": "00000000000", "webSite": "http://test.com",
+         "category": "Charity"},
+        # Try 6: website as 'website' not 'webSite'
+        {"type": "Company", "companyName": "TEST6 CHARITY API",
+         "phone1": "00000000000", "website": "http://test.com"},
+        # Try 7: all possible field name variants for phone and website
+        {"type": "Company", "companyName": "TEST7 CHARITY API",
+         "Phone": "00000000000", "Website": "http://test.com"},
+    ]
+
+    for i, entry in enumerate(attempts, 1):
+        try:
+            r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
+                        json={"abEntry": entry}, timeout=10)
+            resp = r.json()
+            code = resp.get("Code", -99)
+            results[f"try{i}"] = {
+                "fields": list(entry.keys()),
+                "Code": code,
+                "Msg": resp.get("Msg",""),
+                "Data": resp.get("abEntry",{})
             }
-        }
-    }
-    try:
-        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json=body1, timeout=10)
-        results["read_with_config"] = {"status": r.status_code, "body": r.json()}
-    except Exception as e:
-        results["read_with_config"] = {"error": str(e)}
+            if code == 0:
+                results["SUCCESS"] = f"try{i} worked! Fields: {list(entry.keys())}"
+                break
+        except Exception as e:
+            results[f"try{i}"] = {"error": str(e)[:100]}
 
-    # Test 2: Create with configuration block
-    body2 = {
-        "abEntry": {
-            "type": "Company",
-            "companyName": "TEST WITH CONFIG",
-            "lastName": "TEST",
-        },
-        "configuration": {
-            "drivers": {
-                "IAbEntrySearcher": "Maximizer.Model.Access.Sql.AbEntrySearcher"
-            }
-        }
-    }
+    # Also re-confirm working read to verify connection
     try:
-        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs, json=body2, timeout=10)
-        results["create_with_config"] = {"status": r.status_code, "body": r.json()}
+        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
+                    json={"abEntry": {"criteria": {"searchQuery": {}, "top": 1},
+                                      "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
+                    timeout=10)
+        results["read_check"] = r.json()
     except Exception as e:
-        results["create_with_config"] = {"error": str(e)}
-
-    # Test 3: Try the instance URL directly (web343) instead of api.maximizer.com
-    instance_base = "https://uk1.maximizercrmlive.com/web343/MaximizerWebData"
-    body3 = {
-        "abEntry": {
-            "criteria": {"searchQuery": {}, "top": 1},
-            "scope": {"fields": {"key": 1, "companyName": 1}}
-        }
-    }
-    try:
-        r = req.post(f"{instance_base}/api/v1/AbEntry/read",
-                     headers=hdrs, json={
-                         "Database": MX_DB,
-                         "RequestAction": "Read",
-                         "Scope": {"Table": "AbEntry"},
-                         "Fields": {"AbEntry": ["Key", "CompanyName"]},
-                         "Limit": 1
-                     }, timeout=10)
-        results["instance_url_read"] = {"status": r.status_code, "body": r.text[:300]}
-    except Exception as e:
-        results["instance_url_read"] = {"error": str(e)}
-
-    # Test 4: Try the instance URL with Octopus-style body
-    try:
-        r = req.post(f"{instance_base}/api/v1/AbEntryRead",
-                     headers=hdrs, json=body3, timeout=10)
-        results["instance_octopus"] = {"status": r.status_code, "body": r.text[:300]}
-    except Exception as e:
-        results["instance_octopus"] = {"error": str(e)}
-
-    # Test 5: Try AbEntryCreate on the instance URL
-    try:
-        r = req.post(f"{instance_base}/api/v1/AbEntryCreate",
-                     headers=hdrs, json={"abEntry": {"type": "Company", "companyName": "TEST INSTANCE"}},
-                     timeout=10)
-        results["instance_create"] = {"status": r.status_code, "body": r.text[:300]}
-    except Exception as e:
-        results["instance_create"] = {"error": str(e)}
+        results["read_check"] = {"error": str(e)}
 
     return jsonify(results)
 
@@ -994,12 +995,15 @@ def mx_find():
             entry = mx_find_by_org_number(reg)
             if entry:
                 return jsonify({"found": True, "entry": entry})
-            # Try searching by name if provided
+            # Also try direct name search
             if name:
                 entries = mx_search_by_name(name[:30])
                 return jsonify({"found": bool(entries), "entries": entries,
-                               "note": "Found by name search (org number not matched)"})
-            return jsonify({"found": False, "note": f"No entry with OrganizationNumber={reg}"})
+                               "note": "Found by name (not by reg)"})
+            # Try broader search
+            broader = mx_search_by_name(reg)
+            return jsonify({"found": bool(broader), "entries": broader,
+                           "note": f"Searched for [{reg}] in companyName"})
         return jsonify({"error": "Provide ?reg= parameter"}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
