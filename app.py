@@ -472,16 +472,19 @@ def delete_user(name):
 # ── Called log now stores caller name ─────────────────────────────────────────
 @app.route("/api/mark_called_by", methods=["POST"])
 def mark_called_by():
-    """Mark called with a specific caller name."""
-    data      = request.json or {}
-    reg       = str(data.get("reg_number","")).strip()
-    page      = str(data.get("page","")).strip()
-    name      = str(data.get("name","")).strip()       # charity name
-    caller    = str(data.get("caller","Muhanna")).strip()  # who is calling
+    """Mark called with a specific caller name. toggle=False means always set (JS handles toggle)."""
+    data   = request.json or {}
+    reg    = str(data.get("reg_number","")).strip()
+    page   = str(data.get("page","")).strip()
+    name   = str(data.get("name","")).strip()
+    caller = str(data.get("caller","")).strip() or "Unknown"
+    do_toggle = data.get("toggle", True)
     if not reg or not page:
-        return jsonify({"ok":False}), 400
+        return jsonify({"ok":False,"error":"Missing reg_number or page"}), 400
     key = f"{page}|{reg}"
-    if key in _called_log and data.get("toggle", True):
+    # If toggle=False, JS already toggled the UI — just mirror the current JS state
+    # If toggle=True (legacy), do server-side toggle
+    if do_toggle and key in _called_log:
         del _called_log[key]
         return jsonify({"ok":True,"marked":False})
     _called_log[key] = {
