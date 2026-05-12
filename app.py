@@ -897,50 +897,90 @@ def mx_read_full():
 
 @app.route("/api/maximizer/probe_fields")
 def mx_probe_fields():
-    """Comprehensive field discovery and create test."""
+    """Test with configuration/drivers block from Power BI query format."""
+    import requests as req
     results = {}
 
-    # Step 1: Read with lowercase fields (we know companyName works)
-    try:
-        body = {"abEntry": {"criteria": {"searchQuery": {}, "top": 1},
-                            "scope": {"fields": {"key": 1, "companyName": 1,
-                                                 "type": 1, "phone": 1,
-                                                 "email": 1, "webSite": 1,
-                                                 "firstName": 1, "lastName": 1,
-                                                 "addressLine1": 1, "city": 1,
-                                                 "stateProvince": 1, "zipCode": 1,
-                                                 "country": 1}}}}
-        r = mx_call("AbEntryRead", body)
-        results["read_camel"] = {"Code": r.get("Code"), "data": r.get("abEntry",{}).get("Data",[])}
-    except Exception as e:
-        results["read_camel"] = {"error": str(e)}
+    # The Power BI query had a configuration.drivers block — try it
+    # Also the Power BI used a different structure: opportunity{} not abEntry{}
+    # Let's try AbEntryRead with the exact Power BI-style wrapper
 
-    # Step 2: Try creating with every possible mandatory field combo
-    attempts = [
-        # Try 1: just companyName lowercase
-        {"type": "Company", "companyName": "TEST1 CHARITY"},
-        # Try 2: with lastName (contact-style mandatory)
-        {"type": "Company", "companyName": "TEST2 CHARITY", "lastName": "TEST2"},
-        # Try 3: Individual instead of Company
-        {"type": "Individual", "lastName": "TestCharity", "firstName": "API"},
-        # Try 4: No type field
-        {"companyName": "TEST4 CHARITY", "lastName": "TEST4"},
-        # Try 5: With email (sometimes mandatory)
-        {"type": "Company", "companyName": "TEST5 CHARITY", "email": "test5@test.com"},
-        # Try 6: With phone
-        {"type": "Company", "companyName": "TEST6 CHARITY", "phone": "01234567890"},
-        # Try 7: All basic fields
-        {"type": "Company", "companyName": "TEST7 CHARITY",
-         "lastName": "TEST7", "email": "test7@test.com", "phone": "01234567890"},
-    ]
-    for i, entry in enumerate(attempts, 1):
-        try:
-            r = mx_call("AbEntryCreate", {"abEntry": entry})
-            results[f"create_{i}"] = {"keys": list(entry.keys()), "Code": r.get("Code"), "Msg": r.get("Msg"), "Data": r.get("abEntry",{}).get("Data",[])}
-            if r.get("Code") == 0:
-                break  # Found working combo!
-        except Exception as e:
-            results[f"create_{i}"] = {"keys": list(entry.keys()), "error": str(e)[:150]}
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+
+    # Test 1: Read with configuration block (Power BI style)
+    body1 = {
+        "abEntry": {
+            "criteria": {"searchQuery": {}, "top": 1},
+            "scope": {"fields": {"key": 1, "companyName": 1}},
+        },
+        "configuration": {
+            "drivers": {
+                "IAbEntrySearcher": "Maximizer.Model.Access.Sql.AbEntrySearcher"
+            }
+        }
+    }
+    try:
+        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json=body1, timeout=10)
+        results["read_with_config"] = {"status": r.status_code, "body": r.json()}
+    except Exception as e:
+        results["read_with_config"] = {"error": str(e)}
+
+    # Test 2: Create with configuration block
+    body2 = {
+        "abEntry": {
+            "type": "Company",
+            "companyName": "TEST WITH CONFIG",
+            "lastName": "TEST",
+        },
+        "configuration": {
+            "drivers": {
+                "IAbEntrySearcher": "Maximizer.Model.Access.Sql.AbEntrySearcher"
+            }
+        }
+    }
+    try:
+        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs, json=body2, timeout=10)
+        results["create_with_config"] = {"status": r.status_code, "body": r.json()}
+    except Exception as e:
+        results["create_with_config"] = {"error": str(e)}
+
+    # Test 3: Try the instance URL directly (web343) instead of api.maximizer.com
+    instance_base = "https://uk1.maximizercrmlive.com/web343/MaximizerWebData"
+    body3 = {
+        "abEntry": {
+            "criteria": {"searchQuery": {}, "top": 1},
+            "scope": {"fields": {"key": 1, "companyName": 1}}
+        }
+    }
+    try:
+        r = req.post(f"{instance_base}/api/v1/AbEntry/read",
+                     headers=hdrs, json={
+                         "Database": MX_DB,
+                         "RequestAction": "Read",
+                         "Scope": {"Table": "AbEntry"},
+                         "Fields": {"AbEntry": ["Key", "CompanyName"]},
+                         "Limit": 1
+                     }, timeout=10)
+        results["instance_url_read"] = {"status": r.status_code, "body": r.text[:300]}
+    except Exception as e:
+        results["instance_url_read"] = {"error": str(e)}
+
+    # Test 4: Try the instance URL with Octopus-style body
+    try:
+        r = req.post(f"{instance_base}/api/v1/AbEntryRead",
+                     headers=hdrs, json=body3, timeout=10)
+        results["instance_octopus"] = {"status": r.status_code, "body": r.text[:300]}
+    except Exception as e:
+        results["instance_octopus"] = {"error": str(e)}
+
+    # Test 5: Try AbEntryCreate on the instance URL
+    try:
+        r = req.post(f"{instance_base}/api/v1/AbEntryCreate",
+                     headers=hdrs, json={"abEntry": {"type": "Company", "companyName": "TEST INSTANCE"}},
+                     timeout=10)
+        results["instance_create"] = {"status": r.status_code, "body": r.text[:300]}
+    except Exception as e:
+        results["instance_create"] = {"error": str(e)}
 
     return jsonify(results)
 
