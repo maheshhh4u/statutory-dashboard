@@ -1354,7 +1354,15 @@ function cBtn(pg,reg,name){
   const others=['prospects','new','late','old','search','milestones'].filter(p=>p!==pg&&isCalled(p,reg));
   const pgL={'prospects':'Prospects','new':'Newly Reg.','late':'Late Accts','old':'40+ Yrs','search':'Search','milestones':'Milestones'};
   const note=(!c&&others.length)?`<span title="Called via: ${others.map(p=>pgL[p]).join(', ')}" style="font-size:9px;background:var(--purplel);color:var(--purple);border-radius:6px;padding:1px 5px;cursor:help">★</span>`:'';
-  return`<div style="display:flex;align-items:center;gap:3px"><button id="cb-${pg}-${reg}" class="cbtn${c?' called':''}" onclick="toggleCalled('${pg}','${esc(reg)}','${esc(name)}')">${c?'✓ Called':'Call'}</button>${note}</div>`;
+  // Use data attributes to avoid JS string escaping issues with charity names containing apostrophes
+  return`<div style="display:flex;align-items:center;gap:3px"><button id="cb-${pg}-${reg}" class="cbtn${c?' called':''}" data-pg="${esc(pg)}" data-reg="${esc(reg)}" data-name="${esc(name)}" onclick="handleCallBtn(this)">${c?'✓ Called':'Call'}</button>${note}</div>`;
+}
+
+function handleCallBtn(btn){
+  const pg=btn.getAttribute('data-pg');
+  const reg=btn.getAttribute('data-reg');
+  const name=btn.getAttribute('data-name');
+  toggleCalled(pg,reg,name);
 }
 
 function callerCol(pg,reg){
@@ -1555,24 +1563,32 @@ function closeMxModal(){document.getElementById('mx-modal').classList.remove('op
 async function testMxConnection(){
   const statusEl=document.getElementById('mx-conn-status');
   const urlInput=document.getElementById('mx-base-url').value.trim();
-  if(!urlInput){
-    statusEl.innerHTML='<span style="color:var(--red)">✗ Please enter your Maximizer URL first</span>';
-    return;
+  if(urlInput){
+    MX_BASE=urlInput.replace(/\/+$/,'');
+    localStorage.setItem('mx_base_url',MX_BASE);
+    // Save to server too
+    fetch('/api/maximizer/config',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({base_url:MX_BASE})});
   }
-  MX_BASE=urlInput.replace(/\/+$/,'');
-  localStorage.setItem('mx_base_url',MX_BASE);
-  statusEl.innerHTML='<span style="color:var(--blue)">Testing…</span>';
-  try{
-    const res=await mxPost('/api/v1/AbEntry/read',{
-      Database:MX_DB,RequestAction:'Read',
-      Scope:{Table:'AbEntry'},
-      Fields:{AbEntry:['Key','CompanyName']},Limit:1
+  statusEl.innerHTML='<span style="color:var(--blue)">Testing via server…</span>';
+  // Route through server (avoids CORS restrictions)
+  fetch('/api/maximizer/test')
+    .then(r=>r.json())
+    .then(d=>{
+      if(d.ok){
+        statusEl.innerHTML=`<span style="color:var(--green)">✓ Connected! ${esc(d.message)}</span>`;
+      } else {
+        statusEl.innerHTML=`<span style="color:var(--red)">✗ ${esc(d.error||'Connection failed')}</span>
+          <div style="margin-top:6px;padding:6px 8px;background:var(--goldl);border-radius:5px;font-size:10px;color:var(--gold)">
+          ⚠ If you see an IP whitelist error, you need to add Render's server IP to Maximizer's allowed list.
+          Contact your Maximizer admin to whitelist the IP shown in the error above.
+          </div>`;
+      }
+    })
+    .catch(e=>{
+      statusEl.innerHTML=`<span style="color:var(--red)">✗ ${esc(e.message)}</span>`;
     });
-    const count=res?.Data?.AbEntry?.length||0;
-    statusEl.innerHTML=`<span style="color:var(--green)">✓ Connected! Found ${count} entries. Database: ${MX_DB.substring(0,8)}…</span>`;
-  }catch(e){
-    statusEl.innerHTML=`<span style="color:var(--red)">✗ Failed — ${esc(e.message)}</span>`;
-  }
 }
 
 function saveMxUrl(){
@@ -1582,65 +1598,58 @@ function saveMxUrl(){
   alert('URL saved to this browser.');
 }
 
-async function startMxSync(){
+let mxSyncPollTimer = null;
+function startMxSync(){
   if(!mxCurrentCharities.length){alert('No charities to sync.');return;}
   if(!currentCaller){openCallerPopup();return;}
   document.getElementById('mx-sync-btn').disabled=true;
   document.getElementById('mx-sync-progress').style.display='block';
   document.getElementById('mx-sync-result').style.display='none';
-  document.getElementById('mx-sync-msg').textContent='Starting sync…';
+  document.getElementById('mx-sync-msg').textContent='Sending to server…';
 
-  const batch=mxCurrentCharities.slice(0,100);
-  let created=0,updated=0,errors=0,callersPulled=0;
-  const total=batch.length;
-
-  for(let i=0;i<total;i++){
-    const c=batch[i];
-    const reg=c.reg_number||'';
-    if(!reg)continue;
-    document.getElementById('mx-sync-msg').textContent=
-      `Syncing ${i+1} of ${total}: ${(c.name||reg).substring(0,30)}…`;
-    try{
-      const existing=await mxFindByOrgNumber(reg);
-      if(existing){
-        const mxCaller=mxGetCallerFromEntry(existing);
-        const pgKey=mxCurrentPage+'|'+reg;
-        const localCaller=called[pgKey]?.caller||'';
-        // Push local caller to Maximizer, or pull Maximizer caller to dashboard
-        if(currentCaller&&currentCaller!==mxCaller){
-          await mxUpdate(existing.Key,c,currentCaller);
-        } else if(mxCaller&&!localCaller){
-          called[pgKey]={pg:mxCurrentPage,reg,caller:mxCaller,
-            ts:new Date().toLocaleString('en-GB')};
-          // Also save to server
-          fetch('/api/mark_called_by',{method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({reg_number:reg,page:mxCurrentPage,
-              name:c.name||'',caller:mxCaller,toggle:false})});
-          callersPulled++;
-        }
-        updated++;
-      } else {
-        await mxCreate(c);
-        created++;
-      }
-    }catch(e){
-      console.error('Sync error',reg,e);errors++;
+  // Route through server to avoid CORS — server calls Maximizer API
+  fetch('/api/maximizer/sync',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      charities: mxCurrentCharities.slice(0,100),
+      page: mxCurrentPage,
+      caller: currentCaller||''
+    })
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      document.getElementById('mx-sync-msg').textContent='Syncing with Maximizer…';
+      mxSyncPollTimer = setInterval(pollMxSyncStatus,3000);
+    } else {
+      document.getElementById('mx-sync-progress').style.display='none';
+      showMxResult({error:d.message||'Failed to start sync'});
     }
-    // Small delay to avoid rate limiting
-    if(i%10===9) await new Promise(res=>setTimeout(res,500));
-  }
+  }).catch(e=>{
+    document.getElementById('mx-sync-progress').style.display='none';
+    showMxResult({error:e.message});
+  });
+}
 
-  document.getElementById('mx-sync-progress').style.display='none';
-  showMxResult({created,updated,errors,mx_callers_pulled:callersPulled});
-  if(callersPulled>0){
-    refreshCalled();
-    if(pFil.length)renderPT(pPg);
-    if(nFil.length)renderNT(nPg);
-    if(lFil.length)renderLT(lPg);
-    if(oFil.length)renderOT(oPg);
-    if(msFil.length)renderMsT(msPg);
-  }
+function pollMxSyncStatus(){
+  fetch('/api/maximizer/sync_status?page='+mxCurrentPage)
+  .then(r=>r.json()).then(d=>{
+    if(d.status==='idle'&&d.result){
+      clearInterval(mxSyncPollTimer);
+      document.getElementById('mx-sync-progress').style.display='none';
+      showMxResult(d.result);
+      // Pull any callers synced from Maximizer
+      if(d.result.mx_callers_pulled>0){
+        refreshCalled();
+        if(pFil.length)renderPT(pPg);
+        if(nFil.length)renderNT(nPg);
+        if(lFil.length)renderLT(lPg);
+        if(oFil.length)renderOT(oPg);
+        if(msFil.length)renderMsT(msPg);
+      }
+    } else if(d.status==='loading'){
+      document.getElementById('mx-sync-msg').textContent='Syncing with Maximizer… please wait';
+    }
+  }).catch(e=>console.warn('poll error',e));
 }
 
 function showMxResult(result){

@@ -597,7 +597,7 @@ MX_TOKEN = os.environ.get("MAXIMIZER_TOKEN",
     "QwY2Y0OWQ0MjViYjQ0ZTQ0YzA3ZDdiMTBmZCIsIm14LXVpZCI6Ik1BSEVTSCIsIm14LX"
     "BsIjoiY2xvdWQifQ.hEwCX0Yg35m_QoPa1yXiCoumJ-_9tP1OL3YM8MgOjMU")
 MX_DB   = os.environ.get("MAXIMIZER_DB",   "cfc41d0cf49d425bb44e44c07d7b10fd")
-MX_BASE = os.environ.get("MAXIMIZER_BASE", "https://cloudhosted.maximizer.com/MaximizerWebData")
+MX_BASE = os.environ.get("MAXIMIZER_BASE", "https://uk1.maximizercrmlive.com/web343/MaximizerWebData")
 
 # UDF field keys discovered from the original exe (TYPEID numbers from UDFOptionList.xml)
 # These match the fields synced by the original CCToMaximizerCRM tool
@@ -925,6 +925,17 @@ def mx_config():
         data = request.json or {}
         if data.get("base_url"):
             MX_BASE = data["base_url"].rstrip("/")
+            print(f"Maximizer base URL updated to: {MX_BASE}")
         return jsonify({"ok": True, "base_url": MX_BASE, "database": MX_DB})
-    return jsonify({"base_url": MX_BASE, "database": MX_DB,
+    return jsonify({"ok": True, "base_url": MX_BASE, "database": MX_DB,
                     "user": "MAHESH", "token_expires": "2029-05-10"})
+
+@app.route("/api/maximizer/set_url", methods=["POST"])
+def mx_set_url():
+    """Quick endpoint to set Maximizer URL."""
+    global MX_BASE
+    data = request.json or {}
+    url  = data.get("url","").strip().rstrip("/")
+    if url:
+        MX_BASE = url
+    return jsonify({"ok": True, "base_url": MX_BASE})
