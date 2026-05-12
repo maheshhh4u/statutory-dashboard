@@ -196,6 +196,7 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
       <button class="btn btn-outline btn-sm" onclick="loadProspects()">↺ Refresh</button>
       <button class="btn btn-green btn-sm" id="p-dl-btn" style="display:none" onclick="location.href='/download/prospects?list=all'">↓ Download CSV</button>
+      <button class="btn btn-outline btn-sm" id="p-mx-btn" style="display:none;border-color:#6060c0;color:#6060c0" onclick="openMxModal('prospects')">🔄 Sync Maximizer</button>
     </div>
   </div>
   <div class="stats">
@@ -302,7 +303,12 @@ select:focus{outline:none;border-color:var(--green)}
   <div id="s-msg"></div>
   <div id="s-loading" style="display:none" class="loading"><div class="spinner"></div><div class="loading-txt">Searching…</div></div>
   <div id="s-results" style="display:none">
-    <div class="ctrl"><div id="s-meta" style="font-size:12px;color:var(--t3)"></div><button class="btn btn-outline btn-sm" onclick="dlSearch()">↓ Download CSV</button></div>
+    <div class="ctrl"><div id="s-meta" style="font-size:12px;color:var(--t3)"></div>
+      <div style="display:flex;gap:7px">
+        <button class="btn btn-outline btn-sm" onclick="dlSearch()">↓ Download CSV</button>
+        <button class="btn btn-outline btn-sm" style="border-color:#6060c0;color:#6060c0" onclick="syncSearchResults()">🔄 Sync Maximizer</button>
+      </div>
+    </div>
     <div class="tbl-wrap tbl-scroll"><table>
       <thead><tr>
         <th onclick="sortS('reg_number')">Reg No.</th>
@@ -336,6 +342,7 @@ select:focus{outline:none;border-color:var(--green)}
       <select id="new-days" onchange="loadNew()"><option value="30">Last 30 days</option><option value="60">Last 60 days</option><option value="90">Last 90 days</option></select>
       <button class="btn btn-outline btn-sm" onclick="loadNew()">↺ Refresh</button>
       <button class="btn btn-green btn-sm" id="new-dl-btn" style="display:none" onclick="dlNew()">↓ Download CSV</button>
+      <button class="btn btn-outline btn-sm" id="new-mx-btn" style="display:none;border-color:#6060c0;color:#6060c0" onclick="openMxModal('new')">🔄 Sync Maximizer</button>
     </div>
   </div>
   <div class="stats">
@@ -381,6 +388,7 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
       <button class="btn btn-outline btn-sm" onclick="loadLate()">↺ Refresh</button>
       <button class="btn btn-green btn-sm" id="late-dl-btn" style="display:none" onclick="dlLate()">↓ Download CSV</button>
+      <button class="btn btn-outline btn-sm" id="late-mx-btn" style="display:none;border-color:#6060c0;color:#6060c0" onclick="openMxModal('late')">🔄 Sync Maximizer</button>
     </div>
   </div>
   <div class="stats">
@@ -431,6 +439,7 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
       <button class="btn btn-outline btn-sm" onclick="loadOld()">↺ Refresh</button>
       <button class="btn btn-green btn-sm" id="old-dl-btn" style="display:none" onclick="dlOld()">↓ Download CSV</button>
+      <button class="btn btn-outline btn-sm" id="old-mx-btn" style="display:none;border-color:#6060c0;color:#6060c0" onclick="openMxModal('old_charities')">🔄 Sync Maximizer</button>
     </div>
   </div>
   <div class="stats">
@@ -492,6 +501,7 @@ select:focus{outline:none;border-color:var(--green)}
       </select>
       <button class="btn btn-outline btn-sm" onclick="loadMilestones()">↺ Refresh</button>
       <button class="btn btn-green btn-sm" id="ms-dl-btn" style="display:none" onclick="dlMilestones()">↓ Download CSV</button>
+      <button class="btn btn-outline btn-sm" id="ms-mx-btn" style="display:none;border-color:#6060c0;color:#6060c0" onclick="openMxModal('milestones')">🔄 Sync Maximizer</button>
     </div>
   </div>
   <div class="info-box" style="margin-bottom:12px">
@@ -575,6 +585,40 @@ select:focus{outline:none;border-color:var(--green)}
       <label for="remember-caller" style="font-size:12px;color:var(--t2);cursor:pointer">Remember my selection on this browser (until I clear it or an admin resets it)</label>
     </div>
     <div class="modal-btns"><button class="btn btn-outline btn-sm" onclick="closeCallerPopup()">Cancel</button></div>
+  </div>
+</div>
+
+<!-- Maximizer Sync Modal -->
+<div class="modal-bg" id="mx-modal">
+  <div class="modal" style="max-width:520px">
+    <h3>🔄 Sync with Maximizer CRM</h3>
+    <div id="mx-config-bar" style="background:var(--s2);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <span style="font-weight:600">Maximizer Connection</span>
+        <button class="btn btn-outline btn-sm" onclick="testMxConnection()">🔌 Test Connection</button>
+      </div>
+      <div id="mx-conn-status" style="font-size:11px;color:var(--t3)">Not tested yet — click Test Connection</div>
+      <div style="margin-top:8px">
+        <label style="font-size:11px;font-weight:600;color:var(--t3);display:block;margin-bottom:3px">API Base URL (if different from default)</label>
+        <input id="mx-base-url" placeholder="https://cloudhosted.maximizer.com/MaximizerWebData" style="width:100%;font-family:inherit;font-size:11px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius)">
+        <button class="btn btn-outline btn-sm" style="margin-top:5px" onclick="saveMxUrl()">Save URL</button>
+      </div>
+    </div>
+    <div id="mx-sync-info" style="margin-bottom:14px;font-size:12px;color:var(--t2)"></div>
+    <div id="mx-sync-progress" style="display:none;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bluel);border-radius:var(--radius)">
+        <div class="spinner" style="width:20px;height:20px"></div>
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--blue)">Syncing with Maximizer…</div>
+          <div id="mx-sync-msg" style="font-size:11px;color:var(--t3)">Please wait</div>
+        </div>
+      </div>
+    </div>
+    <div id="mx-sync-result" style="display:none;margin-bottom:14px"></div>
+    <div class="modal-btns">
+      <button class="btn btn-outline btn-sm" onclick="closeMxModal()">Close</button>
+      <button class="btn btn-green btn-sm" id="mx-sync-btn" onclick="startMxSync()">🔄 Sync Now</button>
+    </div>
   </div>
 </div>
 
@@ -764,6 +808,7 @@ function loadProspects(){
     document.getElementById('ptc-retention').textContent=cnt.retention;
     document.getElementById('home-prospect-count').textContent=cnt.p+' prospects';
     document.getElementById('p-dl-btn').style.display='inline-flex';
+    document.getElementById('p-mx-btn').style.display='inline-flex';
     document.getElementById('p-loading').style.display='none';
     document.getElementById('p-content').style.display='block';
     switchPList('best',document.querySelector('.ptab.active'));
@@ -952,6 +997,7 @@ function loadNew(){
     document.getElementById('new-loading').style.display='none';
     document.getElementById('new-content').style.display='block';
     document.getElementById('new-dl-btn').style.display='inline-flex';
+    document.getElementById('new-mx-btn').style.display='inline-flex';
     refreshCalled();
   }).catch(e=>{document.getElementById('new-msg').innerHTML=`<div class="err-box">⚠ ${e.message}</div>`;document.getElementById('new-loading').style.display='none';});
 }
@@ -998,6 +1044,7 @@ function loadLate(){
     document.getElementById('late-loading').style.display='none';
     document.getElementById('late-content').style.display='block';
     document.getElementById('late-dl-btn').style.display='inline-flex';
+    document.getElementById('late-mx-btn').style.display='inline-flex';
     refreshCalled();
   }).catch(e=>{document.getElementById('late-msg').innerHTML=`<div class="err-box">⚠ ${e.message}</div>`;document.getElementById('late-loading').style.display='none';});
 }
@@ -1045,6 +1092,7 @@ function loadOld(){
     document.getElementById('old-loading').style.display='none';
     document.getElementById('old-content').style.display='block';
     document.getElementById('old-dl-btn').style.display='inline-flex';
+    document.getElementById('old-mx-btn').style.display='inline-flex';
     refreshCalled();
   }).catch(e=>{document.getElementById('old-msg').innerHTML=`<div class="err-box">⚠ ${e.message}</div>`;document.getElementById('old-loading').style.display='none';});
 }
@@ -1322,6 +1370,7 @@ function loadMilestones(){
     document.getElementById('ms-loading').style.display='none';
     document.getElementById('ms-content').style.display='block';
     document.getElementById('ms-dl-btn').style.display='inline-flex';
+    document.getElementById('ms-mx-btn').style.display='inline-flex';
     refreshCalled();
   },function(e){
     document.getElementById('ms-msg').innerHTML=`<div class="err-box">⚠ ${e.message}</div>`;
@@ -1378,10 +1427,147 @@ function dlMilestones(){location.href='/download/milestones?years='+document.get
 const _origRenderPT=renderPT;
 // We'll add callerCol inline in the table rows instead
 
+// ── Maximizer CRM Sync ───────────────────────────────────────────────────────
+let mxCurrentPage = 'prospects';
+let mxCurrentCharities = [];
+let mxSyncPollInterval = null;
+
+function openMxModal(page){
+  mxCurrentPage = page;
+  // Gather charities for this page
+  let charities = [];
+  if(page==='prospects')      charities = pFil.length ? pFil : getPD();
+  else if(page==='new')       charities = nFil.length ? nFil : nAll;
+  else if(page==='late')      charities = lFil.length ? lFil : lAll;
+  else if(page==='old_charities') charities = oFil.length ? oFil : oAll;
+  else if(page==='milestones')charities = msFil.length ? msFil : msAll;
+  mxCurrentCharities = charities;
+
+  const pageNames = {prospects:'Prospect Lists',new:'Newly Registered',
+    late:'Late Accounts',old_charities:'40+ Years',milestones:'Anniversary Watch'};
+  document.getElementById('mx-sync-info').innerHTML =
+    `<strong>${charities.length} charities</strong> from <strong>${pageNames[page]||page}</strong> will be synced with Maximizer Address Book.<br>
+    <span style="color:var(--t3);font-size:11px">• Charities not in Maximizer will be <strong>created</strong><br>
+    • Existing entries will be <strong>updated</strong> with latest data<br>
+    • Caller names will be synced <strong>both ways</strong> (dashboard ↔ Maximizer)</span>`;
+  document.getElementById('mx-sync-progress').style.display='none';
+  document.getElementById('mx-sync-result').style.display='none';
+  document.getElementById('mx-sync-btn').disabled=false;
+  document.getElementById('mx-modal').classList.add('open');
+  // Load current base URL
+  fetch('/api/maximizer/config').then(r=>r.json()).then(d=>{
+    document.getElementById('mx-base-url').value=d.base_url||'';
+  });
+}
+function closeMxModal(){
+  document.getElementById('mx-modal').classList.remove('open');
+  if(mxSyncPollInterval){clearInterval(mxSyncPollInterval);mxSyncPollInterval=null;}
+}
+function testMxConnection(){
+  const statusEl=document.getElementById('mx-conn-status');
+  statusEl.innerHTML='<span style="color:var(--blue)">Testing connection…</span>';
+  // Save URL first if changed
+  const url=document.getElementById('mx-base-url').value.trim();
+  const saveFirst = url ? fetch('/api/maximizer/config',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({base_url:url})}) : Promise.resolve();
+  saveFirst.then(()=>fetch('/api/maximizer/test')).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      statusEl.innerHTML=`<span style="color:var(--green)">✓ Connected — ${esc(d.message)}</span>`;
+    } else {
+      statusEl.innerHTML=`<span style="color:var(--red)">✗ Failed — ${esc(d.error)}</span>`;
+    }
+  }).catch(e=>{
+    statusEl.innerHTML=`<span style="color:var(--red)">✗ Error — ${esc(e.message)}</span>`;
+  });
+}
+function saveMxUrl(){
+  const url=document.getElementById('mx-base-url').value.trim();
+  if(!url)return;
+  fetch('/api/maximizer/config',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({base_url:url})})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok) alert('URL saved successfully.');
+  });
+}
+function startMxSync(){
+  if(!mxCurrentCharities.length){alert('No charities to sync.');return;}
+  document.getElementById('mx-sync-btn').disabled=true;
+  document.getElementById('mx-sync-progress').style.display='block';
+  document.getElementById('mx-sync-result').style.display='none';
+
+  fetch('/api/maximizer/sync',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      charities: mxCurrentCharities.slice(0,200), // max 200 per sync
+      page: mxCurrentPage,
+      caller: currentCaller || ''
+    })
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      document.getElementById('mx-sync-msg').textContent='Syncing in background — checking progress…';
+      mxSyncPollInterval=setInterval(pollMxSync, 3000);
+    } else {
+      showMxResult({error: d.message||'Sync failed'});
+    }
+  }).catch(e=>showMxResult({error:e.message}));
+}
+function pollMxSync(){
+  fetch(`/api/maximizer/sync_status?page=${mxCurrentPage}`)
+  .then(r=>r.json()).then(d=>{
+    if(d.status==='done'){
+      clearInterval(mxSyncPollInterval);mxSyncPollInterval=null;
+      document.getElementById('mx-sync-progress').style.display='none';
+      showMxResult(d.result||{});
+      // Refresh tables if callers were pulled from Maximizer
+      if(d.result && d.result.mx_callers_pulled > 0){
+        if(pFil.length)renderPT(pPg);
+        if(nFil.length)renderNT(nPg);
+        if(lFil.length)renderLT(lPg);
+        if(oFil.length)renderOT(oPg);
+        if(msFil.length)renderMsT(msPg);
+        refreshCalled();
+      }
+    } else {
+      document.getElementById('mx-sync-msg').textContent =
+        `Still syncing… (${d.status})`;
+    }
+  });
+}
+function showMxResult(result){
+  const el=document.getElementById('mx-sync-result');
+  el.style.display='block';
+  if(result.error){
+    el.innerHTML=`<div class="err-box">⚠ Sync failed: ${esc(result.error)}<br>
+      <span style="font-size:11px">Please check the API URL in the config above and try Test Connection first.</span></div>`;
+  } else {
+    const callerNote = result.mx_callers_pulled>0
+      ? `<br>• <strong>${result.mx_callers_pulled}</strong> caller name(s) pulled from Maximizer into dashboard` : '';
+    el.innerHTML=`<div style="background:var(--gl);border:1px solid var(--green);border-radius:var(--radius);padding:10px 14px;font-size:12px;color:var(--green)">
+      ✓ <strong>Sync complete!</strong><br>
+      • <strong>${result.created||0}</strong> new entries created in Maximizer<br>
+      • <strong>${result.updated||0}</strong> existing entries updated${callerNote}
+      ${result.errors>0?`<br><span style="color:var(--orange)">• ${result.errors} errors (see server log)</span>`:''}
+    </div>`;
+    document.getElementById('mx-sync-btn').disabled=false;
+  }
+}
+
+// Search page also gets a sync button inline
+function syncSearchResults(){
+  if(!sAll.length){alert('Run a search first.');return;}
+  mxCurrentPage='search';
+  mxCurrentCharities=sAll;
+  openMxModal('search');
+}
+
 // ── Initialise ────────────────────────────────────────────────────────────────
 // Add caller-modal to escape/click-outside handlers
 document.getElementById('caller-modal').addEventListener('click',function(e){
   if(e.target===this)closeCallerPopup();
+});
+document.getElementById('mx-modal').addEventListener('click',function(e){
+  if(e.target===this)closeMxModal();
 });
 // Load users first — initCaller() is called inside loadUsers() after users arrive
 loadUsers();
