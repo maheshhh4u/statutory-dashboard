@@ -921,67 +921,84 @@ def mx_read_full():
 
 @app.route("/api/maximizer/probe_fields")
 def mx_probe_fields():
-    """Test create with all mandatory fields including Phone1, Website, Access fields."""
+    """Test write permissions and find correct create format."""
     import requests as req
     results = {}
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
 
-    # Mandatory for Company: companyName, phone1, website, fullAccess, readAccess, identification
-    # Try with all mandatory fields
-    attempts = [
-        # Try 1: phone1 + website (the two non-system mandatory fields)
-        {"type": "Company", "companyName": "TEST1 CHARITY API",
-         "phone1": "00000000000", "webSite": "http://test.com"},
-        # Try 2: different phone field name
-        {"type": "Company", "companyName": "TEST2 CHARITY API",
-         "Phone1": "00000000000", "WebSite": "http://test.com"},
-        # Try 3: with all access fields
-        {"type": "Company", "companyName": "TEST3 CHARITY API",
-         "phone1": "00000000000", "webSite": "http://test.com",
-         "fullAccess": {"Value": "1"}, "readAccess": {"Value": "1"}},
-        # Try 4: fullAccess as string
-        {"type": "Company", "companyName": "TEST4 CHARITY API",
-         "phone1": "00000000000", "webSite": "http://test.com",
-         "fullAccess": "1", "readAccess": "1"},
-        # Try 5: with leadSource (sometimes used for identification)
-        {"type": "Company", "companyName": "TEST5 CHARITY API",
-         "phone1": "00000000000", "webSite": "http://test.com",
-         "category": "Charity"},
-        # Try 6: website as 'website' not 'webSite'
-        {"type": "Company", "companyName": "TEST6 CHARITY API",
-         "phone1": "00000000000", "website": "http://test.com"},
-        # Try 7: all possible field name variants for phone and website
-        {"type": "Company", "companyName": "TEST7 CHARITY API",
-         "Phone": "00000000000", "Website": "http://test.com"},
-    ]
+    # Step 1: Try updating the EXISTING Contact entry (not creating)
+    # If update works but create doesn't, it confirms a permission issue on create
+    existing_key = "Q29udGFjdAkyNDAzMjcyNTIyMzc1Nzk5MzU4MDJDCTE="
+    try:
+        r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
+                    json={"abEntry": {"key": existing_key,
+                                      "companyName": "Juvenis Test Update"}},
+                    timeout=10)
+        results["update_existing"] = {"status": r.status_code, "body": r.json()}
+    except Exception as e:
+        results["update_existing"] = {"error": str(e)}
 
-    for i, entry in enumerate(attempts, 1):
-        try:
-            r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
-                        json={"abEntry": entry}, timeout=10)
-            resp = r.json()
-            code = resp.get("Code", -99)
-            results[f"try{i}"] = {
-                "fields": list(entry.keys()),
-                "Code": code,
-                "Msg": resp.get("Msg",""),
-                "Data": resp.get("abEntry",{})
-            }
-            if code == 0:
-                results["SUCCESS"] = f"try{i} worked! Fields: {list(entry.keys())}"
-                break
-        except Exception as e:
-            results[f"try{i}"] = {"error": str(e)[:100]}
-
-    # Also re-confirm working read to verify connection
+    # Step 2: Read full Contact entry to understand field names
     try:
         r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-                    json={"abEntry": {"criteria": {"searchQuery": {}, "top": 1},
-                                      "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
-                    timeout=10)
-        results["read_check"] = r.json()
+                    json={"abEntry": {
+                        "criteria": {"searchQuery": {}, "top": 1},
+                        "scope": {"fields": {
+                            "key": 1, "companyName": 1, "type": 1,
+                            "firstName": 1, "lastName": 1,
+                            "email": 1, "phone": 1, "webSite": 1,
+                            "udf": 1
+                        }}
+                    }}, timeout=10)
+        results["read_full_contact"] = {"status": r.status_code, "body": r.json()}
     except Exception as e:
-        results["read_check"] = {"error": str(e)}
+        results["read_full_contact"] = {"error": str(e)}
+
+    # Step 3: Try creating a Contact (not Company) since existing is Contact
+    try:
+        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
+                    json={"abEntry": {
+                        "type": "Contact",
+                        "firstName": "Charity",
+                        "lastName": "TEST CONTACT 9999",
+                        "companyName": "TEST CONTACT ORG",
+                        "email": "test@test.com"
+                    }}, timeout=10)
+        results["create_contact"] = {"status": r.status_code, "body": r.json()}
+    except Exception as e:
+        results["create_contact"] = {"error": str(e)}
+
+    # Step 4: Try creating Individual
+    try:
+        r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
+                    json={"abEntry": {
+                        "type": "Individual",
+                        "lastName": "TEST INDIVIDUAL 9999",
+                        "email": "test@test.com"
+                    }}, timeout=10)
+        results["create_individual"] = {"status": r.status_code, "body": r.json()}
+    except Exception as e:
+        results["create_individual"] = {"error": str(e)}
+
+    # Step 5: Test if this token can write at all — try a NoteCreate
+    try:
+        r = req.post(f"{MX_BASE}/NoteCreate", headers=hdrs,
+                    json={"note": {
+                        "text": "Test note from API",
+                        "abEntry": {"key": existing_key}
+                    }}, timeout=10)
+        results["note_create"] = {"status": r.status_code, "body": r.text[:300]}
+    except Exception as e:
+        results["note_create"] = {"error": str(e)}
+
+    # Step 6: Check what endpoints are available
+    for ep in ["AbEntryCreate", "AbEntryUpdate", "AbEntryDelete",
+               "CompanyCreate", "ContactCreate"]:
+        try:
+            r = req.post(f"{MX_BASE}/{ep}", headers=hdrs, json={}, timeout=5)
+            results[f"ep_{ep}"] = r.status_code
+        except Exception as e:
+            results[f"ep_{ep}"] = str(e)[:50]
 
     return jsonify(results)
 
