@@ -770,27 +770,40 @@ def title_case(s):
     return " ".join(result)
 
 def mx_find_by_org_number(reg_no):
-    """Find entry by reg number — stored as [regNo] suffix in CompanyName."""
+    """Find entry by reg number — searches companyName containing the reg number."""
     try:
         result = mx_read(
-            search_query={"companyName": f"%[{reg_no}]%"},
-            fields={"key":1,"companyName":1,"type":1}, top=5
+            search_query={"companyName": f"%{reg_no}%"},
+            fields={"key":1,"companyName":1,"type":1}, top=10
         )
         items = result.get("abEntry",{}).get("Data",[])
         for item in items:
-            if f"[{reg_no}]" in item.get("companyName",""):
+            if str(reg_no) in item.get("companyName",""):
                 return item
+        # Also try Organisation Number UDF if TYPEID is known
+        if MX_ORG_NUM_TYPEID:
+            try:
+                r2 = mx_read(
+                    search_query={f"/AbEntry/Udf/$TYPEID({MX_ORG_NUM_TYPEID})": str(reg_no)},
+                    fields={"key":1,"companyName":1,"type":1}, top=3
+                )
+                items2 = r2.get("abEntry",{}).get("Data",[])
+                if items2: return items2[0]
+            except: pass
         return None
     except Exception as e:
         print(f"mx_find({reg_no}): {e}")
         return None
+
+# Set this once you run /api/maximizer/probe_org_number_typeid and find the correct TYPEID
+MX_ORG_NUM_TYPEID = os.environ.get("MX_ORG_NUM_TYPEID","")  # e.g. "245"
 
 def build_charity_data(c):
     """Build the complete Maximizer Data dict from CC charity data."""
     reg  = str(c.get("reg_number","")).strip()
     name = title_case(c.get("name","") or "Unknown Charity")[:80]
     # Store reg as [regNo] suffix — only reliable lookup method
-    full_name = f"{name} [{reg}]"[:100] if reg else name
+    full_name = name  # Clean name — reg stored in Organisation Number UDF
 
     data = {"Type":"Company","CompanyName":full_name}
 
@@ -956,16 +969,61 @@ def mx_find():
     except Exception as e:
         return jsonify({"error":str(e)}),500
 
+@app.route("/api/maximizer/probe_org_number_typeid")
+def mx_probe_org_number():
+    """Find the TYPEID for Organisation Number UDF by probing."""
+    import requests as req
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+    # Find the existing test entry
+    existing = mx_find_by_org_number_by_name("1202982")
+    if not existing:
+        return jsonify({"error": "No test entry found — run /create_test_charity first"})
+    key = existing.get("key","")
+    results = {"key": key, "found_at": existing.get("companyName")}
+    # Probe TYPEIDs in range likely for numeric/alphanumeric UDFs
+    # We know: 107,108,109,111,112,113,243,261,264 are Table/Yes-No
+    # Organisation Number (Numeric) and Organisation Number New (Alphanumeric)
+    # are likely in a different range. Probe 1-50 and 200-270
+    for typeid in list(range(1,50)) + list(range(200,270)):
+        if typeid in [107,108,109,111,112,113,243,261,264]:
+            continue
+        try:
+            r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
+                json={"AbEntry": {"Data": {"Key": key,
+                      f"/AbEntry/Udf/$TYPEID({typeid})": "1202982"}}},
+                timeout=5)
+            d = r.json()
+            if d.get("Code") == 0:
+                results[f"TYPEID({typeid})"] = "✓ WORKS — likely Organisation Number!"
+            elif "doesn't support" not in str(d.get("Msg","")):
+                results[f"TYPEID({typeid})"] = f"Different error: {str(d.get('Msg',''))[:60]}"
+        except Exception as e:
+            pass  # Skip timeouts
+    return jsonify(results)
+
+def mx_find_by_org_number_by_name(reg_no):
+    """Find entry by name containing reg number."""
+    try:
+        result = mx_read(
+            search_query={"companyName": f"%{reg_no}%"},
+            fields={"key":1,"companyName":1,"type":1}, top=5
+        )
+        items = result.get("abEntry",{}).get("Data",[])
+        for item in items:
+            if str(reg_no) in item.get("companyName",""):
+                return item
+        return None
+    except: return None
+
 @app.route("/api/maximizer/create_test_charity")
 def mx_create_test_charity():
     """Delete old + create fresh test entry with correct CC data & UDF mappings."""
     # Remove existing test entry
-    existing = mx_find_by_org_number("1202982")
+    existing = mx_find_by_org_number_by_name("1202982")
     if existing:
         try: mx_call("AbEntryDelete",{"AbEntry":{"Data":{"Key":existing["key"]}}})
         except: pass
 
-    # Real data from Charity Commission for 1202982
     c = {
         "reg_number":    "1202982",
         "name":          "ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON",
