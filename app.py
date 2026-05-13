@@ -586,602 +586,413 @@ if __name__=="__main__":
     port=int(os.environ.get("PORT",5000))
     app.run(host="0.0.0.0",port=port,debug=False)
 
+
+if __name__=="__main__":
+    port=int(os.environ.get("PORT",5000))
+    app.run(host="0.0.0.0",port=port,debug=False)
+
 # ═══════════════════════════════════════════════════════════════════════
 # MAXIMIZER CRM SYNC — Octopus API
 # ═══════════════════════════════════════════════════════════════════════
 MX_TOKEN = os.environ.get("MAXIMIZER_TOKEN",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJteHB5ZjV6MGFwbWpub29jOXM3NCIsImlhdCI6MTc3ODUyNzEyMywiZXhwIjoxODczMDY1NjAwLCJteC1jaWQiOiJEMzIxRDMxRS04QzRBLTQyRTMtQUU5Ny03NjMzRDk5Qjk5QjIiLCJteC13c2lkIjoiOENDNkVBRkYtQkFERi00RDY5LTgyRTktNzQxREFERUU2QjU0IiwibXgtZGIiOiJjZmM0MWQwY2Y0OWQ0MjViYjQ0ZTQ0YzA3ZDdiMTBmZCIsIm14LXVpZCI6Ik1BSEVTSCIsIm14LXBsIjoiY2xvdWQifQ.hEwCX0Yg35m_QoPa1yXiCoumJ-_9tP1OL3YM8MgOjMU"
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJteHB5ZjV6MGFwbWpub29jO"
+    "XM3NCIsImlhdCI6MTc3ODUyNzEyMywiZXhwIjoxODczMDY1NjAwLCJteC1jaWQiOiJEMzIx"
+    "RDMxRS04QzRBLTQyRTMtQUU5Ny03NjMzRDk5Qjk5QjIiLCJteC13c2lkIjoiOENDNkVBRkY"
+    "tQkFERi00RDY5LTgyRTktNzQxREFERUU2QjU0IiwibXgtZGIiOiJjZmM0MWQwY2Y0OWQ0MjV"
+    "iYjQ0ZTQ0YzA3ZDdiMTBmZCIsIm14LXVpZCI6Ik1BSEVTSCIsIm14LXBsIjoiY2xvdWQifQ"
+    ".hEwCX0Yg35m_QoPa1yXiCoumJ-_9tP1OL3YM8MgOjMU"
 )
-MX_DB    = os.environ.get("MAXIMIZER_DB",   "cfc41d0cf49d425bb44e44c07d7b10fd")
-MX_BASE  = os.environ.get("MAXIMIZER_BASE", "https://api.maximizer.com/octopus")
+MX_DB   = "cfc41d0cf49d425bb44e44c07d7b10fd"
+MX_BASE = os.environ.get("MAXIMIZER_BASE","https://api.maximizer.com/octopus")
 
-# Caller UDF field — the field named "Caller" you created in Maximizer Address Book
-# You can find this key in Maximizer Admin → User-Defined Fields → Address Book
-MX_CALLER_UDF = os.environ.get("MX_CALLER_UDF", "Caller")
+# ── UDF option maps from UDFOptionList.xml ────────────────────────────────────
+# TYPEID(111)=What, (112)=Who, (113)=How, (107)=Country, (108)=LocalAuth,
+# (109)=Region, (261)=Policy, (264)=IsSync
+
+WHAT_MAP = {
+    "accommodation/housing":"1","amateur sport":"2","animals":"3",
+    "armed forces/emergency service efficiency":"4",
+    "arts/culture/heritage/science":"5","disability":"6",
+    "economic/community development/employment":"7","education/training":"8",
+    "environment/conservation/heritage":"9","general charitable purposes":"10",
+    "human rights/religious or racial harmony/equality or diversity":"11",
+    "other charitable purposes":"12","overseas aid/famine relief":"13",
+    "recreation":"14","religious activities":"15",
+    "the advancement of health or saving of lives":"16",
+    "the prevention or relief of poverty":"17",
+}
+WHO_MAP = {
+    "children/young people":"1","elderly/old people":"2",
+    "other charities or voluntary bodies":"3","other defined groups":"4",
+    "people of a particular ethnic or racial origin":"5",
+    "people with disabilities":"6","the general public/mankind":"7",
+}
+HOW_MAP = {
+    "acts as an umbrella or resource body":"1",
+    "makes grants to individuals":"2","makes grants to organisations":"3",
+    "other charitable activities":"4",
+    "provides advocacy/advice/information":"5",
+    "provides buildings/facilities/open space":"6",
+    "provides human resources":"7","provides other finance":"8",
+    "provides services":"9","sponsors or undertakes research":"10",
+}
+REGION_MAP = {
+    "throughout england":"1","throughout england and wales":"2",
+    "throughout london":"3","throughout wales":"4",
+}
+LOCAL_AUTH_MAP = {
+    "barking and dagenham":"1","barnet":"2","barnsley":"3",
+    "bath and north east somerset":"4","bedford":"5","bexley":"6",
+    "birmingham city":"7","blackburn with darwen":"8","blackpool":"9",
+    "blaenau gwent":"10","bolton":"11","bournemouth":"12",
+    "bracknell forest":"13","bradford city":"14","brent":"15",
+    "bridgend":"16","brighton and hove":"17","bristol city":"18",
+    "bromley":"19","buckinghamshire":"20","bury":"21","caerphilly":"22",
+    "calderdale":"23","cambridgeshire":"24","camden":"25","cardiff":"26",
+    "carmarthenshire":"27","central bedfordshire":"28","ceredigion":"29",
+    "cheshire east":"30","cheshire west & chester":"31",
+    "city of london":"32","city of swansea":"33","city of wakefield":"34",
+    "city of westminster":"35","city of york":"36","conwy":"37",
+    "cornwall":"38","coventry city":"39","croydon":"40","cumbria":"41",
+    "darlington":"42","denbighshire":"43","derby city":"44",
+    "derbyshire":"45","devon":"46","doncaster":"47","dorset":"48",
+    "dudley":"49","durham":"50","ealing":"51",
+    "east riding of yorkshire":"52","east sussex":"53","enfield":"54",
+    "essex":"55","flintshire":"56","gateshead":"57","gloucestershire":"58",
+    "greenwich":"59","gwynedd":"60","hackney":"61","halton":"62",
+    "hammersmith and fulham":"63","hampshire":"64","haringey":"65",
+    "harrow":"66","hartlepool":"67","havering":"68","herefordshire":"69",
+    "hertfordshire":"70","hillingdon":"71","hounslow":"72",
+    "isle of anglesey":"73","isle of wight":"74","isles of scilly":"75",
+    "islington":"76","kensington and chelsea":"77","kent":"78",
+    "kingston upon hull city":"79","kingston upon thames":"80",
+    "kirklees":"81","knowsley":"82","lambeth":"83","lancashire":"84",
+    "leeds city":"85","leicester city":"86","leicestershire":"87",
+    "lewisham":"88","lincolnshire":"89","liverpool city":"90","luton":"91",
+    "manchester city":"92","medway":"93","merthyr tydfil":"94",
+    "merton":"95","middlesbrough":"96","milton keynes":"97",
+    "monmouthshire":"98","neath port talbot":"99",
+    "newcastle upon tyne city":"100","newham":"101","newport city":"102",
+    "norfolk":"103","north east lincolnshire":"104",
+    "north lincolnshire":"105","north somerset":"106",
+    "north tyneside":"107","north yorkshire":"108",
+    "northamptonshire":"109","northumberland":"110",
+    "nottingham city":"111","nottinghamshire":"112","oldham":"113",
+    "oxfordshire":"114","pembrokeshire":"115","peterborough city":"116",
+    "plymouth city":"117","poole":"118","portsmouth city":"119",
+    "powys":"120","reading":"121","redbridge":"122",
+    "redcar and cleveland":"123","rhondda cynon taff":"124",
+    "richmond upon thames":"125","rochdale":"126","rotherham":"127",
+    "rutland":"128","salford city":"129","sandwell":"130","sefton":"131",
+    "sheffield city":"132","shropshire":"133","slough":"134",
+    "solihull":"135","somerset":"136","south gloucestershire":"137",
+    "south tyneside":"138","southampton city":"139",
+    "southend-on-sea":"140","southwark":"141","st helens":"142",
+    "staffordshire":"143","stockport":"144","stockton-on-tees":"145",
+    "stoke-on-trent city":"146","suffolk":"147","sunderland":"148",
+    "surrey":"149","sutton":"150","swindon":"151","tameside":"152",
+    "telford & wrekin":"153","thurrock":"154","torbay":"155",
+    "torfaen":"156","tower hamlets":"157","trafford":"158",
+    "vale of glamorgan":"159","walsall":"160","waltham forest":"161",
+    "wandsworth":"162","warrington":"163","warwickshire":"164",
+    "west berkshire":"165","west sussex":"166","wigan":"167",
+    "wiltshire":"168","windsor and maidenhead":"169","wirral":"170",
+    "wokingham":"171","wolverhampton":"172","worcestershire":"173",
+    "wrexham":"174",
+}
+POLICY_MAP = {
+    "bullying and harassment policy and procedures":"1",
+    "conflicting interests":"2",
+    "financial reserves policy and procedures":"3",
+    "internal charity financial controls policy and procedures":"4",
+    "internal risk management policy and procedures":"5",
+    "investing charity funds policy and procedures":"6","investment":"7",
+    "risk management":"8","safeguarding policy and procedures":"9",
+    "safeguarding vulnerable beneficiaries":"10",
+    "serious incident reporting policy and procedures":"11",
+    "trustee conflicts of interest policy and procedures":"12",
+    "volunteer management":"13","complaints handling":"14",
+    "paying staff":"15",
+    "campaigns and political activity policy and procedures":"16",
+    "complaints policy and procedures":"17",
+    "engaging external speakers at charity events policy and procedures":"18",
+    "social media policy and procedures":"19",
+    "trustee expenses policy and procedures":"20",
+}
+
+def _lookup(mapping, text):
+    if not text: return None
+    return mapping.get(str(text).lower().strip())
+
+def _multi_keys(mapping, text_or_list):
+    """Return list of option keys for multiple CC values."""
+    if not text_or_list: return []
+    if isinstance(text_or_list, str):
+        items = [x.strip() for x in text_or_list.replace(';',',').split(',') if x.strip()]
+    else:
+        items = list(text_or_list)
+    return [k for k in (_lookup(mapping, i) for i in items) if k]
 
 def mx_hdrs():
-    return {
-        "Authorization": f"Bearer {MX_TOKEN}",
-        "Content-Type":  "application/json",
-        "Accept":        "application/json",
-    }
+    return {"Authorization":f"Bearer {MX_TOKEN}",
+            "Content-Type":"application/json","Accept":"application/json"}
 
 def mx_call(endpoint, body):
-    """POST to Maximizer Octopus API."""
     url = f"{MX_BASE.rstrip('/')}/{endpoint}"
     r = requests.post(url, headers=mx_hdrs(), json=body, timeout=20)
-    if not r.ok:
-        raise Exception(f"{r.status_code} {r.reason}: {r.text[:200]}")
+    if not r.ok: raise Exception(f"{r.status_code}: {r.text[:200]}")
     return r.json()
 
 def mx_read(search_query=None, fields=None, top=1):
-    """Read AbEntry using lowercase read syntax."""
-    body = {
-        "abEntry": {
-            "criteria": {"searchQuery": search_query or {}, "top": top},
-            "scope": {"fields": fields or {"key": 1, "companyName": 1, "type": 1}}
-        }
-    }
+    body = {"abEntry":{"criteria":{"searchQuery":search_query or {},"top":top},
+                       "scope":{"fields":fields or {"key":1,"companyName":1}}}}
     return mx_call("AbEntryRead", body)
 
 def mx_write_create(data_dict):
-    """Create AbEntry using PascalCase Data wrapper syntax."""
-    return mx_call("AbEntryCreate", {"AbEntry": {"Data": data_dict}})
+    return mx_call("AbEntryCreate",{"AbEntry":{"Data":data_dict}})
 
 def mx_write_update(data_dict):
-    """Update AbEntry using PascalCase Data wrapper syntax."""
-    return mx_call("AbEntryUpdate", {"AbEntry": {"Data": data_dict}})
-
-def mx_find_by_org_number(reg_no):
-    """Find Address Book entry by AccountNo (= CC Reg No.)."""
-    try:
-        # Search by AccountNo field (where we store the CC reg number)
-        result = mx_read(
-            search_query={"accountNo": str(reg_no)},
-            fields={"key": 1, "companyName": 1, "type": 1, "accountNo": 1},
-            top=3
-        )
-        items = result.get("abEntry", {}).get("Data", [])
-        if items:
-            print(f"  Found by accountNo: {items[0].get('companyName')}")
-            return items[0]
-        # Fallback: search by companyName containing reg (for old entries)
-        result2 = mx_read(
-            search_query={"companyName": f"%[{reg_no}]%"},
-            fields={"key": 1, "companyName": 1, "type": 1},
-            top=3
-        )
-        items2 = result2.get("abEntry", {}).get("Data", [])
-        if items2:
-            print(f"  Found by old suffix: {items2[0].get('companyName')}")
-            return items2[0]
-        print(f"  mx_find: no entry for reg {reg_no}")
-        return None
-    except Exception as e:
-        print(f"mx_find_by_org_number({reg_no}): {e}")
-        return None
-
-def mx_get_caller(entry):
-    """Extract caller from entry — stored in companyName or fetched separately."""
-    # For now return empty — we set caller on create/update
-    return ""
+    return mx_call("AbEntryUpdate",{"AbEntry":{"Data":data_dict}})
 
 def title_case(s):
-    """Convert ALL CAPS charity name to Title Case."""
-    if not s:
-        return s
+    if not s: return s
     minor = {"a","an","the","and","or","but","of","in","on","at","to","for",
-             "by","with","from","into","onto","up","as","its"}
-    # Known acronyms to keep uppercase
+             "by","with","from","as","its"}
     acronyms = {"uk","cio","nhs","ymca","rspca","rspb","rnli","rnib","nspcc",
-                "hmrc","plc","ltd","llp","cic","cbf","raf","rbl","ica"}
+                "hmrc","plc","ltd","raf","rbl"}
     words = s.strip().split()
     result = []
     for i, w in enumerate(words):
-        wl = w.lower().rstrip("'s").rstrip(",").rstrip(".")
-        if wl in acronyms:
-            result.append(w.upper())
-        elif i == 0 or w.lower().rstrip(",") not in minor:
-            result.append(w.capitalize())
-        else:
-            result.append(w.lower())
+        wl = w.lower().strip("',.")
+        if wl in acronyms: result.append(w.upper())
+        elif i==0 or wl not in minor: result.append(w.capitalize())
+        else: result.append(w.lower())
     return " ".join(result)
 
-def mx_create_entry(c, caller=""):
-    """Create Address Book Company entry using correct write syntax."""
+def mx_find_by_org_number(reg_no):
+    """Find entry by reg number — stored as [regNo] suffix in CompanyName."""
+    try:
+        result = mx_read(
+            search_query={"companyName": f"%[{reg_no}]%"},
+            fields={"key":1,"companyName":1,"type":1}, top=5
+        )
+        items = result.get("abEntry",{}).get("Data",[])
+        for item in items:
+            if f"[{reg_no}]" in item.get("companyName",""):
+                return item
+        return None
+    except Exception as e:
+        print(f"mx_find({reg_no}): {e}")
+        return None
+
+def build_charity_data(c):
+    """Build the complete Maximizer Data dict from CC charity data."""
     reg  = str(c.get("reg_number","")).strip()
-    raw_name = (c.get("name","") or "Unknown Charity")
-    name = title_case(raw_name)[:100]
+    name = title_case(c.get("name","") or "Unknown Charity")[:80]
+    # Store reg as [regNo] suffix — only reliable lookup method
+    full_name = f"{name} [{reg}]"[:100] if reg else name
 
-    data = {
-        "Type":        "Company",
-        "CompanyName": name,
-    }
-    # Add optional fields if present
-    if c.get("phone"):    data["Phone1"]   = str(c["phone"])[:30]
-    if c.get("website"):  data["WebSite"]  = str(c["website"])[:200]
-    if c.get("email"):    data["Email1"]   = str(c["email"])[:100]
-    if c.get("town"):     data["City"]     = str(c["town"])[:60]
-    if c.get("county"):   data["State"]    = str(c["county"])[:60]
-    if c.get("address1"): data["Addr1"]    = str(c["address1"])[:100]
-    if reg:               data["AccountNo"] = reg   # store reg in AccountNo field
+    data = {"Type":"Company","CompanyName":full_name}
 
-    print(f"  mx_create: {name} (reg:{reg})")
+    # Standard fields (confirmed working via probe)
+    if c.get("phone"):   data["Phone1"]  = str(c["phone"])[:30]
+    if c.get("email"):   data["Email1"]  = str(c["email"])[:100]
+    if c.get("website"): data["WebSite"] = str(c["website"])[:200]
+
+    # ── UDF fields via TYPEID format (all confirmed ✓) ────────────────────────
+    # What (111) — use FIRST matching value (API takes single key per field)
+    what_keys = _multi_keys(WHAT_MAP, c.get("what",""))
+    if what_keys:
+        data["/AbEntry/Udf/$TYPEID(111)"] = what_keys[0]
+
+    # Who (112)
+    who_keys = _multi_keys(WHO_MAP, c.get("who",""))
+    if who_keys:
+        data["/AbEntry/Udf/$TYPEID(112)"] = who_keys[0]
+
+    # How (113)
+    how_keys = _multi_keys(HOW_MAP, c.get("how",""))
+    if how_keys:
+        data["/AbEntry/Udf/$TYPEID(113)"] = how_keys[0]
+
+    # Region (109) — from CC "where" field or default England
+    region = str(c.get("geo_area","") or c.get("region","") or "").strip()
+    if not region: region = "throughout england"
+    rk = _lookup(REGION_MAP, region)
+    if rk: data["/AbEntry/Udf/$TYPEID(109)"] = rk
+
+    # Local Authority (108) — from CC town/county
+    la = str(c.get("local_authority","") or c.get("town","") or "").strip()
+    lk = _lookup(LOCAL_AUTH_MAP, la)
+    if lk: data["/AbEntry/Udf/$TYPEID(108)"] = lk
+
+    # Policy (261)
+    policy = str(c.get("policy","") or "").strip()
+    if policy:
+        pk = _lookup(POLICY_MAP, policy)
+        if pk: data["/AbEntry/Udf/$TYPEID(261)"] = pk
+
+    # Mark as synced via CC (264 key 2 = Yes)
+    data["/AbEntry/Udf/$TYPEID(264)"] = "2"
+
+    return data
+
+def mx_create_entry(c, caller=""):
+    data = build_charity_data(c)
+    print(f"  mx_create: {data.get('CompanyName','?')}")
     result = mx_write_create(data)
-    print(f"  mx_create result: Code={result.get('Code')} Msg={result.get('Msg','')}")
+    print(f"  Code={result.get('Code')} Msg={result.get('Msg','')}")
     return result
 
 def mx_update_entry(key, c, caller=""):
-    """Update existing Maximizer entry."""
-    data = {"Key": key}
-    if c.get("name"):
-        data["CompanyName"] = title_case(c["name"])[:100]
-    if c.get("website"):  data["WebSite"] = str(c["website"])[:200]
-    if c.get("phone"):    data["Phone1"]  = str(c["phone"])[:30]
-    if c.get("email"):    data["Email1"]  = str(c["email"])[:100]
-    reg = str(c.get("reg_number","")).strip()
-    if reg:               data["AccountNo"] = reg
-    print(f"  mx_update: key={key[:20]}...")
+    data = build_charity_data(c)
+    data["Key"] = key
+    data.pop("Type", None)  # Don't change type on update
     return mx_write_update(data)
 
 def mx_search_by_name(name):
-    """Search by company name."""
     try:
-        result = mx_read(
-            search_query={"companyName": f"%{name[:30]}%"},
-            fields={"key": 1, "companyName": 1, "type": 1},
-            top=5
-        )
-        return result.get("abEntry", {}).get("Data", [])
-    except Exception as e:
-        print(f"mx_search_by_name: {e}")
-        return []
+        result = mx_read(search_query={"companyName":f"%{name[:25]}%"},
+                         fields={"key":1,"companyName":1,"type":1}, top=5)
+        return result.get("abEntry",{}).get("Data",[])
+    except: return []
 
 def do_sync_one(reg, c, caller, page):
-    """Sync one charity. Returns (action, mx_caller_pulled)."""
     existing = mx_find_by_org_number(reg)
     if existing:
-        ab_key    = existing.get("key", "")
-        mx_caller = mx_get_caller(existing)
-        # Bidirectional: push our caller if set, else pull Maximizer's
-        push_caller = caller if caller else mx_caller
-        mx_update_entry(ab_key, c, push_caller)
-        # If Maximizer had a caller we don't have locally, record it
-        local_key = f"{page}|{reg}"
-        if mx_caller and not _called_log.get(local_key):
-            _called_log[local_key] = {
-                "reg_number": reg, "page": page,
-                "called_by": mx_caller,
-                "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-                "source": "maximizer"
-            }
-            return "updated", mx_caller
+        ab_key = existing.get("key","")
+        mx_update_entry(ab_key, c, caller)
         return "updated", None
     else:
         mx_create_entry(c, caller)
         return "created", None
 
+# ── API Routes ────────────────────────────────────────────────────────────────
+
 @app.route("/api/maximizer/test")
 def mx_test():
-    """Test connection to Maximizer Octopus API."""
-    global MX_BASE
-    # Get server IP for whitelist instructions
     server_ip = "unknown"
     try:
-        r = requests.get("https://checkip.amazonaws.com", timeout=4)
+        r = requests.get("https://checkip.amazonaws.com",timeout=4)
         server_ip = r.text.strip()
-    except Exception:
-        pass
+    except: pass
     try:
-        result = mx_read(fields={"key": 1, "companyName": 1}, top=1)
-        entries = result.get("abEntry", {}).get("Data", [])
-        count   = len(entries)
-        sample  = entries[0].get("companyName","") if entries else ""
-        return jsonify({
-            "ok": True,
-            "message": f"Connected! Found entries in Maximizer. Sample: '{sample}'",
-            "database": MX_DB, "base": MX_BASE
-        })
+        result = mx_read(fields={"key":1,"companyName":1},top=1)
+        entries = result.get("abEntry",{}).get("Data",[])
+        sample = entries[0].get("companyName","") if entries else ""
+        return jsonify({"ok":True,"message":f"Connected! Sample: '{sample}'",
+                        "database":MX_DB,"base":MX_BASE})
     except Exception as e:
         msg = str(e)
-        hint = ""
-        if "403" in msg or "whitelist" in msg.lower():
-            hint = (f"Render server IP ({server_ip}) is not whitelisted in Maximizer. "
-                    f"Ask your Maximizer admin to add IP {server_ip} to the API allowlist.")
-        elif "401" in msg:
-            hint = "Token expired or invalid."
-        return jsonify({"ok": False, "error": msg, "hint": hint,
-                        "server_ip": server_ip}), 200
+        hint = f"Render IP ({server_ip}) may not be whitelisted." if ("403" in msg or "whitelist" in msg.lower()) else ""
+        return jsonify({"ok":False,"error":msg,"hint":hint,"server_ip":server_ip}), 200
 
-@app.route("/api/maximizer/test_create")
-def mx_test_create():
-    """Try several minimal bodies to find what Maximizer requires."""
-    results = []
-    # Attempt 1: Company with just companyName
-    for body in [
-        {"abEntry": {"type": "Company", "companyName": "TEST CHARITY BODY1"}},
-        {"abEntry": {"type": "Company", "companyName": "TEST CHARITY BODY2", "lastName": ""}},
-        {"abEntry": {"CompanyName": "TEST CHARITY BODY3", "Type": "Company"}},
-        {"abEntry": {"type": "Individual", "lastName": "TestCharity", "firstName": "API"}},
-    ]:
-        try:
-            r = mx_call("AbEntryCreate", body)
-            results.append({"body_keys": list(body["abEntry"].keys()),
-                            "response": r})
-            break  # stop on first success
-        except Exception as e:
-            results.append({"body_keys": list(body["abEntry"].keys()),
-                            "error": str(e)[:200]})
-    return jsonify({"ok": True, "attempts": results})
-
-@app.route("/api/maximizer/test_create2")
-def mx_test_create2():
-    """Try Ferret v1 style create."""
-    try:
-        # Ferret v1 uses different endpoint and body structure
-        import requests as req
-        url = "https://api.maximizer.com/ferret/v1/abEntry"
-        hdrs = {"Authorization": f"Bearer {MX_TOKEN}",
-                "Content-Type": "application/json"}
-        body = {
-            "data": {
-                "type": "Company",
-                "attributes": {
-                    "companyName": "TEST FERRET CHARITY"
-                }
-            }
-        }
-        r = req.post(url, headers=hdrs, json=body, timeout=10)
-        return jsonify({"status": r.status_code, "body": r.text[:500]})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 200
-
-@app.route("/api/maximizer/read_sample")
-def mx_read_sample():
-    """Read one existing entry to see exact field structure Maximizer uses."""
-    try:
-        # Request ALL fields to discover what Maximizer actually supports
-        body = {
-            "abEntry": {
-                "criteria": {"searchQuery": {}, "top": 1},
-                "scope": {
-                    "fields": {
-                        "key": 1,
-                        "companyName": 1,
-                        "type": 1,
-                        "phone1": 1,
-                        "email1": 1,
-                        "address1": 1,
-                        "website": 1,
-                        "udf": 1,
-                        "lastName": 1,
-                        "firstName": 1,
-                        "leadSource": 1,
-                        "notes": 1,
-                    }
-                }
-            }
-        }
-        result = mx_call("AbEntryRead", body)
-        return jsonify({"ok": True, "result": result})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 200
-
-@app.route("/api/maximizer/read_full")
-def mx_read_full():
-    """Read the known entry key with ALL possible fields to discover structure."""
-    known_key = "Q29udGFjdAkyNDAzMjcyNTIyMzc1Nzk5MzU4MDJDCTE="
-    try:
-        # Request every field we can think of
-        body = {
-            "abEntry": {
-                "criteria": {
-                    "searchQuery": {"key": known_key},
-                    "top": 1
-                },
-                "scope": {
-                    "fields": {
-                        "key": 1,
-                        "companyName": 1,
-                        "lastName": 1,
-                        "firstName": 1,
-                        "type": 1,
-                        "phone1": 1,
-                        "phone2": 1,
-                        "phone3": 1,
-                        "email1": 1,
-                        "email2": 1,
-                        "website": 1,
-                        "addr1Line1": 1,
-                        "addr1Line2": 1,
-                        "addr1City": 1,
-                        "addr1State": 1,
-                        "addr1Country": 1,
-                        "addr1Zip": 1,
-                        "addressLine1": 1,
-                        "addressLine2": 1,
-                        "city": 1,
-                        "state": 1,
-                        "country": 1,
-                        "postalCode": 1,
-                        "udf": 1,
-                        "notes": 1,
-                        "leadSource": 1,
-                        "isLead": 1,
-                    }
-                }
-            }
-        }
-        result = mx_call("AbEntryRead", body)
-        return jsonify({"ok": True, "result": result})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 200
-
-@app.route("/api/maximizer/create_test_charity")
-def mx_create_test_charity():
-    """Create charity, get key via Identification, probe valid fields."""
-    import requests as req, base64 as b64
-    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
-    reg  = "1202982"
-    name = title_case("ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON")
-    results = {}
-
-    # Step 1: Create
-    r = req.post(f"{MX_BASE}/AbEntryCreate", headers=hdrs,
-        json={"AbEntry": {"Data": {"Type": "Company", "CompanyName": name}}}, timeout=10)
-    resp = r.json()
-    results["create_code"] = resp.get("Code")
-    if resp.get("Code") != 0:
-        results["err"] = str(resp.get("Msg",""))
-        return jsonify(results)
-    results["SUCCESS"] = True
-
-    # Step 2: Get Identification from response Data (it comes back without Key)
-    # The response Data contains CompanyName and Type — read Identification by searching
-    # We need to read all companies and find ours
-    # Try with different search approaches
-    new_key = ""
-
-    # Approach A: search with empty query but filter type=Company  
-    for search_body in [
-        # Try searching ALL types including Company
-        {"abEntry": {"criteria": {"searchQuery": {"companyName": name[:20]},
-                                   "top": 5},
-                     "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
-        # Try with no type filter at all - get everything
-        {"abEntry": {"criteria": {"searchQuery": {"companyName": "St George"},
-                                   "top": 5},
-                     "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
-        # Try getting last 50 entries of any type
-        {"abEntry": {"criteria": {"searchQuery": {}, "top": 50},
-                     "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
-    ]:
-        try:
-            rf = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-                json=search_body, timeout=10)
-            d = rf.json()
-            entries = d.get("abEntry",{}).get("Data",[])
-            results[f"search_{list(search_body['abEntry']['criteria']['searchQuery'].keys())[0] if search_body['abEntry']['criteria']['searchQuery'] else 'empty'}"] = entries
-            for e in entries:
-                cn = e.get("companyName","")
-                if "george" in cn.lower() or "orthodox" in cn.lower():
-                    new_key = e.get("key","")
-                    results["found_key"] = new_key
-                    break
-            if new_key: break
-        except Exception as e:
-            results[f"search_err"] = str(e)[:80]
-
-    # Approach B: construct key from known Identification pattern
-    # Previous entry: Identification=260512251420242170269C → Key=Q29tcGFueQkyNDA4MTMyNTIwMTMzNTMzNjAwNzhDCTA=
-    # Pattern: base64("Company	{id}	0") — but we don't know the new Identification yet
-    # However, we can try using the Identification from the PREVIOUS entry in screenshot
-    # For the entry created right now, we need to read it back
-
-    if not new_key:
-        results["note"] = "Key not found via search — Company type not returned by AbEntryRead"
-        results["manual_fix"] = (
-            "Go to Maximizer, open the new entry, copy the Identification number, "
-            "then call /api/maximizer/update_by_id?id=IDENTIFICATION_HERE to fill the fields"
-        )
-
-    results["key"] = new_key
-
-    if not new_key:
-        return jsonify(results)
-
-    # Step 3: Probe field names
-    field_candidates = [
-        ("Phone1",        "07448976144"),
-        ("Email1",        "test@test.com"),
-        ("WebSite",       "http://test.com"),
-        ("CityTown",      "London"),
-        ("City",          "London"),
-        ("StateProvince", "London"),
-        ("StProv",        "London"),
-        ("Addr1",         "Test St"),
-        ("Address1",      "Test St"),
-        ("ZipCode",       "EC1A"),
-        ("Country",       "United Kingdom"),
-        ("AccountNo",     reg),
-    ]
-    results["fields"] = {}
-    for field, val in field_candidates:
-        try:
-            r2 = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
-                json={"AbEntry": {"Data": {"Key": new_key, field: val}}}, timeout=8)
-            d = r2.json()
-            results["fields"][field] = "✓" if d.get("Code")==0 else f"✗ {str(d.get('Msg',''))[:60]}"
-        except Exception as e:
-            results["fields"][field] = f"ERR:{str(e)[:50]}"
-
-    return jsonify(results)
-
-
-@app.route("/api/maximizer/update_by_id")
-def mx_update_by_id():
-    """Probe Address key format and test all TYPEID UDF fields."""
-    import requests as req, base64 as b64
-    identification = request.args.get("id","260512251459340800321C").strip()
-    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
-    company_key = b64.b64encode(f"Company	{identification}	0".encode()).decode()
-    results = {"key": company_key}
-
-    # We know TYPEID format works. Test all UDF TYPEIDs now.
-    udf_tests = {
-        "/AbEntry/Udf/$TYPEID(111)": "15",   # What = Religious Activities
-        "/AbEntry/Udf/$TYPEID(112)": "7",    # Who = General Public
-        "/AbEntry/Udf/$TYPEID(113)": "4",    # How = Other Charitable Activities
-        "/AbEntry/Udf/$TYPEID(107)": "1",    # Country UDF
-        "/AbEntry/Udf/$TYPEID(108)": "1",    # Local Authority UDF
-        "/AbEntry/Udf/$TYPEID(109)": "1",    # Region UDF
-    }
-    results["udf_typeid"] = {}
-    for field, val in udf_tests.items():
-        try:
-            r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
-                json={"AbEntry": {"Data": {"Key": company_key, field: val}}}, timeout=8)
-            d = r.json()
-            results["udf_typeid"][field] = "✓" if d.get("Code")==0 else f"✗ {str(d.get('Msg',''))[:80]}"
-        except Exception as e:
-            results["udf_typeid"][field] = f"ERR:{str(e)[:50]}"
-
-    # Test non-TYPEID UDF fields (alphanumeric/numeric UDFs by name)
-    # These use a different path format
-    named_udf_formats = [
-        # Format: full path
-        "/AbEntry/Udf/Organisation Number New",
-        "/AbEntry/Udf/Caller",
-        "/AbEntry/Udf/Date Of Registration",
-        "/AbEntry/Udf/Total Income",
-        "/AbEntry/Udf/Charity Type",
-        "/AbEntry/Udf/Organisation Number",
-    ]
-    results["named_udfs"] = {}
-    for field in named_udf_formats:
-        try:
-            r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
-                json={"AbEntry": {"Data": {"Key": company_key, field: "TEST"}}}, timeout=8)
-            d = r.json()
-            results["named_udfs"][field] = "✓" if d.get("Code")==0 else f"✗ {str(d.get('Msg',''))[:80]}"
-        except Exception as e:
-            results["named_udfs"][field] = f"ERR:{str(e)[:50]}"
-
-    # Address: the error said "/AbEntry/Address/Key" is needed
-    # Try getting the address key first by reading the entry
-    try:
-        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-            json={"abEntry": {
-                "criteria": {"searchQuery": {}, "top": 1},
-                "scope": {"fields": {"key":1, "companyName":1,
-                                     "/AbEntry/Address/Key":1,
-                                     "addresses":1, "address":1}}
-            }}, timeout=10)
-        results["address_read"] = r.json()
-    except Exception as e:
-        results["address_read_err"] = str(e)
-
-    # Try address update with path notation
-    addr_path_tests = {
-        "/AbEntry/Address/Line1":    "Rood Lane, Eastcheap",
-        "/AbEntry/Address/City":     "City of London",
-        "/AbEntry/Address/Province": "London",
-        "/AbEntry/Address/Zip":      "EC3M 5AD",
-        "/AbEntry/Address/Country":  "United Kingdom",
-    }
-    results["addr_path"] = {}
-    for field, val in addr_path_tests.items():
-        try:
-            r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
-                json={"AbEntry": {"Data": {"Key": company_key, field: val}}}, timeout=6)
-            d = r.json()
-            results["addr_path"][field] = "✓" if d.get("Code")==0 else f"✗ {str(d.get('Msg',''))[:80]}"
-        except Exception as e:
-            results["addr_path"][field] = f"ERR:{str(e)[:40]}"
-
-    return jsonify(results)
-
-@app.route("/api/maximizer/find")
-def mx_find():
-    """Find a charity in Maximizer by reg number or name — for debugging."""
-    reg  = request.args.get("reg", "")
-    name = request.args.get("name", "")
-    try:
-        if reg:
-            entry = mx_find_by_org_number(reg)
-            if entry:
-                return jsonify({"found": True, "entry": entry})
-            # Also try direct name search
-            if name:
-                entries = mx_search_by_name(name[:30])
-                return jsonify({"found": bool(entries), "entries": entries,
-                               "note": "Found by name (not by reg)"})
-            # Try broader search
-            broader = mx_search_by_name(reg)
-            return jsonify({"found": bool(broader), "entries": broader,
-                           "note": f"Searched for [{reg}] in companyName"})
-        return jsonify({"error": "Provide ?reg= parameter"}), 400
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/maximizer/sync", methods=["POST"])
+@app.route("/api/maximizer/sync",methods=["POST"])
 def mx_sync():
-    """Sync charities with Maximizer (background thread)."""
     global MX_BASE
     data      = request.json or {}
-    charities = data.get("charities", [])
-    page      = data.get("page", "prospects")
-    caller    = data.get("caller", "")
-    base_url  = data.get("base_url", "").strip()
-    if base_url:
-        MX_BASE = base_url.rstrip("/")
+    charities = data.get("charities",[])
+    page      = data.get("page","prospects")
+    caller    = data.get("caller","")
+    base_url  = data.get("base_url","").strip()
+    if base_url: MX_BASE = base_url.rstrip("/")
     sync_key  = f"mx_sync_{page}"
-
     with _bg_lock:
-        if _bg_status.get(sync_key) == "loading":
-            return jsonify({"ok": False, "message": "Sync already running"}), 409
-
+        if _bg_status.get(sync_key)=="loading":
+            return jsonify({"ok":False,"message":"Sync already running"}),409
     def _worker():
-        with _bg_lock: _bg_status[sync_key] = "loading"
-        result = {"created": 0, "updated": 0, "errors": 0, "mx_callers_pulled": 0, "error": ""}
+        with _bg_lock: _bg_status[sync_key]="loading"
+        res={"created":0,"updated":0,"errors":0,"mx_callers_pulled":0,"error":""}
         try:
             for c in charities[:100]:
-                reg = c.get("reg_number", "")
+                reg=c.get("reg_number","")
                 if not reg: continue
                 try:
-                    action, pulled_caller = do_sync_one(reg, c, caller, page)
-                    if action == "created": result["created"] += 1
-                    else: result["updated"] += 1
-                    if pulled_caller: result["mx_callers_pulled"] += 1
+                    action,_=do_sync_one(reg,c,caller,page)
+                    if action=="created": res["created"]+=1
+                    else: res["updated"]+=1
                 except Exception as e:
-                    print(f"  sync_one({reg}): {e}")
-                    result["errors"] += 1
+                    print(f"  sync({reg}): {e}"); res["errors"]+=1
         except Exception as e:
-            result["error"] = str(e)
+            res["error"]=str(e)
         finally:
-            cache_set(sync_key, result)
-            with _bg_lock: _bg_status[sync_key] = "idle"
-        print(f"Maximizer sync done: {result}")
-
-    threading.Thread(target=_worker, daemon=True).start()
-    return jsonify({"ok": True, "status": "loading",
-                    "message": f"Syncing {len(charities)} charities…"}), 202
+            cache_set(sync_key,res)
+            with _bg_lock: _bg_status[sync_key]="idle"
+        print(f"Mx sync done: {res}")
+    threading.Thread(target=_worker,daemon=True).start()
+    return jsonify({"ok":True,"status":"loading",
+                    "message":f"Syncing {len(charities)} charities…"}),202
 
 @app.route("/api/maximizer/sync_status")
 def mx_sync_status():
-    page     = request.args.get("page", "prospects")
-    sync_key = f"mx_sync_{page}"
-    with _bg_lock:
-        status = _bg_status.get(sync_key, "idle")
-    result = cache_get(sync_key, max_age=60)
-    return jsonify({"status": status, "result": result})
+    page=request.args.get("page","prospects")
+    sync_key=f"mx_sync_{page}"
+    with _bg_lock: status=_bg_status.get(sync_key,"idle")
+    result=cache_get(sync_key,max_age=60)
+    return jsonify({"status":status,"result":result})
 
-@app.route("/api/maximizer/config", methods=["GET", "POST"])
+@app.route("/api/maximizer/config",methods=["GET","POST"])
 def mx_config():
     global MX_BASE
-    if request.method == "POST":
-        data = request.json or {}
-        if data.get("base_url"):
-            MX_BASE = data["base_url"].rstrip("/")
-    return jsonify({"ok": True, "base_url": MX_BASE, "database": MX_DB,
-                    "user": "MAHESH", "token_expires": "2029-05-10"})
+    if request.method=="POST":
+        d=request.json or {}
+        if d.get("base_url"): MX_BASE=d["base_url"].rstrip("/")
+    return jsonify({"ok":True,"base_url":MX_BASE,"database":MX_DB,
+                    "user":"MAHESH","token_expires":"2029-05-10"})
+
+@app.route("/api/maximizer/find")
+def mx_find():
+    reg=request.args.get("reg","")
+    name=request.args.get("name","")
+    try:
+        if reg:
+            entry=mx_find_by_org_number(reg)
+            if entry: return jsonify({"found":True,"entry":entry})
+            if name:
+                entries=mx_search_by_name(name[:30])
+                return jsonify({"found":bool(entries),"entries":entries,"note":"by name"})
+            return jsonify({"found":False,"note":f"No entry for reg {reg}"})
+        return jsonify({"error":"Provide ?reg= parameter"}),400
+    except Exception as e:
+        return jsonify({"error":str(e)}),500
+
+@app.route("/api/maximizer/create_test_charity")
+def mx_create_test_charity():
+    """Delete old + create fresh test entry with correct CC data & UDF mappings."""
+    # Remove existing test entry
+    existing = mx_find_by_org_number("1202982")
+    if existing:
+        try: mx_call("AbEntryDelete",{"AbEntry":{"Data":{"Key":existing["key"]}}})
+        except: pass
+
+    # Real data from Charity Commission for 1202982
+    c = {
+        "reg_number":    "1202982",
+        "name":          "ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON",
+        "phone":         "07448976144",
+        "email":         "st.georges.ioc.london@gmail.com",
+        "website":       "www.indianorthodox.london",
+        "town":          "City of London",
+        "what": "General Charitable Purposes,Disability,The Prevention Or Relief Of Poverty",
+        "who":  "Children/young People,Elderly/old People,People With Disabilities,"
+                "People Of A Particular Ethnic Or Racial Origin,"
+                "Other Charities Or Voluntary Bodies",
+        "how":           "Makes Grants To Organisations",
+        "region":        "Throughout England",
+        "local_authority":"City of London",
+    }
+    data = build_charity_data(c)
+    result = {"data_sent": data}
+    try:
+        resp = mx_write_create(data)
+        result["Code"] = resp.get("Code")
+        result["Msg"]  = str(resp.get("Msg",""))
+        result["SUCCESS"] = resp.get("Code")==0
+    except Exception as e:
+        result["error"] = str(e)
+    return jsonify(result)
+
+@app.route("/api/maximizer/update_by_id")
+def mx_update_by_id():
+    """Legacy probe endpoint — kept for reference."""
+    return jsonify({"message":"Field probing complete. Use /api/maximizer/create_test_charity"}),200
