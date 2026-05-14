@@ -1550,33 +1550,46 @@ def mx_create_test_charity():
 
 @app.route("/api/maximizer/update_by_id")
 def mx_update_by_id():
-    """Apply UDFs to a Company entry using its Identification (from Maximizer System Info).
-    Usage: /api/maximizer/update_by_id?id=IDENTIFICATION&reg=1202982
-    """
-    import base64 as b64
+    """Apply UDFs to Company entry. Usage: ?id=IDENTIFICATION&reg=REG_NUMBER"""
+    import base64 as b64, requests as req
     identification = request.args.get("id","").strip()
     reg = request.args.get("reg","1202982").strip()
-    if not identification:
-        return jsonify({"error":"Provide ?id=IDENTIFICATION_FROM_MAXIMIZER_SYSTEM_INFO&reg=REG_NUMBER"}), 400
+    probe_org = request.args.get("probe","0") == "1"
+    if not identification or identification in ("PASTE_ID_HERE","YOUR_IDENTIFICATION_HERE"):
+        return jsonify({"error":"Paste the actual Identification number from Maximizer System Information"}), 400
 
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
     key = b64.b64encode(f"Company	{identification}	0".encode()).decode()
-    c = {"reg_number": reg, "name": ""}
+    c = {"reg_number": reg}
     c = enrich_charity_from_cc(c)
-    results = {"key": key, "identification": identification, "reg": reg,
-               "cc_fetched": bool(c.get("what"))}
-    # Apply each UDF separately (proven to work)
+    results = {"key": key[:30]+"...", "reg": reg, "cc_fetched": bool(c.get("what"))}
+
+    # Apply known UDFs
     udf_results = mx_apply_udfs(key, c)
     results["udf_results"] = udf_results
-    # Also update basic fields
-    try:
-        basic = {"Key": key, "CompanyName": title_case(c.get("name",""))}
-        if c.get("phone"):   basic["Phone1"]  = c["phone"]
-        if c.get("email"):   basic["Email1"]  = c["email"]
-        if c.get("website"): basic["WebSite"] = c["website"]
-        r = mx_write_update({"AbEntry": {"Data": basic}})
-        results["basic_update"] = r.get("Code")
-    except Exception as e:
-        results["basic_update_err"] = str(e)
+
+    # Probe for Organisation Number TYPEID if requested
+    if probe_org:
+        found_typeid = None
+        for typeid in list(range(1,50)) + list(range(200,280)):
+            if typeid in [107,108,109,111,112,113,243,261,264]: continue
+            try:
+                r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
+                    json={"AbEntry":{"Data":{"Key":key,
+                          f"/AbEntry/Udf/$TYPEID({typeid})": reg}}},
+                    timeout=5)
+                d = r.json()
+                if d.get("Code") == 0:
+                    results[f"TYPEID_{typeid}"] = f"✓ WORKS for org number!"
+                    found_typeid = typeid
+                    break
+                elif "doesn't support" not in str(d.get("Msg","")):
+                    results[f"TYPEID_{typeid}"] = f"different error: {str(d.get('Msg',''))[:40]}"
+            except: pass
+        results["org_num_typeid"] = found_typeid
+    else:
+        results["hint"] = "Add &probe=1 to find the Organisation Number TYPEID"
+
     return jsonify(results)
 
 @app.route("/api/maximizer/fill_latest_company")
