@@ -1123,6 +1123,10 @@ def build_charity_data_full(c):
     region = str(c.get("geo_area","") or c.get("region","") or "throughout england").strip()
     la = str(c.get("local_authority","") or c.get("town","") or "").strip()
 
+    # Organisation Number (TYPEID 2) = reg_charity_number from CC
+    reg = str(c.get("reg_number","")).strip()
+    if reg: data["/AbEntry/Udf/$TYPEID(2)"] = reg
+
     what_keys = _multi_keys(WHAT_MAP, what)
     if what_keys: data["/AbEntry/Udf/$TYPEID(111)"] = what_keys[0]
     who_keys = _multi_keys(WHO_MAP, who)
@@ -1133,7 +1137,7 @@ def build_charity_data_full(c):
     if rk: data["/AbEntry/Udf/$TYPEID(109)"] = rk
     lk = _lookup(LOCAL_AUTH_MAP, la)
     if lk: data["/AbEntry/Udf/$TYPEID(108)"] = lk
-    data["/AbEntry/Udf/$TYPEID(264)"] = "2"
+    data["/AbEntry/Udf/$TYPEID(264)"] = "2"  # IsSync=Yes
     return data
 
 def build_charity_base(c):
@@ -1192,6 +1196,10 @@ def build_charity_udfs(c, key):
     who  = c.get("who","")  or fin.get("who","")
     how  = c.get("how","")  or fin.get("how","")
 
+    # Organisation Number = TYPEID(2)
+    reg = str(c.get("reg_number","")).strip()
+    if reg: upd(2, reg)
+
     what_keys = _multi_keys(WHAT_MAP, what)
     if what_keys: upd(111, what_keys[0])
 
@@ -1215,11 +1223,6 @@ def build_charity_udfs(c, key):
         if pk: upd(261, pk)
 
     upd(264, "2")  # IsSync = Yes
-
-    if MX_ORG_NUM_TYPEID:
-        reg = str(c.get("reg_number","")).strip()
-        if reg: upd(MX_ORG_NUM_TYPEID, reg)
-
     return updates
 
 def mx_apply_udfs(key, c):
