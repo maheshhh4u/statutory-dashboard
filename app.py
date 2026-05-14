@@ -980,45 +980,48 @@ def build_charity_base(c):
     return data
 
 def _mx_find_key_by_creation_date(company_name, created_after_iso):
-    """Find a recently created Company entry by searching creation date."""
+    """Find a recently created Company entry — logs each search attempt."""
     import requests as req
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
     name_part = company_name[:20].lower()
-    # Try reading with creationDate filter
-    for search_body in [
-        # Search by creation date range
+    print(f"  Looking for: '{name_part[:15]}'")
+
+    search_attempts = [
+        # Sort by lastModifyDate DESC — most recent first
         {"abEntry": {
-            "criteria": {
-                "searchQuery": {"creationDate": {"from": created_after_iso}},
-                "top": 20
-            },
-            "scope": {"fields": {"key":1,"companyName":1,"type":1,"/AbEntry/Address/Key":1}}
-        }},
-        # Search all recent with address key (includes Companies)
-        {"abEntry": {
-            "criteria": {"searchQuery": {}, "top": 50},
-            "scope": {"fields": {"key":1,"companyName":1,"type":1,"/AbEntry/Address/Key":1}},
-            "orderBy": {"fields": [{"creationDate": "DESC"}]}
-        }},
-        # Try with lastModifyDate
-        {"abEntry": {
-            "criteria": {"searchQuery": {}, "top": 50},
+            "criteria": {"searchQuery": {}, "top": 20},
             "scope": {"fields": {"key":1,"companyName":1,"type":1,"/AbEntry/Address/Key":1}},
             "orderBy": {"fields": [{"lastModifyDate": "DESC"}]}
         }},
-    ]:
+        # Sort by creationDate DESC
+        {"abEntry": {
+            "criteria": {"searchQuery": {}, "top": 20},
+            "scope": {"fields": {"key":1,"companyName":1,"type":1,"/AbEntry/Address/Key":1}},
+            "orderBy": {"fields": [{"CreationDate": "DESC"}]}
+        }},
+        # No sort, no filter
+        {"abEntry": {
+            "criteria": {"searchQuery": {}, "top": 20},
+            "scope": {"fields": {"key":1,"companyName":1,"type":1,"/AbEntry/Address/Key":1}}
+        }},
+    ]
+
+    for i, body in enumerate(search_attempts):
         try:
-            r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
-                        json=search_body, timeout=10)
-            data = r.json()
-            if data.get("Code") == 0:
-                for item in data.get("abEntry",{}).get("Data",[]):
-                    cn = item.get("companyName","").lower()
-                    if name_part[:12] in cn:
-                        print(f"  Found by creation date search: {item.get('companyName')}")
-                        return item.get("key","")
+            r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json=body, timeout=10)
+            d = r.json()
+            code = d.get("Code")
+            items = d.get("abEntry",{}).get("Data",[])
+            print(f"  Search {i+1}: Code={code}, {len(items)} items")
+            for item in items:
+                cn = item.get("companyName","").lower()
+                t  = item.get("type","")
+                print(f"    [{t}] {cn[:40]}")
+                if name_part[:12] in cn:
+                    print(f"  MATCH: {item.get('companyName')}")
+                    return item.get("key","")
         except Exception as e:
-            print(f"  _find_by_creation: {e}")
+            print(f"  Search {i+1} error: {e}")
     return ""
 
 def build_charity_udfs(c, key):
@@ -1386,11 +1389,15 @@ def mx_create_test_charity():
     # Fetch real what/who/how from CC classification data
     classif = get_charity_classification("1202982")
     c.update(classif)
-    result = {}
+    result = {"classif": classif}
     try:
-        # Step 1: Create basic entry
+        import time
+        from datetime import datetime, timezone
+
+        # Step 1: Create with basic fields only
         base = build_charity_base(c)
         result["base_sent"] = base
+        created_after = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         resp = mx_write_create(base)
         result["create_code"] = resp.get("Code")
         result["SUCCESS"] = resp.get("Code") == 0
@@ -1398,9 +1405,18 @@ def mx_create_test_charity():
             result["error"] = str(resp.get("Msg",""))
             return jsonify(result)
 
-        # Step 2: Find the created entry using multiple strategies
-        import time; time.sleep(2)
-        # All fields sent in create — check Maximizer to confirm UDFs were saved
+        # Step 2: Find key using creation date ordered search
+        time.sleep(2)
+        key = _mx_find_key_by_creation_date(base["CompanyName"], created_after)
+        result["key"] = key
+
+        if not key:
+            result["note"] = "Created OK but key not found — UDFs not applied"
+            return jsonify(result)
+
+        # Step 3: Apply each UDF separately
+        udf_results = mx_apply_udfs(key, c)
+        result["udf_results"] = udf_results
 
     except Exception as e:
         result["error"] = str(e)
