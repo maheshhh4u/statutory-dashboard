@@ -797,70 +797,71 @@ def mx_find_by_org_number(reg_no):
         print(f"mx_find({reg_no}): {e}")
         return None
 
-def build_charity_data(c):
-    """Build the complete Maximizer Data dict from CC charity data."""
-    reg  = str(c.get("reg_number","")).strip()
-    name = title_case(c.get("name","") or "Unknown Charity")[:80]
-    # Store reg as [regNo] suffix — only reliable lookup method
-    full_name = name  # Clean name — reg stored in Organisation Number UDF
-
-    data = {"Type":"Company","CompanyName":full_name}
-
-    # Standard fields (confirmed working via probe)
+def build_charity_base(c):
+    """Basic fields only — used for create call (no UDFs to avoid conflicts)."""
+    name = title_case(c.get("name","") or "Unknown Charity")[:100]
+    data = {"Type":"Company","CompanyName":name}
     if c.get("phone"):   data["Phone1"]  = str(c["phone"])[:30]
     if c.get("email"):   data["Email1"]  = str(c["email"])[:100]
     if c.get("website"): data["WebSite"] = str(c["website"])[:200]
+    return data
 
-    # ── UDF fields via TYPEID format (all confirmed ✓) ────────────────────────
-    # What (111) — use FIRST matching value (API takes single key per field)
-    what_keys = _multi_keys(WHAT_MAP, c.get("what",""))
-    if what_keys:
-        data["/AbEntry/Udf/$TYPEID(111)"] = what_keys[0]
+def build_charity_udfs(c, key):
+    """Build list of individual UDF update dicts — each sent separately."""
+    updates = []
 
-    # Who (112)
-    who_keys = _multi_keys(WHO_MAP, c.get("who",""))
-    if who_keys:
-        data["/AbEntry/Udf/$TYPEID(112)"] = who_keys[0]
+    def upd(typeid, val):
+        if val:
+            updates.append({"Key": key,
+                            f"/AbEntry/Udf/$TYPEID({typeid})": str(val)})
 
-    # How (113)
-    how_keys = _multi_keys(HOW_MAP, c.get("how",""))
-    if how_keys:
-        data["/AbEntry/Udf/$TYPEID(113)"] = how_keys[0]
+    # Pull what/who/how from financials if not directly on c
+    fin = c.get("financials") or {}
+    what = c.get("what","") or fin.get("what","")
+    who  = c.get("who","")  or fin.get("who","")
+    how  = c.get("how","")  or fin.get("how","")
 
-    # Region (109) — from CC "where" field or default England
-    region = str(c.get("geo_area","") or c.get("region","") or "").strip()
-    if not region: region = "throughout england"
+    what_keys = _multi_keys(WHAT_MAP, what)
+    if what_keys: upd(111, what_keys[0])
+
+    who_keys = _multi_keys(WHO_MAP, who)
+    if who_keys: upd(112, who_keys[0])
+
+    how_keys = _multi_keys(HOW_MAP, how)
+    if how_keys: upd(113, how_keys[0])
+
+    region = str(c.get("geo_area","") or c.get("region","") or "throughout england").strip()
     rk = _lookup(REGION_MAP, region)
-    if rk: data["/AbEntry/Udf/$TYPEID(109)"] = rk
+    if rk: upd(109, rk)
 
-    # Local Authority (108) — from CC town/county
     la = str(c.get("local_authority","") or c.get("town","") or "").strip()
     lk = _lookup(LOCAL_AUTH_MAP, la)
-    if lk: data["/AbEntry/Udf/$TYPEID(108)"] = lk
+    if lk: upd(108, lk)
 
-    # Policy (261)
     policy = str(c.get("policy","") or "").strip()
     if policy:
         pk = _lookup(POLICY_MAP, policy)
-        if pk: data["/AbEntry/Udf/$TYPEID(261)"] = pk
+        if pk: upd(261, pk)
 
-    # Mark as synced via CC (264 key 2 = Yes)
-    data["/AbEntry/Udf/$TYPEID(264)"] = "2"
+    upd(264, "2")  # IsSync = Yes
 
-    return data
+    if MX_ORG_NUM_TYPEID:
+        reg = str(c.get("reg_number","")).strip()
+        if reg: upd(MX_ORG_NUM_TYPEID, reg)
+
+    return updates
 
 def mx_apply_udfs(key, c):
-    """Apply UDF fields one at a time after entry is created/found."""
-    udf_updates = build_charity_udfs(c, key)
+    """Apply each UDF update separately."""
     results = []
-    for upd_data in udf_updates:
+    for upd_data in build_charity_udfs(c, key):
         try:
             r = mx_write_update(upd_data)
-            typeid = [k for k in upd_data if k.startswith("/AbEntry")][0]
-            results.append({"field": typeid, "val": upd_data[typeid],
-                            "Code": r.get("Code"), "ok": r.get("Code")==0})
+            field = [k for k in upd_data if k.startswith("/AbEntry")][0]
+            results.append({"field":field,"val":upd_data[field],
+                            "Code":r.get("Code"),"ok":r.get("Code")==0})
         except Exception as e:
-            results.append({"error": str(e)[:80]})
+            results.append({"error":str(e)[:80]})
     return results
 
 def mx_create_entry(c, caller=""):
