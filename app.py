@@ -893,8 +893,12 @@ def mx_call(endpoint, body):
     if not r.ok: raise Exception(f"{r.status_code}: {r.text[:200]}")
     return r.json()
 
-def mx_read(search_query=None, fields=None, top=1):
-    body = {"abEntry":{"criteria":{"searchQuery":search_query or {},"top":top},
+def mx_read(search_query=None, fields=None, top=1, entry_type=None):
+    """Read AbEntry. entry_type can be 'Contact', 'Company', 'Individual' or None for all."""
+    sq = dict(search_query or {})
+    if entry_type:
+        sq["type"] = entry_type
+    body = {"abEntry":{"criteria":{"searchQuery":sq,"top":top},
                        "scope":{"fields":fields or {"key":1,"companyName":1}}}}
     return mx_call("AbEntryRead", body)
 
@@ -1023,15 +1027,31 @@ def mx_create_entry(c, caller=""):
     if result.get("Code") != 0:
         return result
     # Step 2: Find the new entry and apply UDFs
-    reg = str(c.get("reg_number","")).strip()
+    import time; time.sleep(2)
     name = data.get("CompanyName","")
+    reg  = str(c.get("reg_number","")).strip()
+    key  = ""
     try:
-        import time; time.sleep(1)  # brief pause for Maximizer to index
-        found = mx_find_by_org_number(reg) or mx_search_by_name(name[:20])
-        if found:
-            key = found[0]["key"] if isinstance(found, list) else found.get("key","")
-            if key:
-                mx_apply_udfs(key, c)
+        # Try Company type search first
+        r_co = mx_read(
+            search_query={"companyName": name[:30]},
+            fields={"key":1,"companyName":1,"type":1},
+            top=10, entry_type="Company"
+        )
+        for item in r_co.get("abEntry",{}).get("Data",[]):
+            if name[:12].lower() in item.get("companyName","").lower():
+                key = item.get("key",""); break
+        # Fallback: search all types
+        if not key:
+            items = mx_search_by_name(name[:20])
+            if items:
+                key = (items[0].get("key","") if isinstance(items[0],dict)
+                       else items[0].get("key",""))
+        if key:
+            mx_apply_udfs(key, c)
+            print(f"  UDFs applied to key {key[:20]}…")
+        else:
+            print(f"  UDF skip: entry not found after create (Company type invisible to search)")
     except Exception as e:
         print(f"  UDF apply error: {e}")
     return result
@@ -1249,19 +1269,54 @@ def mx_create_test_charity():
             result["error"] = str(resp.get("Msg",""))
             return jsonify(result)
 
-        # Step 2: Find it
+        # Step 2: Find the created entry using multiple strategies
         import time; time.sleep(2)
-        found = mx_find_by_org_number(c["reg_number"])
-        if not found:
-            # Try by name
-            hits = mx_search_by_name(c["name"][:20])
-            found = hits[0] if hits else None
-        result["found"] = found
-        if not found:
-            result["note"] = "Created OK but could not find entry to apply UDFs"
+        key = ""
+        found = None
+
+        # Strategy A: search with type=Company explicitly
+        try:
+            r_co = mx_read(
+                search_query={"companyName": c["name"][:30]},
+                fields={"key":1,"companyName":1,"type":1},
+                top=10, entry_type="Company"
+            )
+            co_items = r_co.get("abEntry",{}).get("Data",[])
+            result["search_company"] = co_items
+            for item in co_items:
+                if c["name"][:15].lower() in item.get("companyName","").lower():
+                    key = item.get("key","")
+                    found = item
+                    break
+        except Exception as e:
+            result["search_company_err"] = str(e)
+
+        # Strategy B: get ALL recent entries (no filter) sorted by creation
+        if not key:
+            try:
+                r_all = mx_read(
+                    search_query={},
+                    fields={"key":1,"companyName":1,"type":1},
+                    top=50
+                )
+                all_items = r_all.get("abEntry",{}).get("Data",[])
+                result["all_count"] = len(all_items)
+                for item in all_items:
+                    if c["name"][:15].lower() in item.get("companyName","").lower():
+                        key = item.get("key","")
+                        found = item
+                        break
+            except Exception as e:
+                result["all_err"] = str(e)
+
+        # Strategy C: construct key from Identification using known pattern
+        # We need to read the entry to get its Identification — try AbEntryRead with key filter
+        if not key:
+            result["note"] = "Created OK — UDFs pending (entry not found via search). Check company type search."
+            result["found"] = None
             return jsonify(result)
 
-        key = found.get("key","")
+        result["found"] = found
         result["key"] = key
 
         # Step 3: Apply UDFs one by one
