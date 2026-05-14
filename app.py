@@ -1130,24 +1130,18 @@ def _mx_find_key_by_creation_date(company_name, created_after_iso):
     match_parts = [name_lower[:15], name_lower[:10], name_lower[:8]]
 
     bodies = [
-        # Strategy 1: lastModifyDate DESC with Address/Key (returns Companies too)
-        {"abEntry": {"criteria": {"searchQuery": {}, "top": 30},
-                     "scope": {"fields": {"key":1,"companyName":1,"type":1,
-                                          "/AbEntry/Address/Key":1}},
-                     "orderBy": {"fields": [{"lastModifyDate": "DESC"}]}}},
-        # Strategy 2: companyName search (may not return Companies but worth trying)
-        {"abEntry": {"criteria": {"searchQuery": {"companyName": company_name[:40]},
+        # Individual entries ARE visible - search by exact companyName
+        {"abEntry": {"criteria": {"searchQuery": {"companyName": company_name[:60]},
                                   "top": 10},
-                     "scope": {"fields": {"key":1,"companyName":1,"type":1,
-                                          "/AbEntry/Address/Key":1}}}},
-        # Strategy 3: companyName with partial match
-        {"abEntry": {"criteria": {"searchQuery": {"companyName": f"%{company_name[:20]}%"},
-                                  "top": 10},
-                     "scope": {"fields": {"key":1,"companyName":1,"type":1,
-                                          "/AbEntry/Address/Key":1}}}},
-        # Strategy 4: type=Company filter explicitly
-        {"abEntry": {"criteria": {"searchQuery": {"type": "Company"}, "top": 50},
                      "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
+        # Partial companyName match
+        {"abEntry": {"criteria": {"searchQuery": {"companyName": f"%{company_name[:25]}%"},
+                                  "top": 10},
+                     "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
+        # Most recent entries
+        {"abEntry": {"criteria": {"searchQuery": {}, "top": 30},
+                     "scope": {"fields": {"key":1,"companyName":1,"type":1}},
+                     "orderBy": {"fields": [{"lastModifyDate": "DESC"}]}}},
     ]
 
     for i, body in enumerate(bodies):
@@ -1355,24 +1349,23 @@ def do_sync_one(reg, c, caller, page):
     # Enrich with full CC API data (what/who/how, address, etc.)
     c = enrich_charity_from_cc(c)
 
-    # Also try classification bulk file as fallback
+    # Fallback classification from bulk file
     fin = c.get("financials") or {}
     if not c.get("what") and fin.get("what"): c["what"] = fin["what"]
     if not c.get("who")  and fin.get("who"):  c["who"]  = fin["who"]
     if not c.get("how")  and fin.get("how"):  c["how"]  = fin["how"]
 
-    # Check existence — search via all-keys (includes Companies)
-    # Use mx_find_by_org_number which searches by lastName=reg
+    charity_name = title_case(c.get("name","") or "")
     reg_str = str(c.get("reg_number","")).strip()
     existing = mx_find_by_org_number(reg_str) if reg_str else None
     existing_key = existing.get("key","") if existing else ""
 
     if existing_key:
-        print(f"  Updating: {name[:30]}")
+        print(f"  Updating: {charity_name[:30]}")
         mx_update_entry(existing_key, c, caller)
         return "updated", None
     else:
-        print(f"  Creating: {name[:30]}")
+        print(f"  Creating: {charity_name[:30]}")
         mx_create_entry(c, caller)
         return "created", None
 
@@ -1587,20 +1580,22 @@ def mx_fill_latest_company():
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
     results = {}
 
-    # Search by lastName=1202982 (our new lookup pattern)
+    # Search by companyName (Individual type IS visible to AbEntryRead)
+    search_name = "St George"  # partial match
     try:
         r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
             "abEntry": {
-                "criteria": {"searchQuery": {"lastName": "1202982"}, "top": 5},
-                "scope": {"fields": {"key":1,"companyName":1,"lastName":1,"type":1}}
+                "criteria": {"searchQuery": {"companyName": f"%{search_name}%"}, "top": 10},
+                "scope": {"fields": {"key":1,"companyName":1,"type":1}}
             }
         }, timeout=10)
         d = r.json()
-        results["search_by_lastname"] = d
+        results["search_result"] = d
         items = d.get("abEntry",{}).get("Data",[])
         if items:
-            key = items[0].get("key","")
-            results["found"] = {"key":key,"name":items[0].get("companyName")}
+            # Find the most recent one (our test entry)
+            key = items[-1].get("key","")  # last = most recently added
+            results["found"] = {"key":key,"name":items[-1].get("companyName")}
             c = {"reg_number":"1202982","name":"ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"}
             c = enrich_charity_from_cc(c)
             results["udf_results"] = mx_apply_udfs(key, c)
@@ -1608,5 +1603,5 @@ def mx_fill_latest_company():
     except Exception as e:
         results["search_err"] = str(e)
 
-    results["note"] = "Not found by lastName=1202982"
+    results["note"] = "Not found by companyName search"
     return jsonify(results)
