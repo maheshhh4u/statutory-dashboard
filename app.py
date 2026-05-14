@@ -1104,23 +1104,41 @@ def mx_find_by_org_number(reg_no):
         print(f"mx_find({reg_no}): {e}")
         return None
 
-def build_charity_base(c):
-    """Build create data using Individual type (visible to AbEntryRead, unlike Company)."""
+def build_charity_data_full(c):
+    """Build complete Company entry data with ALL UDFs for single create/update call."""
     name = title_case(c.get("name","") or "Unknown Charity")[:100]
-    reg  = str(c.get("reg_number","")).strip()
-    # Use Individual type so the entry is findable via AbEntryRead
-    # (Company entries are completely invisible to the API search)
-    # Store reg number in lastName for reliable lookup
-    data = {
-        "Type":        "Individual",
-        "CompanyName": name,
-        "LastName":    reg,           # reg number as lastName = unique + searchable
-        "FirstName":   name[:40],     # charity name in firstName
-    }
+    data = {"Type": "Company", "CompanyName": name}
     if c.get("phone"):   data["Phone1"]  = str(c["phone"])[:30]
     if c.get("email"):   data["Email1"]  = str(c["email"])[:100]
     if c.get("website"): data["WebSite"] = str(c["website"])[:200]
+
+    # UDF fields — only ONE TYPEID per call works
+    # So we include them all here but accept only one saves at a time
+    # The create will save the LAST one processed by Maximizer
+    # We'll fix this with the update_by_identification endpoint
+    fin = c.get("financials") or {}
+    what = c.get("what","") or fin.get("what","")
+    who  = c.get("who","")  or fin.get("who","")
+    how  = c.get("how","")  or fin.get("how","")
+    region = str(c.get("geo_area","") or c.get("region","") or "throughout england").strip()
+    la = str(c.get("local_authority","") or c.get("town","") or "").strip()
+
+    what_keys = _multi_keys(WHAT_MAP, what)
+    if what_keys: data["/AbEntry/Udf/$TYPEID(111)"] = what_keys[0]
+    who_keys = _multi_keys(WHO_MAP, who)
+    if who_keys: data["/AbEntry/Udf/$TYPEID(112)"] = who_keys[0]
+    how_keys = _multi_keys(HOW_MAP, how)
+    if how_keys: data["/AbEntry/Udf/$TYPEID(113)"] = how_keys[0]
+    rk = _lookup(REGION_MAP, region)
+    if rk: data["/AbEntry/Udf/$TYPEID(109)"] = rk
+    lk = _lookup(LOCAL_AUTH_MAP, la)
+    if lk: data["/AbEntry/Udf/$TYPEID(108)"] = lk
+    data["/AbEntry/Udf/$TYPEID(264)"] = "2"
     return data
+
+def build_charity_base(c):
+    """Alias for full data build."""
+    return build_charity_data_full(c)
 
 def _mx_find_key_by_creation_date(company_name, created_after_iso):
     """Find recently created Individual entry by lastName=reg_number."""
@@ -1275,11 +1293,9 @@ def mx_create_entry(c, caller=""):
     return result
 
 def mx_update_entry(key, c, caller=""):
-    """Update entry with all fields including UDFs."""
-    if not c.get("what") and not c.get("who") and not c.get("how"):
-        classif = get_charity_classification(str(c.get("reg_number","")))
-        c.update(classif)
-    data = build_charity_base(c)
+    """Update existing Company entry with all fields."""
+    c = enrich_charity_from_cc(c)
+    data = build_charity_data_full(c)
     data["Key"] = key
     data.pop("Type", None)
     try:
@@ -1551,18 +1567,33 @@ def mx_create_test_charity():
 
 @app.route("/api/maximizer/update_by_id")
 def mx_update_by_id():
-    """Update entry UDFs using Identification number from Maximizer UI."""
+    """Apply UDFs to a Company entry using its Identification (from Maximizer System Info).
+    Usage: /api/maximizer/update_by_id?id=IDENTIFICATION&reg=1202982
+    """
     import base64 as b64
     identification = request.args.get("id","").strip()
+    reg = request.args.get("reg","1202982").strip()
     if not identification:
-        return jsonify({"error":"Provide ?id=IDENTIFICATION_NUMBER_FROM_MAXIMIZER"}), 400
+        return jsonify({"error":"Provide ?id=IDENTIFICATION_FROM_MAXIMIZER_SYSTEM_INFO&reg=REG_NUMBER"}), 400
 
     key = b64.b64encode(f"Company	{identification}	0".encode()).decode()
-    c = {"reg_number":"1202982","name":"ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"}
+    c = {"reg_number": reg, "name": ""}
     c = enrich_charity_from_cc(c)
-    results = {"key": key, "identification": identification}
+    results = {"key": key, "identification": identification, "reg": reg,
+               "cc_fetched": bool(c.get("what"))}
+    # Apply each UDF separately (proven to work)
     udf_results = mx_apply_udfs(key, c)
     results["udf_results"] = udf_results
+    # Also update basic fields
+    try:
+        basic = {"Key": key, "CompanyName": title_case(c.get("name",""))}
+        if c.get("phone"):   basic["Phone1"]  = c["phone"]
+        if c.get("email"):   basic["Email1"]  = c["email"]
+        if c.get("website"): basic["WebSite"] = c["website"]
+        r = mx_write_update({"AbEntry": {"Data": basic}})
+        results["basic_update"] = r.get("Code")
+    except Exception as e:
+        results["basic_update_err"] = str(e)
     return jsonify(results)
 
 @app.route("/api/maximizer/fill_latest_company")
