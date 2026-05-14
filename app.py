@@ -1531,36 +1531,19 @@ def mx_create_test_charity():
          "name": "ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"}
     # Enrich with full CC API data
     c = enrich_charity_from_cc(c)
-    result = {"cc_data": {k:v for k,v in c.items()
-                          if k not in ("financials",)}}
+    result = {"cc_data": {k:v for k,v in c.items() if k not in ("financials",)}}
     try:
-        import time
-        from datetime import datetime, timezone
-
-        # Step 1: Create with basic fields only
-        base = build_charity_base(c)
-        result["base_sent"] = base
-        created_after = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-        resp = mx_write_create(base)
+        # Create Company with ALL UDFs in one call
+        data = build_charity_data_full(c)
+        result["data_sent"] = data
+        result["type_check"] = data.get("Type","MISSING")
+        resp = mx_write_create(data)
         result["create_code"] = resp.get("Code")
+        result["create_msg"]  = str(resp.get("Msg",""))
         result["SUCCESS"] = resp.get("Code") == 0
-        if resp.get("Code") != 0:
-            result["error"] = str(resp.get("Msg",""))
-            return jsonify(result)
-
-        # Step 2: Find key using creation date ordered search
-        time.sleep(2)
-        key = _mx_find_key_by_creation_date(base["CompanyName"], created_after)
-        result["key"] = key
-
-        if not key:
-            result["note"] = "Created OK but key not found — UDFs not applied"
-            return jsonify(result)
-
-        # Step 3: Apply each UDF separately
-        udf_results = mx_apply_udfs(key, c)
-        result["udf_results"] = udf_results
-
+        result["note"] = ("Entry created as Company. Check Maximizer - if UDFs empty, "
+                          "copy Identification from System Information and call "
+                          "/api/maximizer/update_by_id?id=IDENTIFICATION&reg=1202982")
     except Exception as e:
         result["error"] = str(e)
     return jsonify(result)
