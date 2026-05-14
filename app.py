@@ -1130,16 +1130,8 @@ def _mx_find_key_by_creation_date(company_name, created_after_iso):
     match_parts = [name_lower[:15], name_lower[:10], name_lower[:8]]
 
     bodies = [
-        # Individual entries ARE visible - search by exact companyName
-        {"abEntry": {"criteria": {"searchQuery": {"companyName": company_name[:60]},
-                                  "top": 10},
-                     "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
-        # Partial companyName match
-        {"abEntry": {"criteria": {"searchQuery": {"companyName": f"%{company_name[:25]}%"},
-                                  "top": 10},
-                     "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
-        # Most recent entries
-        {"abEntry": {"criteria": {"searchQuery": {}, "top": 30},
+        # ONLY working pattern: empty searchQuery, sorted by recent
+        {"abEntry": {"criteria": {"searchQuery": {}, "top": 100},
                      "scope": {"fields": {"key":1,"companyName":1,"type":1}},
                      "orderBy": {"fields": [{"lastModifyDate": "DESC"}]}}},
     ]
@@ -1580,28 +1572,32 @@ def mx_fill_latest_company():
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
     results = {}
 
-    # Search by companyName (Individual type IS visible to AbEntryRead)
-    search_name = "St George"  # partial match
+    # Get recent entries (no filter - the ONLY working search pattern)
+    # Sorted by lastModifyDate DESC so our newly created entry is first
     try:
         r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
             "abEntry": {
-                "criteria": {"searchQuery": {"companyName": f"%{search_name}%"}, "top": 10},
-                "scope": {"fields": {"key":1,"companyName":1,"type":1}}
+                "criteria": {"searchQuery": {}, "top": 100},
+                "scope": {"fields": {"key":1,"companyName":1,"type":1}},
+                "orderBy": {"fields": [{"lastModifyDate": "DESC"}]}
             }
-        }, timeout=10)
+        }, timeout=12)
         d = r.json()
-        results["search_result"] = d
         items = d.get("abEntry",{}).get("Data",[])
-        if items:
-            # Find the most recent one (our test entry)
-            key = items[-1].get("key","")  # last = most recently added
-            results["found"] = {"key":key,"name":items[-1].get("companyName")}
-            c = {"reg_number":"1202982","name":"ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"}
-            c = enrich_charity_from_cc(c)
-            results["udf_results"] = mx_apply_udfs(key, c)
-            return jsonify(results)
+        results["total_returned"] = len(items)
+        # Show first 5 to confirm order
+        results["first_5"] = [{"name":x.get("companyName",""),"type":x.get("type","")} for x in items[:5]]
+        # Find our entry
+        for item in items:
+            cn = item.get("companyName","").lower()
+            if "george" in cn or "orthodox" in cn or "1202982" in cn:
+                key = item.get("key","")
+                results["found"] = {"key":key,"name":item.get("companyName")}
+                c = {"reg_number":"1202982","name":"ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"}
+                c = enrich_charity_from_cc(c)
+                results["udf_results"] = mx_apply_udfs(key, c)
+                return jsonify(results)
+        results["note"] = f"Not found in {len(items)} entries. First 5 shown above."
     except Exception as e:
-        results["search_err"] = str(e)
-
-    results["note"] = "Not found by companyName search"
+        results["error"] = str(e)
     return jsonify(results)
