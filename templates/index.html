@@ -1637,7 +1637,7 @@ function pollMxSyncStatus(){
     if(d.status==='idle'&&d.result){
       clearInterval(mxSyncPollTimer);
       document.getElementById('mx-sync-progress').style.display='none';
-      showMxResult(d.result);
+      showMxResult(d.result, d);  // pass full response for error_details
       // Pull any callers synced from Maximizer
       if(d.result.mx_callers_pulled>0){
         refreshCalled();
@@ -1653,7 +1653,7 @@ function pollMxSyncStatus(){
   }).catch(e=>console.warn('poll error',e));
 }
 
-function showMxResult(result){
+function showMxResult(result, fullResp){
   const el=document.getElementById('mx-sync-result');
   el.style.display='block';
   if(result.error){
@@ -1663,11 +1663,12 @@ function showMxResult(result){
   } else {
     const callerNote=result.mx_callers_pulled>0
       ?`<br>• <strong>${result.mx_callers_pulled}</strong> caller(s) pulled from Maximizer into dashboard`:'';
+    const errDetails=((fullResp||{}).error_details||[]).map(e=>`<br><span style="font-size:10px;opacity:0.8">↳ ${esc(e)}</span>`).join('');
     el.innerHTML=`<div style="background:var(--gl);border:1px solid var(--green);border-radius:var(--radius);padding:10px 14px;font-size:12px;color:var(--green)">
       ✓ <strong>Sync complete!</strong><br>
       • <strong>${result.created||0}</strong> new entries created in Maximizer<br>
       • <strong>${result.updated||0}</strong> existing entries updated${callerNote}
-      ${result.errors>0?`<br><span style="color:var(--orange)">• ${result.errors} errors (check browser console)</span>`:''}
+      ${result.errors>0?`<br><span style="color:var(--red)">• ${result.errors} error(s):${errDetails}</span>`:''}
     </div>`;
     document.getElementById('mx-sync-btn').disabled=false;
   }

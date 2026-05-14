@@ -903,6 +903,13 @@ def mx_search_by_name(name):
     except: return []
 
 def do_sync_one(reg, c, caller, page):
+    """Sync one charity. c is the charity dict from JS with reg_number, name, etc."""
+    # Enrich with what/who/how from financials if available
+    fin = c.get("financials") or {}
+    if not c.get("what") and fin.get("what"):    c["what"] = fin["what"]
+    if not c.get("who")  and fin.get("who"):     c["who"]  = fin["who"]
+    if not c.get("how")  and fin.get("how"):     c["how"]  = fin["how"]
+
     existing = mx_find_by_org_number(reg)
     if existing:
         ab_key = existing.get("key","")
@@ -947,7 +954,8 @@ def mx_sync():
             return jsonify({"ok":False,"message":"Sync already running"}),409
     def _worker():
         with _bg_lock: _bg_status[sync_key]="loading"
-        res={"created":0,"updated":0,"errors":0,"mx_callers_pulled":0,"error":""}
+        res={"created":0,"updated":0,"errors":0,"mx_callers_pulled":0,
+             "error":"","error_details":[]}
         try:
             for c in charities[:100]:
                 reg=c.get("reg_number","")
@@ -957,7 +965,10 @@ def mx_sync():
                     if action=="created": res["created"]+=1
                     else: res["updated"]+=1
                 except Exception as e:
-                    print(f"  sync({reg}): {e}"); res["errors"]+=1
+                    err_msg = f"{reg}: {str(e)[:120]}"
+                    print(f"  sync_err: {err_msg}")
+                    res["errors"]+=1
+                    res["error_details"].append(err_msg)
         except Exception as e:
             res["error"]=str(e)
         finally:
@@ -973,8 +984,10 @@ def mx_sync_status():
     page=request.args.get("page","prospects")
     sync_key=f"mx_sync_{page}"
     with _bg_lock: status=_bg_status.get(sync_key,"idle")
-    result=cache_get(sync_key,max_age=60)
-    return jsonify({"status":status,"result":result})
+    result=cache_get(sync_key,max_age=60) or {}
+    # Include error details in response for debugging
+    return jsonify({"status":status,"result":result,
+                    "error_details":result.get("error_details",[])})
 
 @app.route("/api/maximizer/config",methods=["GET","POST"])
 def mx_config():
