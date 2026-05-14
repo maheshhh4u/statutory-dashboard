@@ -971,12 +971,44 @@ def mx_find_by_org_number(reg_no):
         return None
 
 def build_charity_base(c):
-    """Basic fields only — used for create call (no UDFs to avoid conflicts)."""
+    """Build complete charity data including UDFs — all in one create call."""
     name = title_case(c.get("name","") or "Unknown Charity")[:100]
     data = {"Type":"Company","CompanyName":name}
     if c.get("phone"):   data["Phone1"]  = str(c["phone"])[:30]
     if c.get("email"):   data["Email1"]  = str(c["email"])[:100]
     if c.get("website"): data["WebSite"] = str(c["website"])[:200]
+
+    # Include UDFs directly in create call
+    # (Earlier test proved Code:0 with UDFs in create body)
+    fin = c.get("financials") or {}
+    what = c.get("what","") or fin.get("what","")
+    who  = c.get("who","")  or fin.get("who","")
+    how  = c.get("how","")  or fin.get("how","")
+
+    what_keys = _multi_keys(WHAT_MAP, what)
+    if what_keys: data["/AbEntry/Udf/$TYPEID(111)"] = what_keys[0]
+
+    who_keys = _multi_keys(WHO_MAP, who)
+    if who_keys: data["/AbEntry/Udf/$TYPEID(112)"] = who_keys[0]
+
+    how_keys = _multi_keys(HOW_MAP, how)
+    if how_keys: data["/AbEntry/Udf/$TYPEID(113)"] = how_keys[0]
+
+    region = str(c.get("geo_area","") or c.get("region","") or "throughout england").strip()
+    rk = _lookup(REGION_MAP, region)
+    if rk: data["/AbEntry/Udf/$TYPEID(109)"] = rk
+
+    la = str(c.get("local_authority","") or c.get("town","") or "").strip()
+    lk = _lookup(LOCAL_AUTH_MAP, la)
+    if lk: data["/AbEntry/Udf/$TYPEID(108)"] = lk
+
+    policy = str(c.get("policy","") or "").strip()
+    if policy:
+        pk = _lookup(POLICY_MAP, policy)
+        if pk: data["/AbEntry/Udf/$TYPEID(261)"] = pk
+
+    data["/AbEntry/Udf/$TYPEID(264)"] = "2"  # IsSync = Yes
+
     return data
 
 def build_charity_udfs(c, key):
@@ -1095,17 +1127,20 @@ def mx_create_entry(c, caller=""):
     return result
 
 def mx_update_entry(key, c, caller=""):
-    # Update basic fields
+    """Update entry with all fields including UDFs."""
+    if not c.get("what") and not c.get("who") and not c.get("how"):
+        classif = get_charity_classification(str(c.get("reg_number","")))
+        c.update(classif)
     data = build_charity_base(c)
     data["Key"] = key
     data.pop("Type", None)
     try:
-        mx_write_update(data)
+        r = mx_write_update(data)
+        print(f"  mx_update: Code={r.get('Code')} {str(r.get('Msg',''))[:60]}")
+        return r
     except Exception as e:
-        print(f"  mx_update basic fields: {e}")
-    # Update UDFs separately
-    mx_apply_udfs(key, c)
-    return {"Code": 0}
+        print(f"  mx_update error: {e}")
+        return {"Code": -1}
 
 def mx_search_by_name(name):
     try:
@@ -1154,31 +1189,27 @@ def _mx_find_company_key(name):
     return ""
 
 def do_sync_one(reg, c, caller, page):
-    """Sync one charity. Fetches what/who/how from CC classification if missing."""
+    """Sync one charity — single API call with all fields including UDFs."""
+    # Enrich with financial data
     fin = c.get("financials") or {}
     if not c.get("what") and fin.get("what"): c["what"] = fin["what"]
     if not c.get("who")  and fin.get("who"):  c["who"]  = fin["who"]
     if not c.get("how")  and fin.get("how"):  c["how"]  = fin["how"]
-    if not c.get("what") and not c.get("who") and not c.get("how"):
-        classif = get_charity_classification(reg)
-        c.update(classif)
 
-    # Build name the same way create does (for matching)
+    # Check existence — search via all-keys (includes Companies)
     name = title_case(c.get("name","") or "")
-
-    # Check if already exists — search all entries including Companies
     all_keys = _mx_get_all_keys()
     existing_key = ""
     for key, cname in all_keys.items():
-        if str(reg) in cname or (name[:12] and name[:12].lower() in cname.lower()):
-            existing_key = key
-            break
+        if name[:15] and name[:15].lower() in cname.lower():
+            existing_key = key; break
 
     if existing_key:
-        print(f"  Found existing: {existing_key[:20]}…")
+        print(f"  Updating: {name[:30]}")
         mx_update_entry(existing_key, c, caller)
         return "updated", None
     else:
+        print(f"  Creating: {name[:30]}")
         mx_create_entry(c, caller)
         return "created", None
 
@@ -1359,32 +1390,7 @@ def mx_create_test_charity():
 
         # Step 2: Find the created entry using multiple strategies
         import time; time.sleep(2)
-        import time
-        # Get keys before
-        keys_before = _mx_get_all_keys()
-        time.sleep(2)
-        keys_after = _mx_get_all_keys()
-        new_keys = [k for k in keys_after if k not in keys_before]
-        result["new_keys"] = new_keys
-        result["all_count_after"] = len(keys_after)
-
-        key = ""
-        if new_keys:
-            key = new_keys[0]
-        else:
-            name = build_charity_base(c).get("CompanyName","")
-            for k, cn in keys_after.items():
-                if name[:12].lower() in cn.lower():
-                    key = k; break
-
-        result["key"] = key
-        if not key:
-            result["note"] = "Entry created but key not found in diff"
-            return jsonify(result)
-
-        # Step 3: Apply UDFs
-        udf_results = mx_apply_udfs(key, c)
-        result["udf_results"] = udf_results
+        # All fields sent in create — check Maximizer to confirm UDFs were saved
 
     except Exception as e:
         result["error"] = str(e)
