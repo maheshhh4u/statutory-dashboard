@@ -905,6 +905,26 @@ def mx_read(search_query=None, fields=None, top=1, entry_type=None):
 def mx_write_create(data_dict):
     return mx_call("AbEntryCreate",{"AbEntry":{"Data":data_dict}})
 
+def _extract_key_from_create_resp(resp):
+    """Try every possible location for the key in an AbEntryCreate response."""
+    import json
+    # Log full response for debugging
+    print(f"  Create resp: {json.dumps(resp)[:300]}")
+    # Try all known locations
+    candidates = [
+        resp.get("AbEntry",{}).get("Data",{}).get("Key",""),
+        resp.get("abEntry",{}).get("Data",{}).get("Key",""),
+        resp.get("Data",{}).get("Key",""),
+        resp.get("Key",""),
+    ]
+    # Also check if Data is a list
+    data = resp.get("AbEntry",resp.get("abEntry",{})).get("Data",{})
+    if isinstance(data, list) and data:
+        candidates.append(data[0].get("Key",""))
+    for c in candidates:
+        if c: return c
+    return ""
+
 def mx_write_update(data_dict):
     return mx_call("AbEntryUpdate",{"AbEntry":{"Data":data_dict}})
 
@@ -1018,13 +1038,14 @@ def mx_apply_udfs(key, c):
     return results
 
 def _mx_get_all_keys():
-    """Get all Address Book entry keys using deprecated address field (returns Companies too)."""
+    """Get Address Book entry keys — returns Companies too via address field."""
     try:
         r = mx_call("AbEntryRead", {
             "abEntry": {
-                "criteria": {"searchQuery": {}, "top": 500},
+                "criteria": {"searchQuery": {}, "top": 2000},
                 "scope": {"fields": {"key":1, "companyName":1,
-                                     "/AbEntry/Address/Key":1}}
+                                     "/AbEntry/Address/Key":1}},
+                "orderBy": {"fields": [{"lastModifyDate": "DESC"}]}
             }
         })
         return {item["key"]: item.get("companyName","")
