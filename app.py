@@ -1544,9 +1544,17 @@ def mx_create_test_charity():
         result["create_code"] = resp.get("Code")
         result["create_msg"]  = str(resp.get("Msg",""))
         result["SUCCESS"] = resp.get("Code") == 0
-        result["note"] = ("Entry created as Company. Check Maximizer - if UDFs empty, "
-                          "copy Identification from System Information and call "
-                          "/api/maximizer/update_by_id?id=IDENTIFICATION&reg=1202982")
+        # Try to find and apply UDFs
+        import time; time.sleep(2)
+        found = mx_find_by_org_number("1202982")
+        if found:
+            key = found.get("key","")
+            result["found_key"] = key[:30]
+            result["udf_results"] = mx_apply_udfs(key, c)
+            result["note"] = "Created and UDFs applied!"
+        else:
+            result["note"] = ("Created OK. TYPEID(2) sent. If org number blank, run: "
+                              "/api/maximizer/update_by_id?id=IDENTIFICATION&reg=1202982")
     except Exception as e:
         result["error"] = str(e)
     return jsonify(result)
