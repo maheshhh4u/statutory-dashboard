@@ -1105,20 +1105,28 @@ def mx_find_by_org_number(reg_no):
         return None
 
 def build_charity_base(c):
-    """Basic fields only for create."""
+    """Build create data using Individual type (visible to AbEntryRead, unlike Company)."""
     name = title_case(c.get("name","") or "Unknown Charity")[:100]
-    data = {"Type":"Company","CompanyName":name}
+    reg  = str(c.get("reg_number","")).strip()
+    # Use Individual type so the entry is findable via AbEntryRead
+    # (Company entries are completely invisible to the API search)
+    # Store reg number in lastName for reliable lookup
+    data = {
+        "Type":        "Individual",
+        "CompanyName": name,
+        "LastName":    reg,           # reg number as lastName = unique + searchable
+        "FirstName":   name[:40],     # charity name in firstName
+    }
     if c.get("phone"):   data["Phone1"]  = str(c["phone"])[:30]
     if c.get("email"):   data["Email1"]  = str(c["email"])[:100]
     if c.get("website"): data["WebSite"] = str(c["website"])[:200]
     return data
 
 def _mx_find_key_by_creation_date(company_name, created_after_iso):
-    """Find recently created Company entry key using multiple strategies."""
+    """Find recently created Individual entry by lastName=reg_number."""
     import requests as req
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
     name_lower = company_name.lower()
-    # Try first 15 chars, then 10 chars for matching
     match_parts = [name_lower[:15], name_lower[:10], name_lower[:8]]
 
     bodies = [
@@ -1354,12 +1362,10 @@ def do_sync_one(reg, c, caller, page):
     if not c.get("how")  and fin.get("how"):  c["how"]  = fin["how"]
 
     # Check existence — search via all-keys (includes Companies)
-    name = title_case(c.get("name","") or "")
-    all_keys = _mx_get_all_keys()
-    existing_key = ""
-    for key, cname in all_keys.items():
-        if name[:15] and name[:15].lower() in cname.lower():
-            existing_key = key; break
+    # Use mx_find_by_org_number which searches by lastName=reg
+    reg_str = str(c.get("reg_number","")).strip()
+    existing = mx_find_by_org_number(reg_str) if reg_str else None
+    existing_key = existing.get("key","") if existing else ""
 
     if existing_key:
         print(f"  Updating: {name[:30]}")
@@ -1581,43 +1587,26 @@ def mx_fill_latest_company():
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
     results = {}
 
-    # Read ALL entries — no filter — sorted by lastModifyDate
-    # Include creationDate field to find our entry
-    for attempt_fields in [
-        {"key":1,"companyName":1,"type":1,"creationDate":1,"/AbEntry/Address/Key":1},
-        {"key":1,"companyName":1,"type":1,"creationDate":1},
-        {"key":1,"companyName":1,"type":1},
-    ]:
-        try:
-            r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
-                "abEntry": {
-                    "criteria": {"searchQuery": {}, "top": 30},
-                    "scope": {"fields": attempt_fields},
-                    "orderBy": {"fields": [{"lastModifyDate": "DESC"}]}
-                }
-            }, timeout=12)
-            d = r.json()
-            if d.get("Code") == 0:
-                items = d.get("abEntry",{}).get("Data",[])
-                results[f"fields_{list(attempt_fields.keys())[2]}"] = [
-                    {"key": x.get("key","")[:30], "name": x.get("companyName",""),
-                     "type": x.get("type",""), "created": x.get("creationDate","")}
-                    for x in items[:10]
-                ]
-                # Look for St George
-                for item in items:
-                    cn = item.get("companyName","").lower()
-                    if "george" in cn or "orthodox" in cn:
-                        key = item.get("key","")
-                        results["found"] = {"key": key, "name": item.get("companyName")}
-                        # Apply UDFs
-                        c = {"reg_number":"1202982","name":"ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"}
-                        c = enrich_charity_from_cc(c)
-                        results["udf_results"] = mx_apply_udfs(key, c)
-                        return jsonify(results)
-                break  # Got valid results, stop trying field combinations
-        except Exception as e:
-            results[f"err_{list(attempt_fields.keys())[0]}"] = str(e)
+    # Search by lastName=1202982 (our new lookup pattern)
+    try:
+        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
+            "abEntry": {
+                "criteria": {"searchQuery": {"lastName": "1202982"}, "top": 5},
+                "scope": {"fields": {"key":1,"companyName":1,"lastName":1,"type":1}}
+            }
+        }, timeout=10)
+        d = r.json()
+        results["search_by_lastname"] = d
+        items = d.get("abEntry",{}).get("Data",[])
+        if items:
+            key = items[0].get("key","")
+            results["found"] = {"key":key,"name":items[0].get("companyName")}
+            c = {"reg_number":"1202982","name":"ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"}
+            c = enrich_charity_from_cc(c)
+            results["udf_results"] = mx_apply_udfs(key, c)
+            return jsonify(results)
+    except Exception as e:
+        results["search_err"] = str(e)
 
-    results["note"] = "Entry not found in top 30 recent entries"
+    results["note"] = "Not found by lastName=1202982"
     return jsonify(results)
