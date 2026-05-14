@@ -103,7 +103,7 @@ def compute_prospects():
     names={}; webs={}
     for row in stream_zip_csv(CHARITY_URL,CC):
         reg=row.get("registered_charity_number","").strip()
-        if reg and row.get("charity_registration_status","").upper().strip() in ("REGISTERED","R"):
+        if reg and row.get("charity_name",""):  # include all charities for name lookup
             names[reg]=row.get("charity_name",""); webs[reg]=row.get("charity_contact_web","")
     results={"best":[],"readiness":[],"contract":[],"retention":[]}
     for reg,row in latest.items():
@@ -117,7 +117,7 @@ def compute_prospects():
         pr=prev.get(reg,{}); pgg=flt(pr.get("income_from_government_grants")); pgc=flt(pr.get("income_from_government_contracts")); pstat=pgg+pgc
         lists=classify(ti,stat,pct,gc)
         if not lists: continue
-        name=names.get(reg,"") or names.get(reg.lstrip("0"),"") or reg
+        name=names.get(reg,"") or names.get(reg.lstrip("0"),"") or ""
         web=webs.get(reg,"") or webs.get(reg.lstrip("0"),"") or ""
         fin={"total_income":ti,"total_expenditure":te,"gov_grants":gg,"gov_contracts":gc,
              "statutory":stat,"stat_pct":pct,"prev_grants":pgg,"prev_contracts":pgc,
@@ -1029,29 +1029,14 @@ def mx_create_entry(c, caller=""):
     # Step 2: Find the new entry and apply UDFs
     import time; time.sleep(2)
     name = data.get("CompanyName","")
-    reg  = str(c.get("reg_number","")).strip()
     key  = ""
     try:
-        # Try Company type search first
-        r_co = mx_read(
-            search_query={"companyName": name[:30]},
-            fields={"key":1,"companyName":1,"type":1},
-            top=10, entry_type="Company"
-        )
-        for item in r_co.get("abEntry",{}).get("Data",[]):
-            if name[:12].lower() in item.get("companyName","").lower():
-                key = item.get("key",""); break
-        # Fallback: search all types
-        if not key:
-            items = mx_search_by_name(name[:20])
-            if items:
-                key = (items[0].get("key","") if isinstance(items[0],dict)
-                       else items[0].get("key",""))
+        key = _mx_find_company_key(name)
         if key:
             mx_apply_udfs(key, c)
-            print(f"  UDFs applied to key {key[:20]}…")
+            print(f"  UDFs applied to {name[:30]}")
         else:
-            print(f"  UDF skip: entry not found after create (Company type invisible to search)")
+            print(f"  UDF skip: key not found for {name[:30]}")
     except Exception as e:
         print(f"  UDF apply error: {e}")
     return result
@@ -1061,7 +1046,10 @@ def mx_update_entry(key, c, caller=""):
     data = build_charity_base(c)
     data["Key"] = key
     data.pop("Type", None)
-    mx_write_update(data)
+    try:
+        mx_write_update(data)
+    except Exception as e:
+        print(f"  mx_update basic fields: {e}")
     # Update UDFs separately
     mx_apply_udfs(key, c)
     return {"Code": 0}
@@ -1072,6 +1060,45 @@ def mx_search_by_name(name):
                          fields={"key":1,"companyName":1,"type":1}, top=5)
         return result.get("abEntry",{}).get("Data",[])
     except: return []
+
+def _mx_find_company_key(name):
+    """Find the key of a Company entry by name — tries multiple strategies."""
+    import base64 as b64
+    name_part = name[:30].lower()
+    # Strategy 1: search with Company type filter
+    try:
+        r = mx_read(search_query={"companyName": name[:30]},
+                    fields={"key":1,"companyName":1,"type":1},
+                    top=20, entry_type="Company")
+        for item in r.get("abEntry",{}).get("Data",[]):
+            if name_part[:12] in item.get("companyName","").lower():
+                return item["key"]
+    except Exception as e:
+        print(f"  _find_co strategy1: {e}")
+    # Strategy 2: get all recent and filter
+    try:
+        r2 = mx_read(search_query={},
+                     fields={"key":1,"companyName":1,"type":1}, top=100)
+        for item in r2.get("abEntry",{}).get("Data",[]):
+            if name_part[:12] in item.get("companyName","").lower():
+                return item["key"]
+    except Exception as e:
+        print(f"  _find_co strategy2: {e}")
+    # Strategy 3: Read with addresses field (deprecated but returns Companies)
+    try:
+        r3 = mx_call("AbEntryRead", {
+            "abEntry": {
+                "criteria": {"searchQuery": {"companyName": name[:30]}, "top": 10},
+                "scope": {"fields": {"key":1,"companyName":1,"type":1,
+                                     "/AbEntry/Address/Key":1}}
+            }
+        })
+        for item in r3.get("abEntry",{}).get("Data",[]):
+            if name_part[:12] in item.get("companyName","").lower():
+                return item["key"]
+    except Exception as e:
+        print(f"  _find_co strategy3: {e}")
+    return ""
 
 def do_sync_one(reg, c, caller, page):
     """Sync one charity. Fetches what/who/how from CC classification if missing."""
@@ -1271,53 +1298,15 @@ def mx_create_test_charity():
 
         # Step 2: Find the created entry using multiple strategies
         import time; time.sleep(2)
-        key = ""
-        found = None
+        import time; time.sleep(2)
+        name = build_charity_base(c).get("CompanyName","")
+        key = _mx_find_company_key(name)
+        result["key"] = key
 
-        # Strategy A: search with type=Company explicitly
-        try:
-            r_co = mx_read(
-                search_query={"companyName": c["name"][:30]},
-                fields={"key":1,"companyName":1,"type":1},
-                top=10, entry_type="Company"
-            )
-            co_items = r_co.get("abEntry",{}).get("Data",[])
-            result["search_company"] = co_items
-            for item in co_items:
-                if c["name"][:15].lower() in item.get("companyName","").lower():
-                    key = item.get("key","")
-                    found = item
-                    break
-        except Exception as e:
-            result["search_company_err"] = str(e)
-
-        # Strategy B: get ALL recent entries (no filter) sorted by creation
         if not key:
-            try:
-                r_all = mx_read(
-                    search_query={},
-                    fields={"key":1,"companyName":1,"type":1},
-                    top=50
-                )
-                all_items = r_all.get("abEntry",{}).get("Data",[])
-                result["all_count"] = len(all_items)
-                for item in all_items:
-                    if c["name"][:15].lower() in item.get("companyName","").lower():
-                        key = item.get("key","")
-                        found = item
-                        break
-            except Exception as e:
-                result["all_err"] = str(e)
-
-        # Strategy C: construct key from Identification using known pattern
-        # We need to read the entry to get its Identification — try AbEntryRead with key filter
-        if not key:
-            result["note"] = "Created OK — UDFs pending (entry not found via search). Check company type search."
+            result["note"] = "Created OK but key not found via search — UDFs not applied"
             result["found"] = None
             return jsonify(result)
-
-        result["found"] = found
-        result["key"] = key
 
         # Step 3: Apply UDFs one by one
         udf_results = mx_apply_udfs(key, c)

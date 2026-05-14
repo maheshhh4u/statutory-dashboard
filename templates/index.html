@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Statutory Prospecting Dashboard</title>
+<title>Prospecting Dashboard</title>
 <style>
 :root{
   --bg:#f4f6f9;--surface:#fff;--s2:#f0f2f6;--border:#e2e6ea;
@@ -146,7 +146,7 @@ select:focus{outline:none;border-color:var(--green)}
 </head>
 <body>
 <header class="hdr">
-  <div class="hdr-brand"><div class="hdr-logo">SP</div><div><div class="hdr-title">Statutory Prospecting Dashboard</div><div class="hdr-sub">Charity Commission for England &amp; Wales · Live Data</div></div></div>
+  <div class="hdr-brand"><div class="hdr-logo">PD</div><div><div class="hdr-title">Prospecting Dashboard</div><div class="hdr-sub">Charity Commission for England &amp; Wales · Live Data</div></div></div>
   <div style="display:flex;align-items:center;gap:10px">
     <div style="display:flex;align-items:center;gap:7px">
       <span style="font-size:11px;color:rgba(255,255,255,.5)">Calling as:</span>
@@ -175,10 +175,10 @@ select:focus{outline:none;border-color:var(--green)}
 <!-- HOME -->
 <section id="tab-home" class="section active">
   <div class="home-hero">
-    <h1>Statutory Prospecting Dashboard</h1>
+    <h1>Prospecting Dashboard</h1>
     <p>Live charity data from the Charity Commission · Calling as: <strong id="home-caller-name">— not selected —</strong></p>
     <div class="home-grid">
-      <div class="home-card" onclick="navTo('prospects')"><div class="home-card-icon">📋</div><div class="home-card-title">Statutory Prospect Lists</div><div class="home-card-desc">Rules-based screening across 4 lists. Full pagination, sorting and filters on all rows.</div><span class="home-card-count" id="home-prospect-count">Click to load</span></div>
+      <div class="home-card" onclick="navTo('prospects')"><div class="home-card-icon">📋</div><div class="home-card-title">Prospect Lists</div><div class="home-card-desc">Rules-based screening across 4 lists. Full pagination, sorting and filters on all rows.</div><span class="home-card-count" id="home-prospect-count">Click to load</span></div>
       <div class="home-card" onclick="navTo('search')"><div class="home-card-icon">🔍</div><div class="home-card-title">Charity Search</div><div class="home-card-desc">Simple or Advanced Search matching all Charity Commission criteria. Save searches for one-click retrieval.</div><span class="home-card-count" style="background:var(--bluel);color:var(--blue)">Simple + Advanced</span></div>
       <div class="home-card" onclick="navTo('new')"><div class="home-card-icon">🆕</div><div class="home-card-title">Newly Registered Charities</div><div class="home-card-desc">Charities recently registered with the Charity Commission. Filter by last 30, 60 or 90 days.</div><span class="home-card-count" id="home-new-count">Click to load</span></div>
       <div class="home-card" onclick="navTo('late')"><div class="home-card-icon">⏰</div><div class="home-card-title">Late Accounts</div><div class="home-card-desc">Charities that have not filed their annual return on time — severity bands from recent to severely overdue.</div><span class="home-card-count" id="home-late-count" style="background:var(--redl);color:var(--red)">Click to load</span></div>
@@ -191,7 +191,7 @@ select:focus{outline:none;border-color:var(--green)}
 <!-- PROSPECTS -->
 <section id="tab-prospects" class="section">
   <div class="ctrl">
-    <div class="ctrl-left"><h2>Statutory Prospect Lists</h2><p>Paginated · Sortable · Filterable · Status &amp; comments on every row · Download includes full contact details</p></div>
+    <div class="ctrl-left"><h2>Prospect Lists</h2><p>Paginated · Sortable · Filterable · Status &amp; comments on every row · Download includes full contact details</p></div>
     <div class="ctrl-right">
       <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
       <button class="btn btn-outline btn-sm" onclick="loadProspects()">↺ Refresh</button>
