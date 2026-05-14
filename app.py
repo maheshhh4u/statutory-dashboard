@@ -927,25 +927,24 @@ def title_case(s):
 MX_ORG_NUM_TYPEID = os.environ.get("MX_ORG_NUM_TYPEID","")
 
 def mx_find_by_org_number(reg_no):
-    """Find entry — tries TYPEID search if known, else falls through to name search."""
+    """Find entry by reg number — searches all entries including Companies."""
+    reg_no = str(reg_no)
     try:
-        # Primary: search by Organisation Number TYPEID (if known)
+        # Try TYPEID if known
         if MX_ORG_NUM_TYPEID:
-            r2 = mx_read(
-                search_query={f"/AbEntry/Udf/$TYPEID({MX_ORG_NUM_TYPEID})": str(reg_no)},
-                fields={"key":1,"companyName":1,"type":1}, top=3
-            )
-            items2 = r2.get("abEntry",{}).get("Data",[])
-            if items2: return items2[0]
-        # Fallback: search by companyName containing reg (legacy entries with [regNo])
-        result = mx_read(
-            search_query={"companyName": f"%{reg_no}%"},
-            fields={"key":1,"companyName":1,"type":1}, top=10
-        )
-        items = result.get("abEntry",{}).get("Data",[])
-        for item in items:
-            if str(reg_no) in item.get("companyName",""):
-                return item
+            try:
+                r2 = mx_read(
+                    search_query={f"/AbEntry/Udf/$TYPEID({MX_ORG_NUM_TYPEID})": reg_no},
+                    fields={"key":1,"companyName":1,"type":1}, top=3
+                )
+                items2 = r2.get("abEntry",{}).get("Data",[])
+                if items2: return items2[0]
+            except: pass
+        # Search ALL entries including Companies via address key trick
+        all_keys = _mx_get_all_keys()
+        for key, cname in all_keys.items():
+            if reg_no in cname:
+                return {"key": key, "companyName": cname}
         return None
     except Exception as e:
         print(f"mx_find({reg_no}): {e}")
@@ -1018,27 +1017,60 @@ def mx_apply_udfs(key, c):
             results.append({"error":str(e)[:80]})
     return results
 
+def _mx_get_all_keys():
+    """Get all Address Book entry keys using deprecated address field (returns Companies too)."""
+    try:
+        r = mx_call("AbEntryRead", {
+            "abEntry": {
+                "criteria": {"searchQuery": {}, "top": 500},
+                "scope": {"fields": {"key":1, "companyName":1,
+                                     "/AbEntry/Address/Key":1}}
+            }
+        })
+        return {item["key"]: item.get("companyName","")
+                for item in r.get("abEntry",{}).get("Data",[])}
+    except Exception as e:
+        print(f"  _mx_get_all_keys: {e}")
+        return {}
+
 def mx_create_entry(c, caller=""):
-    # Step 1: Create with basic fields only
+    """Create entry, find its key by diffing key lists before/after, then apply UDFs."""
+    import time
+
+    # Step 1: Get keys before create
+    keys_before = _mx_get_all_keys()
+    print(f"  Keys before: {len(keys_before)}")
+
+    # Step 2: Create
     data = build_charity_base(c)
     print(f"  mx_create: {data.get('CompanyName','?')}")
     result = mx_write_create(data)
     print(f"  Code={result.get('Code')} Msg={result.get('Msg','')}")
     if result.get("Code") != 0:
         return result
-    # Step 2: Find the new entry and apply UDFs
-    import time; time.sleep(2)
-    name = data.get("CompanyName","")
-    key  = ""
-    try:
-        key = _mx_find_company_key(name)
-        if key:
-            mx_apply_udfs(key, c)
-            print(f"  UDFs applied to {name[:30]}")
-        else:
-            print(f"  UDF skip: key not found for {name[:30]}")
-    except Exception as e:
-        print(f"  UDF apply error: {e}")
+
+    # Step 3: Wait and get keys after
+    time.sleep(2)
+    keys_after = _mx_get_all_keys()
+    print(f"  Keys after: {len(keys_after)}")
+
+    # Step 4: Find new key(s)
+    new_keys = [k for k in keys_after if k not in keys_before]
+    print(f"  New keys: {new_keys}")
+
+    if new_keys:
+        key = new_keys[0]
+        mx_apply_udfs(key, c)
+        print(f"  UDFs applied to key {key[:20]}…")
+    else:
+        # Fallback: try by name
+        name = data.get("CompanyName","")
+        for key, cname in keys_after.items():
+            if name[:12].lower() in cname.lower():
+                mx_apply_udfs(key, c)
+                print(f"  UDFs applied by name match")
+                break
+
     return result
 
 def mx_update_entry(key, c, caller=""):
@@ -1102,20 +1134,28 @@ def _mx_find_company_key(name):
 
 def do_sync_one(reg, c, caller, page):
     """Sync one charity. Fetches what/who/how from CC classification if missing."""
-    # Enrich with what/who/how from financials if available
     fin = c.get("financials") or {}
     if not c.get("what") and fin.get("what"): c["what"] = fin["what"]
     if not c.get("who")  and fin.get("who"):  c["who"]  = fin["who"]
     if not c.get("how")  and fin.get("how"):  c["how"]  = fin["how"]
-    # If still missing, fetch from CC classification bulk file
     if not c.get("what") and not c.get("who") and not c.get("how"):
         classif = get_charity_classification(reg)
         c.update(classif)
 
-    existing = mx_find_by_org_number(reg)
-    if existing:
-        ab_key = existing.get("key","")
-        mx_update_entry(ab_key, c, caller)
+    # Build name the same way create does (for matching)
+    name = title_case(c.get("name","") or "")
+
+    # Check if already exists — search all entries including Companies
+    all_keys = _mx_get_all_keys()
+    existing_key = ""
+    for key, cname in all_keys.items():
+        if str(reg) in cname or (name[:12] and name[:12].lower() in cname.lower()):
+            existing_key = key
+            break
+
+    if existing_key:
+        print(f"  Found existing: {existing_key[:20]}…")
+        mx_update_entry(existing_key, c, caller)
         return "updated", None
     else:
         mx_create_entry(c, caller)
@@ -1298,17 +1338,30 @@ def mx_create_test_charity():
 
         # Step 2: Find the created entry using multiple strategies
         import time; time.sleep(2)
-        import time; time.sleep(2)
-        name = build_charity_base(c).get("CompanyName","")
-        key = _mx_find_company_key(name)
-        result["key"] = key
+        import time
+        # Get keys before
+        keys_before = _mx_get_all_keys()
+        time.sleep(2)
+        keys_after = _mx_get_all_keys()
+        new_keys = [k for k in keys_after if k not in keys_before]
+        result["new_keys"] = new_keys
+        result["all_count_after"] = len(keys_after)
 
+        key = ""
+        if new_keys:
+            key = new_keys[0]
+        else:
+            name = build_charity_base(c).get("CompanyName","")
+            for k, cn in keys_after.items():
+                if name[:12].lower() in cn.lower():
+                    key = k; break
+
+        result["key"] = key
         if not key:
-            result["note"] = "Created OK but key not found via search — UDFs not applied"
-            result["found"] = None
+            result["note"] = "Entry created but key not found in diff"
             return jsonify(result)
 
-        # Step 3: Apply UDFs one by one
+        # Step 3: Apply UDFs
         udf_results = mx_apply_udfs(key, c)
         result["udf_results"] = udf_results
 
