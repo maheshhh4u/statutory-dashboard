@@ -1560,5 +1560,64 @@ def mx_create_test_charity():
 
 @app.route("/api/maximizer/update_by_id")
 def mx_update_by_id():
-    """Legacy probe endpoint — kept for reference."""
-    return jsonify({"message":"Field probing complete. Use /api/maximizer/create_test_charity"}),200
+    """Update entry UDFs using Identification number from Maximizer UI."""
+    import base64 as b64
+    identification = request.args.get("id","").strip()
+    if not identification:
+        return jsonify({"error":"Provide ?id=IDENTIFICATION_NUMBER_FROM_MAXIMIZER"}), 400
+
+    key = b64.b64encode(f"Company	{identification}	0".encode()).decode()
+    c = {"reg_number":"1202982","name":"ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"}
+    c = enrich_charity_from_cc(c)
+    results = {"key": key, "identification": identification}
+    udf_results = mx_apply_udfs(key, c)
+    results["udf_results"] = udf_results
+    return jsonify(results)
+
+@app.route("/api/maximizer/fill_latest_company")
+def mx_fill_latest_company():
+    """Find and fill UDFs on the most recently created Company entry."""
+    import requests as req, base64 as b64
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+    results = {}
+
+    # Read ALL entries — no filter — sorted by lastModifyDate
+    # Include creationDate field to find our entry
+    for attempt_fields in [
+        {"key":1,"companyName":1,"type":1,"creationDate":1,"/AbEntry/Address/Key":1},
+        {"key":1,"companyName":1,"type":1,"creationDate":1},
+        {"key":1,"companyName":1,"type":1},
+    ]:
+        try:
+            r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
+                "abEntry": {
+                    "criteria": {"searchQuery": {}, "top": 30},
+                    "scope": {"fields": attempt_fields},
+                    "orderBy": {"fields": [{"lastModifyDate": "DESC"}]}
+                }
+            }, timeout=12)
+            d = r.json()
+            if d.get("Code") == 0:
+                items = d.get("abEntry",{}).get("Data",[])
+                results[f"fields_{list(attempt_fields.keys())[2]}"] = [
+                    {"key": x.get("key","")[:30], "name": x.get("companyName",""),
+                     "type": x.get("type",""), "created": x.get("creationDate","")}
+                    for x in items[:10]
+                ]
+                # Look for St George
+                for item in items:
+                    cn = item.get("companyName","").lower()
+                    if "george" in cn or "orthodox" in cn:
+                        key = item.get("key","")
+                        results["found"] = {"key": key, "name": item.get("companyName")}
+                        # Apply UDFs
+                        c = {"reg_number":"1202982","name":"ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"}
+                        c = enrich_charity_from_cc(c)
+                        results["udf_results"] = mx_apply_udfs(key, c)
+                        return jsonify(results)
+                break  # Got valid results, stop trying field combinations
+        except Exception as e:
+            results[f"err_{list(attempt_fields.keys())[0]}"] = str(e)
+
+    results["note"] = "Entry not found in top 30 recent entries"
+    return jsonify(results)
