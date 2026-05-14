@@ -9,7 +9,7 @@ BULK_BASE= "https://ccewuksprdoneregsadata1.blob.core.windows.net/data/txt"
 PARTA_URL  = f"{BULK_BASE}/publicextract.charity_annual_return_parta.zip"
 CHARITY_URL= f"{BULK_BASE}/publicextract.charity.zip"
 CLASSIF_URL= f"{BULK_BASE}/publicextract.charity_classification.zip"
-CLASSIF_URL= f"{BULK_BASE}/publicextract.charity_classification.zip"
+CC_API_BASE = "https://api.charitycommission.gov.uk/register/api"
 AREA_URL   = f"{BULK_BASE}/publicextract.charity_area_of_operation.zip"
 
 _cache={}; _called_log={}; _comments={}; _statuses={}; _saved_searches={}
@@ -819,6 +819,140 @@ def get_charity_classification(reg_no):
     }
 
 
+# ── CC API lookup ────────────────────────────────────────────────────────────
+_cc_detail_cache = {}  # Cache CC API results by reg_number
+
+def fetch_cc_charity(reg_no):
+    """Fetch full charity details from CC API including what/who/how, address."""
+    reg_no = str(reg_no)
+    if reg_no in _cc_detail_cache:
+        return _cc_detail_cache[reg_no]
+    hdrs = {"Ocp-Apim-Subscription-Key": API_KEY}
+    try:
+        # Try suffix 0 first (main charity), then no suffix
+        r = requests.get(f"{CC_API_BASE}/allcharitydetails/{reg_no}/0",
+                         headers=hdrs, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            _cc_detail_cache[reg_no] = data
+            return data
+    except Exception as e:
+        print(f"fetch_cc_charity({reg_no}): {e}")
+    return {}
+
+def enrich_charity_from_cc(c):
+    """Enrich a charity dict with full CC API data."""
+    reg_no = str(c.get("reg_number","")).strip()
+    if not reg_no:
+        return c
+    cc = fetch_cc_charity(reg_no)
+    if not cc:
+        return c
+    # Basic fields
+    if not c.get("phone")   and cc.get("phone"):   c["phone"]   = cc["phone"]
+    if not c.get("email")   and cc.get("email"):   c["email"]   = cc["email"]
+    if not c.get("website") and cc.get("web"):     c["website"] = cc["web"]
+    # Address
+    if not c.get("address1"): c["address1"] = cc.get("address_line_one","")
+    if not c.get("address2"): c["address2"] = cc.get("address_line_two","")
+    c["postcode"] = cc.get("address_post_code","")
+    # City/Town = address_line_five (London) or address_line_four (City of London)
+    c["city"]   = cc.get("address_line_five","") or cc.get("address_line_four","")
+    c["county"] = cc.get("address_line_four","")
+    # Date of registration
+    dor = cc.get("date_of_registration","")
+    if dor: c["date_of_registration"] = dor[:10]  # YYYY-MM-DD
+    # Organisation number
+    c["organisation_number"] = str(cc.get("organisation_number",""))
+    # Linked Charity: group_subsid_suffix != 0 means it's a linked charity
+    c["linked_charity"] = "Yes" if cc.get("group_subsid_suffix",0) != 0 else ""
+    # Latest income/expenditure
+    c["latest_income"]      = cc.get("latest_income","")
+    c["latest_expenditure"] = cc.get("latest_expenditure","")
+    # Financial year dates
+    c["fin_year_start"] = (cc.get("latest_acc_fin_year_start_date","") or "")[:10]
+    c["fin_year_end"]   = (cc.get("latest_acc_fin_year_end_date","") or "")[:10]
+    # What/Who/How from who_what_where
+    wwh = cc.get("who_what_where", [])
+    whats = [x["classification_desc"] for x in wwh if x.get("classification_type","").lower()=="what"]
+    whos  = [x["classification_desc"] for x in wwh if x.get("classification_type","").lower()=="who"]
+    hows  = [x["classification_desc"] for x in wwh if x.get("classification_type","").lower()=="how"]
+    if whats: c["what"] = ",".join(whats)
+    if whos:  c["who"]  = ",".join(whos)
+    if hows:  c["how"]  = ",".join(hows)
+    # Local Authority from CharityAoOLocalAuthority
+    la_list = cc.get("CharityAoOLocalAuthority",[])
+    if la_list: c["local_authority"] = la_list[0].get("local_authority","")
+    return c
+
+# ── CC API — full charity detail lookup ──────────────────────────────────────
+_cc_detail_cache = {}
+
+def fetch_cc_charity(reg_no):
+    """Fetch full charity details from CC API: who/what/how, address, dates, etc."""
+    reg_no = str(reg_no)
+    if reg_no in _cc_detail_cache:
+        return _cc_detail_cache[reg_no]
+    hdrs = {"Ocp-Apim-Subscription-Key": API_KEY}
+    try:
+        r = requests.get(f"{CC_API_BASE}/allcharitydetails/{reg_no}/0",
+                         headers=hdrs, timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            _cc_detail_cache[reg_no] = data
+            return data
+        print(f"  fetch_cc_charity({reg_no}): HTTP {r.status_code}")
+    except Exception as e:
+        print(f"  fetch_cc_charity({reg_no}): {e}")
+    return {}
+
+def enrich_charity_from_cc(c):
+    """Enrich a charity dict with full CC API data."""
+    reg_no = str(c.get("reg_number","")).strip()
+    if not reg_no:
+        return c
+    cc = fetch_cc_charity(reg_no)
+    if not cc:
+        return c
+    # Basic contact fields
+    if not c.get("phone")   and cc.get("phone"):   c["phone"]   = cc["phone"]
+    if not c.get("email")   and cc.get("email"):   c["email"]   = cc["email"]
+    if not c.get("website") and cc.get("web"):     c["website"] = cc["web"]
+    # Address lines
+    c["address1"]  = cc.get("address_line_one","")
+    c["address2"]  = cc.get("address_line_two","")
+    c["address3"]  = cc.get("address_line_three","")
+    c["city"]      = cc.get("address_line_five","") or cc.get("address_line_four","")
+    c["county"]    = cc.get("address_line_four","")
+    c["postcode"]  = cc.get("address_post_code","")
+    # Registration details
+    dor = cc.get("date_of_registration","")
+    if dor: c["date_of_registration"] = dor[:10]
+    c["organisation_number"] = str(cc.get("organisation_number",""))
+    c["linked_charity"] = "Yes" if cc.get("group_subsid_suffix",0) != 0 else "No"
+    # Financials
+    c["latest_income"]      = cc.get("latest_income","")
+    c["latest_expenditure"] = cc.get("latest_expenditure","")
+    c["fin_year_start"]     = (cc.get("latest_acc_fin_year_start_date","") or "")[:10]
+    c["fin_year_end"]       = (cc.get("latest_acc_fin_year_end_date","") or "")[:10]
+    # What / Who / How from who_what_where array
+    wwh = cc.get("who_what_where", [])
+    whats = [x["classification_desc"] for x in wwh
+             if x.get("classification_type","").lower()=="what"]
+    whos  = [x["classification_desc"] for x in wwh
+             if x.get("classification_type","").lower()=="who"]
+    hows  = [x["classification_desc"] for x in wwh
+             if x.get("classification_type","").lower()=="how"]
+    if whats: c["what"] = ",".join(whats)
+    if whos:  c["who"]  = ",".join(whos)
+    if hows:  c["how"]  = ",".join(hows)
+    # Local Authority
+    la_list = cc.get("CharityAoOLocalAuthority", [])
+    if la_list: c["local_authority"] = la_list[0].get("local_authority","")
+    print(f"  CC enriched: what={c.get('what','')[:30]} who={c.get('who','')[:20]} "
+          f"la={c.get('local_authority','')} addr={c.get('address1','')[:20]}")
+    return c
+
 # ── CC classification cache (what/who/how) ────────────────────────────────────
 _classif_cache = {}
 _classif_loaded = False
@@ -1202,8 +1336,11 @@ def _mx_find_company_key(name):
     return ""
 
 def do_sync_one(reg, c, caller, page):
-    """Sync one charity — single API call with all fields including UDFs."""
-    # Enrich with financial data
+    """Sync one charity — fetch full CC data then create/update in Maximizer."""
+    # Enrich with full CC API data (what/who/how, address, etc.)
+    c = enrich_charity_from_cc(c)
+
+    # Also try classification bulk file as fallback
     fin = c.get("financials") or {}
     if not c.get("what") and fin.get("what"): c["what"] = fin["what"]
     if not c.get("who")  and fin.get("who"):  c["who"]  = fin["who"]
@@ -1376,20 +1513,12 @@ def mx_create_test_charity():
         try: mx_call("AbEntryDelete",{"AbEntry":{"Data":{"Key":existing["key"]}}})
         except: pass
 
-    c = {
-        "reg_number":    "1202982",
-        "name":          "ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON",
-        "phone":         "07448976144",
-        "email":         "st.georges.ioc.london@gmail.com",
-        "website":       "www.indianorthodox.london",
-        "town":          "City of London",
-        "region":        "Throughout England",
-        "local_authority":"City of London",
-    }
-    # Fetch real what/who/how from CC classification data
-    classif = get_charity_classification("1202982")
-    c.update(classif)
-    result = {"classif": classif}
+    c = {"reg_number": "1202982",
+         "name": "ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"}
+    # Enrich with full CC API data
+    c = enrich_charity_from_cc(c)
+    result = {"cc_data": {k:v for k,v in c.items()
+                          if k not in ("financials",)}}
     try:
         import time
         from datetime import datetime, timezone
