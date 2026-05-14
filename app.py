@@ -971,45 +971,55 @@ def mx_find_by_org_number(reg_no):
         return None
 
 def build_charity_base(c):
-    """Build complete charity data including UDFs — all in one create call."""
+    """Basic fields only for create."""
     name = title_case(c.get("name","") or "Unknown Charity")[:100]
     data = {"Type":"Company","CompanyName":name}
     if c.get("phone"):   data["Phone1"]  = str(c["phone"])[:30]
     if c.get("email"):   data["Email1"]  = str(c["email"])[:100]
     if c.get("website"): data["WebSite"] = str(c["website"])[:200]
-
-    # Include UDFs directly in create call
-    # (Earlier test proved Code:0 with UDFs in create body)
-    fin = c.get("financials") or {}
-    what = c.get("what","") or fin.get("what","")
-    who  = c.get("who","")  or fin.get("who","")
-    how  = c.get("how","")  or fin.get("how","")
-
-    what_keys = _multi_keys(WHAT_MAP, what)
-    if what_keys: data["/AbEntry/Udf/$TYPEID(111)"] = what_keys[0]
-
-    who_keys = _multi_keys(WHO_MAP, who)
-    if who_keys: data["/AbEntry/Udf/$TYPEID(112)"] = who_keys[0]
-
-    how_keys = _multi_keys(HOW_MAP, how)
-    if how_keys: data["/AbEntry/Udf/$TYPEID(113)"] = how_keys[0]
-
-    region = str(c.get("geo_area","") or c.get("region","") or "throughout england").strip()
-    rk = _lookup(REGION_MAP, region)
-    if rk: data["/AbEntry/Udf/$TYPEID(109)"] = rk
-
-    la = str(c.get("local_authority","") or c.get("town","") or "").strip()
-    lk = _lookup(LOCAL_AUTH_MAP, la)
-    if lk: data["/AbEntry/Udf/$TYPEID(108)"] = lk
-
-    policy = str(c.get("policy","") or "").strip()
-    if policy:
-        pk = _lookup(POLICY_MAP, policy)
-        if pk: data["/AbEntry/Udf/$TYPEID(261)"] = pk
-
-    data["/AbEntry/Udf/$TYPEID(264)"] = "2"  # IsSync = Yes
-
     return data
+
+def _mx_find_key_by_creation_date(company_name, created_after_iso):
+    """Find a recently created Company entry by searching creation date."""
+    import requests as req
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+    name_part = company_name[:20].lower()
+    # Try reading with creationDate filter
+    for search_body in [
+        # Search by creation date range
+        {"abEntry": {
+            "criteria": {
+                "searchQuery": {"creationDate": {"from": created_after_iso}},
+                "top": 20
+            },
+            "scope": {"fields": {"key":1,"companyName":1,"type":1,"/AbEntry/Address/Key":1}}
+        }},
+        # Search all recent with address key (includes Companies)
+        {"abEntry": {
+            "criteria": {"searchQuery": {}, "top": 50},
+            "scope": {"fields": {"key":1,"companyName":1,"type":1,"/AbEntry/Address/Key":1}},
+            "orderBy": {"fields": [{"creationDate": "DESC"}]}
+        }},
+        # Try with lastModifyDate
+        {"abEntry": {
+            "criteria": {"searchQuery": {}, "top": 50},
+            "scope": {"fields": {"key":1,"companyName":1,"type":1,"/AbEntry/Address/Key":1}},
+            "orderBy": {"fields": [{"lastModifyDate": "DESC"}]}
+        }},
+    ]:
+        try:
+            r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs,
+                        json=search_body, timeout=10)
+            data = r.json()
+            if data.get("Code") == 0:
+                for item in data.get("abEntry",{}).get("Data",[]):
+                    cn = item.get("companyName","").lower()
+                    if name_part[:12] in cn:
+                        print(f"  Found by creation date search: {item.get('companyName')}")
+                        return item.get("key","")
+        except Exception as e:
+            print(f"  _find_by_creation: {e}")
+    return ""
 
 def build_charity_udfs(c, key):
     """Build list of individual UDF update dicts — each sent separately."""
