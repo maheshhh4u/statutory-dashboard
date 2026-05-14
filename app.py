@@ -1114,48 +1114,55 @@ def build_charity_base(c):
     return data
 
 def _mx_find_key_by_creation_date(company_name, created_after_iso):
-    """Find a recently created Company entry — logs each search attempt."""
+    """Find recently created Company entry key using multiple strategies."""
     import requests as req
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
-    name_part = company_name[:20].lower()
-    print(f"  Looking for: '{name_part[:15]}'")
+    name_lower = company_name.lower()
+    # Try first 15 chars, then 10 chars for matching
+    match_parts = [name_lower[:15], name_lower[:10], name_lower[:8]]
 
-    search_attempts = [
-        # Sort by lastModifyDate DESC — most recent first
-        {"abEntry": {
-            "criteria": {"searchQuery": {}, "top": 20},
-            "scope": {"fields": {"key":1,"companyName":1,"type":1,"/AbEntry/Address/Key":1}},
-            "orderBy": {"fields": [{"lastModifyDate": "DESC"}]}
-        }},
-        # Sort by creationDate DESC
-        {"abEntry": {
-            "criteria": {"searchQuery": {}, "top": 20},
-            "scope": {"fields": {"key":1,"companyName":1,"type":1,"/AbEntry/Address/Key":1}},
-            "orderBy": {"fields": [{"CreationDate": "DESC"}]}
-        }},
-        # No sort, no filter
-        {"abEntry": {
-            "criteria": {"searchQuery": {}, "top": 20},
-            "scope": {"fields": {"key":1,"companyName":1,"type":1,"/AbEntry/Address/Key":1}}
-        }},
+    bodies = [
+        # Strategy 1: lastModifyDate DESC with Address/Key (returns Companies too)
+        {"abEntry": {"criteria": {"searchQuery": {}, "top": 30},
+                     "scope": {"fields": {"key":1,"companyName":1,"type":1,
+                                          "/AbEntry/Address/Key":1}},
+                     "orderBy": {"fields": [{"lastModifyDate": "DESC"}]}}},
+        # Strategy 2: companyName search (may not return Companies but worth trying)
+        {"abEntry": {"criteria": {"searchQuery": {"companyName": company_name[:40]},
+                                  "top": 10},
+                     "scope": {"fields": {"key":1,"companyName":1,"type":1,
+                                          "/AbEntry/Address/Key":1}}}},
+        # Strategy 3: companyName with partial match
+        {"abEntry": {"criteria": {"searchQuery": {"companyName": f"%{company_name[:20]}%"},
+                                  "top": 10},
+                     "scope": {"fields": {"key":1,"companyName":1,"type":1,
+                                          "/AbEntry/Address/Key":1}}}},
+        # Strategy 4: type=Company filter explicitly
+        {"abEntry": {"criteria": {"searchQuery": {"type": "Company"}, "top": 50},
+                     "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
     ]
 
-    for i, body in enumerate(search_attempts):
+    for i, body in enumerate(bodies):
         try:
-            r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json=body, timeout=10)
+            r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json=body, timeout=12)
             d = r.json()
-            code = d.get("Code")
+            if d.get("Code") != 0:
+                print(f"  Strategy {i+1}: Code={d.get('Code')} Msg={str(d.get('Msg',''))[:60]}")
+                continue
             items = d.get("abEntry",{}).get("Data",[])
-            print(f"  Search {i+1}: Code={code}, {len(items)} items")
+            print(f"  Strategy {i+1}: {len(items)} items returned")
             for item in items:
                 cn = item.get("companyName","").lower()
                 t  = item.get("type","")
-                print(f"    [{t}] {cn[:40]}")
-                if name_part[:12] in cn:
-                    print(f"  MATCH: {item.get('companyName')}")
-                    return item.get("key","")
+                # Log first 5 items to see what's there
+                if items.index(item) < 5:
+                    print(f"    [{t}] '{cn[:35]}'")
+                for mp in match_parts:
+                    if mp and mp in cn:
+                        print(f"  ✓ MATCH strategy {i+1}: '{item.get('companyName')}'")
+                        return item.get("key","")
         except Exception as e:
-            print(f"  Search {i+1} error: {e}")
+            print(f"  Strategy {i+1} error: {e}")
     return ""
 
 def build_charity_udfs(c, key):
