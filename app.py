@@ -8,6 +8,9 @@ API_KEY  = os.environ.get("CC_API_KEY", "80c5abfc86864f8d9330288c3521bb78")
 BULK_BASE= "https://ccewuksprdoneregsadata1.blob.core.windows.net/data/txt"
 PARTA_URL  = f"{BULK_BASE}/publicextract.charity_annual_return_parta.zip"
 CHARITY_URL= f"{BULK_BASE}/publicextract.charity.zip"
+CLASSIF_URL= f"{BULK_BASE}/publicextract.charity_classification.zip"
+CLASSIF_URL= f"{BULK_BASE}/publicextract.charity_classification.zip"
+AREA_URL   = f"{BULK_BASE}/publicextract.charity_area_of_operation.zip"
 
 _cache={}; _called_log={}; _comments={}; _statuses={}; _saved_searches={}
 _bg_status={}; _bg_lock=threading.Lock()
@@ -733,6 +736,153 @@ def _multi_keys(mapping, text_or_list):
         items = list(text_or_list)
     return [k for k in (_lookup(mapping, i) for i in items) if k]
 
+# CC classification cache — loaded lazily
+_classif_cache = {}
+_classif_loaded = False
+
+def load_classif_cache():
+    """Load charity classification (what/who/how) from CC bulk file into memory."""
+    global _classif_cache, _classif_loaded
+    if _classif_loaded: return
+    try:
+        cols = {"registered_charity_number","classification_code","classification_type"}
+        for row in stream_zip_csv(CLASSIF_URL, cols):
+            reg  = row.get("registered_charity_number","").strip()
+            code = row.get("classification_code","").strip()
+            ctype = row.get("classification_type","").strip().lower()
+            if not reg or not code: continue
+            if reg not in _classif_cache:
+                _classif_cache[reg] = {"what":[],"who":[],"how":[]}
+            if ctype == "what":
+                _classif_cache[reg]["what"].append(code)
+            elif ctype == "who":
+                _classif_cache[reg]["who"].append(code)
+            elif ctype == "how":
+                _classif_cache[reg]["how"].append(code)
+        _classif_loaded = True
+        print(f"Classif cache loaded: {len(_classif_cache)} charities")
+    except Exception as e:
+        print(f"load_classif_cache error: {e}")
+        _classif_loaded = True  # Don't retry on error
+
+# CC classification code → human readable name maps
+CC_WHAT_CODES = {
+    "101":"accommodation/housing","102":"education/training",
+    "103":"the prevention or relief of poverty","104":"overseas aid/famine relief",
+    "105":"accommodation/housing","106":"religious activities",
+    "107":"arts/culture/heritage/science","108":"amateur sport",
+    "109":"animals","110":"environment/conservation/heritage",
+    "111":"economic/community development/employment","112":"other charitable purposes",
+    "113":"general charitable purposes","114":"the advancement of health or saving of lives",
+    "115":"disability","116":"the prevention or relief of poverty",
+    "117":"accommodation/housing","118":"religious activities",
+    "119":"arts/culture/heritage/science","120":"amateur sport",
+    "121":"animals","122":"environment/conservation/heritage",
+    "123":"economic/community development/employment",
+    "124":"human rights/religious or racial harmony/equality or diversity",
+    "125":"recreation","200":"general charitable purposes",
+    "201":"education/training","202":"the prevention or relief of poverty",
+    "203":"overseas aid/famine relief","204":"accommodation/housing",
+    "205":"religious activities","206":"arts/culture/heritage/science",
+    "207":"amateur sport","208":"animals",
+    "209":"environment/conservation/heritage",
+    "210":"economic/community development/employment",
+    "211":"other charitable purposes",
+    "212":"the advancement of health or saving of lives","213":"disability",
+    "214":"human rights/religious or racial harmony/equality or diversity",
+    "215":"recreation",
+    "301":"children/young people","302":"elderly/old people",
+    "303":"people with disabilities","304":"people of a particular ethnic or racial origin",
+    "305":"other charities or voluntary bodies","306":"other defined groups",
+    "307":"the general public/mankind",
+    "401":"makes grants to individuals","402":"makes grants to organisations",
+    "403":"provides services","404":"provides facilities",
+    "405":"provides buildings/facilities/open space","406":"provides human resources",
+    "407":"provides other finance","408":"other charitable activities",
+    "409":"acts as an umbrella or resource body","410":"provides advocacy/advice/information",
+    "411":"sponsors or undertakes research",
+}
+
+def get_charity_classification(reg_no):
+    """Get what/who/how for a charity from CC bulk classification data."""
+    load_classif_cache()
+    entry = _classif_cache.get(str(reg_no), {})
+    if not entry:
+        return {"what":"","who":"","how":""}
+    # Convert codes to human-readable names
+    def codes_to_names(codes):
+        return ",".join(CC_WHAT_CODES.get(c, c) for c in codes if c)
+    return {
+        "what": codes_to_names(entry.get("what",[])),
+        "who":  codes_to_names(entry.get("who",[])),
+        "how":  codes_to_names(entry.get("how",[])),
+    }
+
+
+# ── CC classification cache (what/who/how) ────────────────────────────────────
+_classif_cache = {}
+_classif_loaded = False
+
+def load_classif_cache():
+    global _classif_cache, _classif_loaded
+    if _classif_loaded: return
+    try:
+        cols = {"registered_charity_number","classification_code","classification_type"}
+        for row in stream_zip_csv(CLASSIF_URL, cols):
+            reg   = row.get("registered_charity_number","").strip()
+            code  = row.get("classification_code","").strip()
+            ctype = row.get("classification_type","").strip().lower()
+            if not reg or not code: continue
+            if reg not in _classif_cache:
+                _classif_cache[reg] = {"what":[],"who":[],"how":[]}
+            if "what" in ctype:   _classif_cache[reg]["what"].append(code)
+            elif "who" in ctype:  _classif_cache[reg]["who"].append(code)
+            elif "how" in ctype:  _classif_cache[reg]["how"].append(code)
+        _classif_loaded = True
+        print(f"Classif cache: {len(_classif_cache)} charities")
+    except Exception as e:
+        print(f"load_classif_cache: {e}")
+        _classif_loaded = True
+
+# CC classification code → name (from CC bulk schema)
+CC_CODE_MAP = {
+    # What
+    "101":"general charitable purposes","102":"education/training",
+    "103":"the prevention or relief of poverty","104":"overseas aid/famine relief",
+    "105":"accommodation/housing","106":"religious activities",
+    "107":"arts/culture/heritage/science","108":"amateur sport","109":"animals",
+    "110":"environment/conservation/heritage",
+    "111":"economic/community development/employment",
+    "112":"the advancement of health or saving of lives","113":"disability",
+    "114":"human rights/religious or racial harmony/equality or diversity",
+    "115":"recreation","116":"other charitable purposes",
+    # Who
+    "201":"children/young people","202":"elderly/old people",
+    "203":"people with disabilities",
+    "204":"people of a particular ethnic or racial origin",
+    "205":"other charities or voluntary bodies","206":"other defined groups",
+    "207":"the general public/mankind",
+    # How
+    "301":"makes grants to individuals","302":"makes grants to organisations",
+    "303":"provides services","304":"provides facilities",
+    "305":"provides buildings/facilities/open space","306":"provides human resources",
+    "307":"provides other finance","308":"other charitable activities",
+    "309":"acts as an umbrella or resource body",
+    "310":"provides advocacy/advice/information","311":"sponsors or undertakes research",
+}
+
+def get_charity_classification(reg_no):
+    """Get what/who/how strings for a charity reg number."""
+    load_classif_cache()
+    entry = _classif_cache.get(str(reg_no), {})
+    def codes_to_str(codes):
+        return ",".join(CC_CODE_MAP.get(c, c) for c in codes if c)
+    return {
+        "what": codes_to_str(entry.get("what",[])),
+        "who":  codes_to_str(entry.get("who",[])),
+        "how":  codes_to_str(entry.get("how",[])),
+    }
+
 def mx_hdrs():
     return {"Authorization":f"Bearer {MX_TOKEN}",
             "Content-Type":"application/json","Accept":"application/json"}
@@ -904,12 +1054,16 @@ def mx_search_by_name(name):
     except: return []
 
 def do_sync_one(reg, c, caller, page):
-    """Sync one charity. c is the charity dict from JS with reg_number, name, etc."""
+    """Sync one charity. Fetches what/who/how from CC classification if missing."""
     # Enrich with what/who/how from financials if available
     fin = c.get("financials") or {}
-    if not c.get("what") and fin.get("what"):    c["what"] = fin["what"]
-    if not c.get("who")  and fin.get("who"):     c["who"]  = fin["who"]
-    if not c.get("how")  and fin.get("how"):     c["how"]  = fin["how"]
+    if not c.get("what") and fin.get("what"): c["what"] = fin["what"]
+    if not c.get("who")  and fin.get("who"):  c["who"]  = fin["who"]
+    if not c.get("how")  and fin.get("how"):  c["how"]  = fin["how"]
+    # If still missing, fetch from CC classification bulk file
+    if not c.get("what") and not c.get("who") and not c.get("how"):
+        classif = get_charity_classification(reg)
+        c.update(classif)
 
     existing = mx_find_by_org_number(reg)
     if existing:
@@ -1077,14 +1231,12 @@ def mx_create_test_charity():
         "email":         "st.georges.ioc.london@gmail.com",
         "website":       "www.indianorthodox.london",
         "town":          "City of London",
-        "what": "General Charitable Purposes,Disability,The Prevention Or Relief Of Poverty",
-        "who":  "Children/young People,Elderly/old People,People With Disabilities,"
-                "People Of A Particular Ethnic Or Racial Origin,"
-                "Other Charities Or Voluntary Bodies",
-        "how":           "Makes Grants To Organisations",
         "region":        "Throughout England",
         "local_authority":"City of London",
     }
+    # Fetch real what/who/how from CC classification data
+    classif = get_charity_classification("1202982")
+    c.update(classif)
     result = {}
     try:
         # Step 1: Create basic entry
