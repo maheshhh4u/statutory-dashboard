@@ -769,9 +769,21 @@ def title_case(s):
         else: result.append(w.lower())
     return " ".join(result)
 
+# Set via env var once TYPEID is discovered via /probe_org_number_typeid
+MX_ORG_NUM_TYPEID = os.environ.get("MX_ORG_NUM_TYPEID","")
+
 def mx_find_by_org_number(reg_no):
-    """Find entry by reg number — searches companyName containing the reg number."""
+    """Find entry — tries TYPEID search if known, else falls through to name search."""
     try:
+        # Primary: search by Organisation Number TYPEID (if known)
+        if MX_ORG_NUM_TYPEID:
+            r2 = mx_read(
+                search_query={f"/AbEntry/Udf/$TYPEID({MX_ORG_NUM_TYPEID})": str(reg_no)},
+                fields={"key":1,"companyName":1,"type":1}, top=3
+            )
+            items2 = r2.get("abEntry",{}).get("Data",[])
+            if items2: return items2[0]
+        # Fallback: search by companyName containing reg (legacy entries with [regNo])
         result = mx_read(
             search_query={"companyName": f"%{reg_no}%"},
             fields={"key":1,"companyName":1,"type":1}, top=10
@@ -780,23 +792,10 @@ def mx_find_by_org_number(reg_no):
         for item in items:
             if str(reg_no) in item.get("companyName",""):
                 return item
-        # Also try Organisation Number UDF if TYPEID is known
-        if MX_ORG_NUM_TYPEID:
-            try:
-                r2 = mx_read(
-                    search_query={f"/AbEntry/Udf/$TYPEID({MX_ORG_NUM_TYPEID})": str(reg_no)},
-                    fields={"key":1,"companyName":1,"type":1}, top=3
-                )
-                items2 = r2.get("abEntry",{}).get("Data",[])
-                if items2: return items2[0]
-            except: pass
         return None
     except Exception as e:
         print(f"mx_find({reg_no}): {e}")
         return None
-
-# Set this once you run /api/maximizer/probe_org_number_typeid and find the correct TYPEID
-MX_ORG_NUM_TYPEID = os.environ.get("MX_ORG_NUM_TYPEID","")  # e.g. "245"
 
 def build_charity_data(c):
     """Build the complete Maximizer Data dict from CC charity data."""
@@ -850,18 +849,51 @@ def build_charity_data(c):
 
     return data
 
+def mx_apply_udfs(key, c):
+    """Apply UDF fields one at a time after entry is created/found."""
+    udf_updates = build_charity_udfs(c, key)
+    results = []
+    for upd_data in udf_updates:
+        try:
+            r = mx_write_update(upd_data)
+            typeid = [k for k in upd_data if k.startswith("/AbEntry")][0]
+            results.append({"field": typeid, "val": upd_data[typeid],
+                            "Code": r.get("Code"), "ok": r.get("Code")==0})
+        except Exception as e:
+            results.append({"error": str(e)[:80]})
+    return results
+
 def mx_create_entry(c, caller=""):
-    data = build_charity_data(c)
+    # Step 1: Create with basic fields only
+    data = build_charity_base(c)
     print(f"  mx_create: {data.get('CompanyName','?')}")
     result = mx_write_create(data)
     print(f"  Code={result.get('Code')} Msg={result.get('Msg','')}")
+    if result.get("Code") != 0:
+        return result
+    # Step 2: Find the new entry and apply UDFs
+    reg = str(c.get("reg_number","")).strip()
+    name = data.get("CompanyName","")
+    try:
+        import time; time.sleep(1)  # brief pause for Maximizer to index
+        found = mx_find_by_org_number(reg) or mx_search_by_name(name[:20])
+        if found:
+            key = found[0]["key"] if isinstance(found, list) else found.get("key","")
+            if key:
+                mx_apply_udfs(key, c)
+    except Exception as e:
+        print(f"  UDF apply error: {e}")
     return result
 
 def mx_update_entry(key, c, caller=""):
-    data = build_charity_data(c)
+    # Update basic fields
+    data = build_charity_base(c)
     data["Key"] = key
-    data.pop("Type", None)  # Don't change type on update
-    return mx_write_update(data)
+    data.pop("Type", None)
+    mx_write_update(data)
+    # Update UDFs separately
+    mx_apply_udfs(key, c)
+    return {"Code": 0}
 
 def mx_search_by_name(name):
     try:
@@ -1039,13 +1071,37 @@ def mx_create_test_charity():
         "region":        "Throughout England",
         "local_authority":"City of London",
     }
-    data = build_charity_data(c)
-    result = {"data_sent": data}
+    result = {}
     try:
-        resp = mx_write_create(data)
-        result["Code"] = resp.get("Code")
-        result["Msg"]  = str(resp.get("Msg",""))
-        result["SUCCESS"] = resp.get("Code")==0
+        # Step 1: Create basic entry
+        base = build_charity_base(c)
+        result["base_sent"] = base
+        resp = mx_write_create(base)
+        result["create_code"] = resp.get("Code")
+        result["SUCCESS"] = resp.get("Code") == 0
+        if resp.get("Code") != 0:
+            result["error"] = str(resp.get("Msg",""))
+            return jsonify(result)
+
+        # Step 2: Find it
+        import time; time.sleep(2)
+        found = mx_find_by_org_number(c["reg_number"])
+        if not found:
+            # Try by name
+            hits = mx_search_by_name(c["name"][:20])
+            found = hits[0] if hits else None
+        result["found"] = found
+        if not found:
+            result["note"] = "Created OK but could not find entry to apply UDFs"
+            return jsonify(result)
+
+        key = found.get("key","")
+        result["key"] = key
+
+        # Step 3: Apply UDFs one by one
+        udf_results = mx_apply_udfs(key, c)
+        result["udf_results"] = udf_results
+
     except Exception as e:
         result["error"] = str(e)
     return jsonify(result)
