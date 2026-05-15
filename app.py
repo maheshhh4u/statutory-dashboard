@@ -1253,11 +1253,16 @@ def build_charity_udfs(c, key):
     return updates
 
 def mx_apply_udfs(key, c):
-    """Apply each UDF update separately, logging full error messages."""
+    """Apply each UDF update separately using {Value: v} wrapper format."""
     results = []
     for upd_data in build_charity_udfs(c, key):
         try:
-            r = mx_write_update(upd_data)
+            # Wrap UDF values in {"Value": v} per UpdateCompanyUdfs format
+            wrapped = {"Key": upd_data["Key"]}
+            for k, v in upd_data.items():
+                if k != "Key":
+                    wrapped[k] = {"Value": v}
+            r = mx_write_update(wrapped)
             field = [k for k in upd_data if k.startswith("/AbEntry")][0]
             ok = r.get("Code") == 0
             result = {"field":field,"val":upd_data[field],"Code":r.get("Code"),"ok":ok}
