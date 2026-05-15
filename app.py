@@ -1127,13 +1127,8 @@ def build_charity_data_full(c):
     region = str(c.get("geo_area","") or c.get("region","") or "throughout england").strip()
     la = str(c.get("local_authority","") or c.get("town","") or "").strip()
 
-    # Organisation Number - try both TYPEID(2) and direct numeric value
-    reg = str(c.get("reg_number","")).strip()
-    if reg:
-        try:
-            data["/AbEntry/Udf/$TYPEID(2)"] = int(reg)  # Numeric type needs integer
-        except:
-            data["/AbEntry/Udf/$TYPEID(2)"] = reg
+    # Note: TYPEID(2) = Organisation Number (StringField) is applied separately
+    # after create to avoid conflicts with Table-type UDFs in same call
 
     what_keys = _multi_keys(WHAT_MAP, what)
     if what_keys: data["/AbEntry/Udf/$TYPEID(111)"] = what_keys[0]
@@ -1204,11 +1199,9 @@ def build_charity_udfs(c, key):
     who  = c.get("who","")  or fin.get("who","")
     how  = c.get("how","")  or fin.get("how","")
 
-    # Organisation Number = TYPEID(2) as integer (Numeric type)
+    # Organisation Number = TYPEID(2) as string
     reg = str(c.get("reg_number","")).strip()
-    if reg:
-        try: updates.append({"Key": key, "/AbEntry/Udf/$TYPEID(2)": int(reg)})
-        except: updates.append({"Key": key, "/AbEntry/Udf/$TYPEID(2)": reg})
+    if reg: upd(2, reg)
 
     what_keys = _multi_keys(WHAT_MAP, what)
     if what_keys: upd(111, what_keys[0])
