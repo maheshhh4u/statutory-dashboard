@@ -1690,33 +1690,37 @@ def mx_apply_to_latest():
     c = {"reg_number": reg}
     c = enrich_charity_from_cc(c)
 
-    # Try every possible key variant
+    # Try every possible key variant, log ALL responses
+    attempts = {}
     working_key = ""
     for type_str in ["Company", "Contact", "Individual"]:
         for suffix in ["0", "1", "2", "3", ""]:
-            raw = f"{type_str}	{identification}	{suffix}"
+            raw = f"{type_str}\t{identification}\t{suffix}"
             key = b64.b64encode(raw.encode()).decode()
-            # Test if this key works by trying a minimal update
             try:
                 r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
                     json={"AbEntry": {"Data": {"Key": key,
                           "/AbEntry/Udf/$TYPEID(264)": "2"}}},
                     timeout=6)
                 d = r.json()
+                label = f"{type_str}_{suffix or 'empty'}"
+                attempts[label] = {
+                    "Code": d.get("Code"),
+                    "Msg": str(d.get("Msg",""))[:120]
+                }
                 if d.get("Code") == 0:
                     working_key = key
-                    results["working_key_format"] = f"{type_str} suffix={suffix!r}"
-                    results["working_key"] = key[:30]
+                    results["working_format"] = label
                     break
             except Exception as e:
-                pass
+                attempts[f"{type_str}_{suffix or 'empty'}"] = {"error": str(e)[:80]}
         if working_key:
             break
 
+    results["attempts"] = attempts
     if not working_key:
-        results["error"] = "No working key variant found"
+        results["error"] = "No working key — see attempts for exact error messages"
         return jsonify(results)
 
-    # Apply all UDFs with the working key
     results["udf_results"] = mx_apply_udfs(working_key, c)
     return jsonify(results)
