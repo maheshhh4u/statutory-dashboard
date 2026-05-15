@@ -1481,6 +1481,90 @@ def mx_find():
     except Exception as e:
         return jsonify({"error":str(e)}),500
 
+@app.route("/api/maximizer/fix_org_number")
+def mx_fix_org_number():
+    """Find entry via TYPEID(264) search, then probe+set Organisation Number."""
+    import requests as req
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+    reg = request.args.get("reg","1202982")
+    results = {}
+
+    # Step 1: Find entry by TYPEID(264)=2 (IsSync=Yes) which we know was saved
+    key = ""
+    try:
+        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
+            "abEntry": {
+                "criteria": {
+                    "searchQuery": {"/AbEntry/Udf/$TYPEID(264)": "2"},
+                    "top": 20
+                },
+                "scope": {"fields": {"key":1,"companyName":1,"type":1}}
+            }
+        }, timeout=10)
+        d = r.json()
+        results["search_264"] = {"Code": d.get("Code"),
+                                  "entries": d.get("abEntry",{}).get("Data",[])}
+        items = d.get("abEntry",{}).get("Data",[])
+        # Find our specific charity
+        c = {"reg_number": reg}
+        c = enrich_charity_from_cc(c)
+        name_hint = title_case(c.get("name","")).lower()[:12]
+        for item in items:
+            if name_hint in item.get("companyName","").lower():
+                key = item.get("key","")
+                results["found"] = item.get("companyName")
+                break
+        if not key and items:
+            key = items[0].get("key","")
+            results["found"] = items[0].get("companyName") + " (first match)"
+    except Exception as e:
+        results["search_err"] = str(e)
+
+    if not key:
+        results["error"] = "Entry not found via TYPEID(264) search"
+        return jsonify(results)
+
+    results["key"] = key[:30]
+
+    # Step 2: Probe TYPEIDs to find Organisation Number field
+    # Try setting the value and check which one accepts it
+    found_typeid = None
+    probe_results = {}
+    # Skip known TYPEIDs and try numeric/alphanumeric ones
+    skip = {107,108,109,111,112,113,243,261,264,2}
+    for typeid in list(range(1,50)) + list(range(200,270)):
+        if typeid in skip: continue
+        try:
+            r2 = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
+                json={"AbEntry":{"Data":{"Key":key,
+                      f"/AbEntry/Udf/$TYPEID({typeid})": reg}}},
+                timeout=5)
+            d2 = r2.json()
+            if d2.get("Code") == 0:
+                probe_results[f"TYPEID({typeid})"] = "✓ WORKS"
+                if not found_typeid:
+                    found_typeid = typeid
+            elif "doesn't support" not in str(d2.get("Msg","")):
+                probe_results[f"TYPEID({typeid})"] = f"diff: {str(d2.get('Msg',''))[:60]}"
+        except: pass
+
+    results["probe_results"] = probe_results
+    results["found_org_typeid"] = found_typeid
+
+    # Step 3: Also try TYPEID(2) as string (it was StringField)
+    try:
+        r3 = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
+            json={"AbEntry":{"Data":{"Key":key,
+                  "/AbEntry/Udf/$TYPEID(2)": str(reg)}}},
+            timeout=5)
+        d3 = r3.json()
+        results["typeid2_result"] = {"Code": d3.get("Code"),
+                                      "Msg": str(d3.get("Msg",""))[:100]}
+    except Exception as e:
+        results["typeid2_err"] = str(e)
+
+    return jsonify(results)
+
 @app.route("/api/maximizer/probe_org_number_typeid")
 def mx_probe_org_number():
     """Find the TYPEID for Organisation Number UDF by probing."""
