@@ -1037,7 +1037,11 @@ def mx_read(search_query=None, fields=None, top=1, entry_type=None):
     return mx_call("AbEntryRead", body)
 
 def mx_write_create(data_dict):
-    return mx_call("AbEntryCreate",{"AbEntry":{"Data":data_dict}})
+    resp = mx_call("AbEntryCreate",{"AbEntry":{"Data":data_dict}})
+    # Log full response to find key location
+    import json
+    print(f"  AbEntryCreate full response: {json.dumps(resp)[:500]}")
+    return resp
 
 def _extract_key_from_create_resp(resp):
     """Try every possible location for the key in an AbEntryCreate response."""
@@ -1547,6 +1551,7 @@ def mx_create_test_charity():
         resp = mx_write_create(data)
         result["create_code"] = resp.get("Code")
         result["create_msg"]  = str(resp.get("Msg",""))
+        result["full_create_response"] = resp  # Log EVERYTHING
         result["SUCCESS"] = resp.get("Code") == 0
         # Try to find and apply UDFs
         import time; time.sleep(2)
