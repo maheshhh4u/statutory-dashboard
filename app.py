@@ -1031,12 +1031,17 @@ def mx_call(endpoint, body):
     return r.json()
 
 def mx_read(search_query=None, fields=None, top=1, entry_type=None):
-    """Read AbEntry. entry_type can be 'Contact', 'Company', 'Individual' or None for all."""
+    """Read AbEntry — includes Compatibility header to make Company entries visible."""
     sq = dict(search_query or {})
     if entry_type:
         sq["type"] = entry_type
-    body = {"abEntry":{"criteria":{"searchQuery":sq,"top":top},
-                       "scope":{"fields":fields or {"key":1,"companyName":1}}}}
+    body = {
+        "abEntry": {
+            "criteria": {"searchQuery": sq, "top": top},
+            "scope": {"fields": fields or {"key":1,"companyName":1}}
+        },
+        "Compatibility": {"AbEntryKey": "2.0"}
+    }
     return mx_call("AbEntryRead", body)
 
 def mx_write_create(data_dict):
