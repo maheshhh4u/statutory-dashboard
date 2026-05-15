@@ -1128,10 +1128,19 @@ def build_charity_data_full(c):
     if c.get("email"):   data["Email1"]  = str(c["email"])[:100]
     if c.get("website"): data["WebSite"] = str(c["website"])[:200]
 
-    # UDF fields — only ONE TYPEID per call works
-    # So we include them all here but accept only one saves at a time
-    # The create will save the LAST one processed by Maximizer
-    # We'll fix this with the update_by_identification endpoint
+    # Address fields (from UpdateCompanyWithUdfs in CCToMaximizerCRM.exe)
+    # AddressLine1 = address_line_one + address_line_two + address_line_three
+    # City = address_line_four, StateProvince = address_line_five, ZipCode = postcode
+    addr_parts = [c.get("address1",""), c.get("address2",""), c.get("address3","")]
+    addr1 = " ".join(p for p in addr_parts if p).strip()[:100]
+    if addr1 or c.get("postcode") or c.get("city"):
+        data["Address"] = {
+            "AddressLine1": addr1,
+            "City":          str(c.get("county","") or ""),      # address_line_four
+            "StateProvince": str(c.get("city","") or ""),        # address_line_five
+            "ZipCode":       str(c.get("postcode","") or "")
+        }
+
     fin = c.get("financials") or {}
     what = c.get("what","") or fin.get("what","")
     who  = c.get("who","")  or fin.get("who","")
@@ -1139,7 +1148,7 @@ def build_charity_data_full(c):
     region = str(c.get("geo_area","") or c.get("region","") or "throughout england").strip()
     la = str(c.get("local_authority","") or c.get("town","") or "").strip()
 
-    # Organisation Number = TYPEID(114) as integer (confirmed from CCToMaximizerCRM.exe)
+    # Organisation Number = TYPEID(114) as integer (from CCToMaximizerCRM.exe)
     # Charity Suffix = TYPEID(263) = 0 for main charity
     reg = str(c.get("reg_number","")).strip()
     if reg:
@@ -1148,9 +1157,9 @@ def build_charity_data_full(c):
             data["/AbEntry/Udf/$TYPEID(263)"] = 0
         except: pass
 
-    # Multi-value table UDFs - pass full array of matching keys
+    # Multi-value table UDFs
     what_keys = _multi_keys(WHAT_MAP, what)
-    if what_keys: data["/AbEntry/Udf/$TYPEID(111)"] = what_keys  # Array for multi-select
+    if what_keys: data["/AbEntry/Udf/$TYPEID(111)"] = what_keys
     who_keys = _multi_keys(WHO_MAP, who)
     if who_keys: data["/AbEntry/Udf/$TYPEID(112)"] = who_keys
     how_keys = _multi_keys(HOW_MAP, how)
@@ -1159,7 +1168,7 @@ def build_charity_data_full(c):
     if rk: data["/AbEntry/Udf/$TYPEID(109)"] = rk
     lk = _lookup(LOCAL_AUTH_MAP, la)
     if lk: data["/AbEntry/Udf/$TYPEID(108)"] = lk
-    data["/AbEntry/Udf/$TYPEID(264)"] = "2"  # IsSync=Yes
+    data["/AbEntry/Udf/$TYPEID(264)"] = "2"
     return data
 
 def build_charity_base(c):
@@ -1302,8 +1311,9 @@ def mx_create_entry(c, caller=""):
     if reg:
         existing = mx_find_by_org_number(reg)
         if existing:
-            print(f"  Entry already exists — updating instead")
+            print(f"  Entry already exists — updating instead of creating")
             return mx_update_entry(existing.get("key",""), c, caller)
+        print(f"  No existing entry found for reg {reg} — creating new")
 
     # Create with ALL UDFs in one call (Table types save correctly)
     # TYPEID(114) for org number is also in create call
@@ -1708,6 +1718,10 @@ def mx_create_test_charity():
         result["SUCCESS"] = resp.get("Code") == 0
         result["note"] = "SUCCESS - all fields synced to Maximizer via single create call"
         result["fields_set"] = list(resp.get("AbEntry",{}).get("Data",{}).keys())
+        # Try to find entry to confirm duplicate detection works
+        import time; time.sleep(1)
+        found = mx_find_by_org_number("1202982")
+        result["find_after_create"] = found.get("companyName","NOT FOUND") if found else "NOT FOUND"
     except Exception as e:
         result["error"] = str(e)
     return jsonify(result)
