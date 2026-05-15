@@ -1494,6 +1494,44 @@ def mx_find():
     except Exception as e:
         return jsonify({"error":str(e)}),500
 
+@app.route("/api/maximizer/read_org_number_typeid")
+def mx_read_org_number_typeid():
+    """Read an entry with Organisation Number set and find which TYPEID it uses."""
+    import requests as req
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+    results = {}
+
+    # Read the entry with ALL UDF TYPEIDs to find which one has the org number
+    # First get a Contact entry key (these ARE returned by AbEntryRead)
+    contact_key = "Q29udGFjdAkyNDAzMjcyNTIyMzc1Nzk5MzU4MDJDCTE="  # Juvenis
+
+    # Build scope requesting every TYPEID from 1-50 and 200-270
+    fields = {"key": 1, "companyName": 1}
+    for i in list(range(1, 51)) + list(range(200, 270)):
+        fields[f"/AbEntry/Udf/$TYPEID({i})"] = 1
+
+    try:
+        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
+            "abEntry": {
+                "criteria": {"searchQuery": {}, "top": 3},
+                "scope": {"fields": fields}
+            }
+        }, timeout=15)
+        d = r.json()
+        items = d.get("abEntry", {}).get("Data", [])
+        results["entries"] = items
+        results["code"] = d.get("Code")
+        # Show non-null UDF values
+        for item in items:
+            udf_vals = {k: v for k, v in item.items()
+                       if k.startswith("/AbEntry/Udf") and v}
+            if udf_vals:
+                results[f"udfs_{item.get('companyName','')}"] = udf_vals
+    except Exception as e:
+        results["error"] = str(e)
+
+    return jsonify(results)
+
 @app.route("/api/maximizer/fix_org_number")
 def mx_fix_org_number():
     """Find entry via TYPEID(264) search, then probe+set Organisation Number."""
