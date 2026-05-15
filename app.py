@@ -1634,13 +1634,12 @@ def mx_update_by_id():
 
 @app.route("/api/maximizer/fill_latest_company")
 def mx_fill_latest_company():
-    """Find and fill UDFs on the most recently created Company entry."""
-    import requests as req, base64 as b64
+    """Find entry by companyName in top 100 recent, apply all UDFs."""
+    import requests as req
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+    reg = request.args.get("reg","1202982")
     results = {}
 
-    # Get recent entries (no filter - the ONLY working search pattern)
-    # Sorted by lastModifyDate DESC so our newly created entry is first
     try:
         r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
             "abEntry": {
@@ -1651,20 +1650,55 @@ def mx_fill_latest_company():
         }, timeout=12)
         d = r.json()
         items = d.get("abEntry",{}).get("Data",[])
-        results["total_returned"] = len(items)
-        # Show first 5 to confirm order
-        results["first_5"] = [{"name":x.get("companyName",""),"type":x.get("type","")} for x in items[:5]]
-        # Find our entry
+        results["total"] = len(items)
+        results["first_5"] = [{"n":x.get("companyName",""),"t":x.get("type","")} for x in items[:5]]
+
+        # Get CC data for matching
+        c = {"reg_number": reg}
+        c = enrich_charity_from_cc(c)
+        name_lc = title_case(c.get("name","")).lower()[:15]
+
         for item in items:
             cn = item.get("companyName","").lower()
-            if "george" in cn or "orthodox" in cn or "1202982" in cn:
+            if name_lc[:10] in cn or reg in cn:
                 key = item.get("key","")
-                results["found"] = {"key":key,"name":item.get("companyName")}
-                c = {"reg_number":"1202982","name":"ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"}
-                c = enrich_charity_from_cc(c)
+                results["found"] = item.get("companyName")
+                results["key"] = key[:30]
                 results["udf_results"] = mx_apply_udfs(key, c)
                 return jsonify(results)
-        results["note"] = f"Not found in {len(items)} entries. First 5 shown above."
+
+        results["note"] = f"Not found. Looking for '{name_lc[:15]}' in {len(items)} entries"
+    except Exception as e:
+        results["error"] = str(e)
+    return jsonify(results)
+
+@app.route("/api/maximizer/apply_udfs_to_latest")
+def mx_apply_to_latest():
+    """Read the FIRST entry from AbEntryRead (most recent) and apply UDFs to it."""
+    import requests as req
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+    reg = request.args.get("reg","1202982")
+    results = {}
+    try:
+        # Get the single most recently modified entry
+        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
+            "abEntry": {
+                "criteria": {"searchQuery": {}, "top": 1},
+                "scope": {"fields": {"key":1,"companyName":1,"type":1}},
+                "orderBy": {"fields": [{"lastModifyDate": "DESC"}]}
+            }
+        }, timeout=10)
+        d = r.json()
+        items = d.get("abEntry",{}).get("Data",[])
+        results["latest_entry"] = items[0] if items else None
+        if not items:
+            results["error"] = "No entries returned"
+            return jsonify(results)
+        key = items[0].get("key","")
+        results["key"] = key[:30]
+        c = {"reg_number": reg}
+        c = enrich_charity_from_cc(c)
+        results["udf_results"] = mx_apply_udfs(key, c)
     except Exception as e:
         results["error"] = str(e)
     return jsonify(results)
