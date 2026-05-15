@@ -1133,17 +1133,28 @@ def build_charity_data_full(c):
     a1 = str(c.get("address1","") or "")
     a2 = str(c.get("address2","") or "")
     a3 = str(c.get("address3","") or "")
-    combined = " ".join(p for p in [a1, a2, a3] if p).strip()[:79]
+    combined = " ".join(p for p in [a1, a2, a3] if p).strip()
+    # Split at word boundary before 79 chars
+    if len(combined) <= 79:
+        line1, line2 = combined, ""
+    else:
+        split_at = combined.rfind(" ", 0, 79)
+        if split_at == -1: split_at = 79
+        line1 = combined[:split_at].strip()
+        line2 = combined[split_at:].strip()[:79]
     city    = str(c.get("county","") or "")[:79]   # address_line_four
     state   = str(c.get("city","") or "")[:79]     # address_line_five
     zipcode = str(c.get("postcode","") or "")[:10]
-    if combined or zipcode or city:
-        data["Address"] = {
-            "AddressLine1": combined,
+    if line1 or zipcode or city:
+        addr_dict = {
+            "AddressLine1": line1,
             "City":          city,
             "StateProvince": state,
             "ZipCode":       zipcode
         }
+        if line2:
+            addr_dict["AddressLine2"] = line2
+        data["Address"] = addr_dict
 
     fin = c.get("financials") or {}
     what = c.get("what","") or fin.get("what","")
@@ -1730,7 +1741,7 @@ def mx_create_test_charity():
         # Try to find entry to confirm duplicate detection works
         import time; time.sleep(1)
         found = mx_find_by_org_number("1202982")
-        result["find_after_create"] = found.get("companyName","NOT FOUND") if found else "NOT FOUND"
+        result["find_after_create"] = found.get("companyName","NOT FOUND") if found else "NOT FOUND (check Render logs for mx_find debug)"
     except Exception as e:
         result["error"] = str(e)
     return jsonify(result)
