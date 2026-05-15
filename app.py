@@ -1023,6 +1023,9 @@ def mx_hdrs():
 
 def mx_call(endpoint, body):
     url = f"{MX_BASE.rstrip('/')}/{endpoint}"
+    # Add Compatibility header required by Octopus API
+    if "Compatibility" not in body:
+        body["Compatibility"] = {"AbEntryKey": "2.0"}
     r = requests.post(url, headers=mx_hdrs(), json=body, timeout=20)
     if not r.ok: raise Exception(f"{r.status_code}: {r.text[:200]}")
     return r.json()
@@ -1038,9 +1041,13 @@ def mx_read(search_query=None, fields=None, top=1, entry_type=None):
 
 def mx_write_create(data_dict):
     resp = mx_call("AbEntryCreate",{"AbEntry":{"Data":data_dict}})
-    # Log full response to find key location
-    import json
-    print(f"  AbEntryCreate full response: {json.dumps(resp)[:500]}")
+    # Extract key from response: resp["AbEntry"]["Data"]["Key"]
+    try:
+        key = resp.get("AbEntry",{}).get("Data",{}).get("Key","")
+        if key:
+            print(f"  AbEntryCreate key: {key[:30]}")
+            resp["_extracted_key"] = key
+    except: pass
     return resp
 
 def _extract_key_from_create_resp(resp):
@@ -1207,13 +1214,12 @@ def build_charity_udfs(c, key):
     who  = c.get("who","")  or fin.get("who","")
     how  = c.get("how","")  or fin.get("how","")
 
-    # Organisation Number - Numeric type, try TYPEID(10) and TYPEID(11)
+    # Organisation Number = TYPEID(114), Suffix = TYPEID(263)
     reg = str(c.get("reg_number","")).strip()
     if reg:
         try:
-            reg_int = int(reg)
-            updates.append({"Key": key, "/AbEntry/Udf/$TYPEID(10)": reg_int})
-            updates.append({"Key": key, "/AbEntry/Udf/$TYPEID(11)": reg_int})
+            upd(114, int(reg))
+            upd(263, 0)
         except: pass
 
     what_keys = _multi_keys(WHAT_MAP, what)
@@ -1496,40 +1502,38 @@ def mx_find():
 
 @app.route("/api/maximizer/read_org_number_typeid")
 def mx_read_org_number_typeid():
-    """Read an entry with Organisation Number set and find which TYPEID it uses."""
+    """Read Juvenis entry UDFs in small batches to find Organisation Number TYPEID."""
     import requests as req
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
     results = {}
+    juvenis_key = "Q29udGFjdAkyNDAzMjcyNTIyMzc1Nzk5MzU4MDJDCTE="
 
-    # Read the entry with ALL UDF TYPEIDs to find which one has the org number
-    # First get a Contact entry key (these ARE returned by AbEntryRead)
-    contact_key = "Q29udGFjdAkyNDAzMjcyNTIyMzc1Nzk5MzU4MDJDCTE="  # Juvenis
+    # Read in small batches of 10 TYPEIDs to avoid errors
+    all_udf_vals = {}
+    for batch_start in range(1, 50, 10):
+        batch = list(range(batch_start, min(batch_start+10, 50)))
+        fields = {"key":1, "companyName":1}
+        for i in batch:
+            fields[f"/AbEntry/Udf/$TYPEID({i})"] = 1
+        try:
+            r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
+                "abEntry": {
+                    "criteria": {"searchQuery": {"key": juvenis_key}, "top": 1},
+                    "scope": {"fields": fields}
+                }
+            }, timeout=10)
+            d = r.json()
+            if d.get("Code") == 0:
+                for item in d.get("abEntry",{}).get("Data",[]):
+                    for k,v in item.items():
+                        if k.startswith("/AbEntry/Udf") and v and v != [] and v != 0:
+                            all_udf_vals[k] = v
+        except Exception as e:
+            results[f"batch_{batch_start}_err"] = str(e)
 
-    # Build scope requesting every TYPEID from 1-50 and 200-270
-    fields = {"key": 1, "companyName": 1}
-    for i in list(range(1, 51)) + list(range(200, 270)):
-        fields[f"/AbEntry/Udf/$TYPEID({i})"] = 1
-
-    try:
-        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
-            "abEntry": {
-                "criteria": {"searchQuery": {}, "top": 3},
-                "scope": {"fields": fields}
-            }
-        }, timeout=15)
-        d = r.json()
-        items = d.get("abEntry", {}).get("Data", [])
-        results["entries"] = items
-        results["code"] = d.get("Code")
-        # Show non-null UDF values
-        for item in items:
-            udf_vals = {k: v for k, v in item.items()
-                       if k.startswith("/AbEntry/Udf") and v}
-            if udf_vals:
-                results[f"udfs_{item.get('companyName','')}"] = udf_vals
-    except Exception as e:
-        results["error"] = str(e)
-
+    results["non_null_udfs"] = all_udf_vals
+    results["found_99999"] = {k:v for k,v in all_udf_vals.items()
+                               if "99999" in str(v) or 99999 in (v if isinstance(v,list) else [v])}
     return jsonify(results)
 
 @app.route("/api/maximizer/fix_org_number")
@@ -1691,17 +1695,19 @@ def mx_create_test_charity():
         result["create_msg"]  = str(resp.get("Msg",""))
         result["full_create_response"] = resp  # Log EVERYTHING
         result["SUCCESS"] = resp.get("Code") == 0
-        # Try to find and apply UDFs
-        import time; time.sleep(2)
-        found = mx_find_by_org_number("1202982")
-        if found:
-            key = found.get("key","")
-            result["found_key"] = key[:30]
+        # Get key from response
+        key = resp.get("_extracted_key","")
+        result["key_from_response"] = key[:30] if key else "NOT FOUND"
+        if not key:
+            import time; time.sleep(1)
+            found = mx_find_by_org_number("1202982")
+            key = found.get("key","") if found else ""
+            result["key_from_search"] = key[:30] if key else "NOT FOUND"
+        if key:
             result["udf_results"] = mx_apply_udfs(key, c)
-            result["note"] = "Created and UDFs applied!"
+            result["note"] = "Created with TYPEID(114) as org number - UDFs applied!"
         else:
-            result["note"] = ("Created OK. TYPEID(2) sent. If org number blank, run: "
-                              "/api/maximizer/update_by_id?id=IDENTIFICATION&reg=1202982")
+            result["note"] = "Created but key not found"
     except Exception as e:
         result["error"] = str(e)
     return jsonify(result)
