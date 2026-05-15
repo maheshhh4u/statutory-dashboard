@@ -1097,28 +1097,37 @@ def title_case(s):
 MX_ORG_NUM_TYPEID = os.environ.get("MX_ORG_NUM_TYPEID","")
 
 def mx_find_by_org_number(reg_no):
-    """Find entry by reg number — searches all entries including Companies."""
-    reg_no = str(reg_no)
+    """Find Company entry by TYPEID(114) — confirmed working format."""
+    import requests as req
     try:
-        # Try TYPEID if known
-        if MX_ORG_NUM_TYPEID:
-            try:
-                r2 = mx_read(
-                    search_query={f"/AbEntry/Udf/$TYPEID({MX_ORG_NUM_TYPEID})": reg_no},
-                    fields={"key":1,"companyName":1,"type":1}, top=3
-                )
-                items2 = r2.get("abEntry",{}).get("Data",[])
-                if items2: return items2[0]
-            except: pass
-        # Search ALL entries including Companies via address key trick
-        all_keys = _mx_get_all_keys()
-        for key, cname in all_keys.items():
-            if reg_no in cname:
-                return {"key": key, "companyName": cname}
+        reg_int = int(str(reg_no).strip())
+    except:
         return None
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+    body = {
+        "AbEntry": {
+            "Scope": {"Fields": {"Key": 1, "CompanyName": 1, "/AbEntry/Udf/$TYPEID(114)": 1}},
+            "Criteria": {"SearchQuery": {"$AND": [
+                {"Type": {"$EQ": "Company"}},
+                {"/AbEntry/Udf/$TYPEID(114)": {"$EQ": reg_int}}
+            ]}}
+        },
+        "Configuration": {"Drivers": {"IAbEntrySearcher": "Maximizer.Model.Access.Sql.AbEntrySearcher"}},
+        "Compatibility": {"AbEntryKey": "2.0"}
+    }
+    try:
+        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json=body, timeout=15)
+        d = r.json()
+        items = d.get("AbEntry",{}).get("Data",[])
+        if not isinstance(items, list): items = [items] if items else []
+        if items:
+            key  = items[0].get("Key","")
+            name = items[0].get("CompanyName","")
+            print(f"  Found by TYPEID(114): {name}")
+            return {"key": key, "companyName": name}
     except Exception as e:
-        print(f"mx_find({reg_no}): {e}")
-        return None
+        print(f"  mx_find error: {e}")
+    return None
 
 def build_charity_data_full(c):
     """Build complete Company entry data with ALL UDFs for single create/update call."""
