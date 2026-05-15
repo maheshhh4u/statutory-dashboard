@@ -1132,13 +1132,16 @@ def build_charity_data_full(c):
     # AddressLine1 = address_line_one + address_line_two + address_line_three
     # City = address_line_four, StateProvince = address_line_five, ZipCode = postcode
     addr_parts = [c.get("address1",""), c.get("address2",""), c.get("address3","")]
-    addr1 = " ".join(p for p in addr_parts if p).strip()[:100]
-    if addr1 or c.get("postcode") or c.get("city"):
+    addr1 = " ".join(p for p in addr_parts if p).strip()[:80]  # Max 80 chars
+    city   = str(c.get("county","") or "")[:40]    # address_line_four = county/borough
+    state  = str(c.get("city","") or "")[:40]      # address_line_five = city
+    zipcode = str(c.get("postcode","") or "")[:10]
+    if addr1 or zipcode or city:
         data["Address"] = {
             "AddressLine1": addr1,
-            "City":          str(c.get("county","") or ""),      # address_line_four
-            "StateProvince": str(c.get("city","") or ""),        # address_line_five
-            "ZipCode":       str(c.get("postcode","") or "")
+            "City":          city,
+            "StateProvince": state,
+            "ZipCode":       zipcode
         }
 
     fin = c.get("financials") or {}
@@ -1716,7 +1719,10 @@ def mx_create_test_charity():
         result["create_msg"]  = str(resp.get("Msg",""))
         result["full_create_response"] = resp  # Log EVERYTHING
         result["SUCCESS"] = resp.get("Code") == 0
-        result["note"] = "SUCCESS - all fields synced to Maximizer via single create call"
+        if resp.get("Code") == 0:
+            result["note"] = "SUCCESS - all fields synced to Maximizer via single create call"
+        else:
+            result["note"] = f"FAILED: {str(resp.get('Msg',''))[:100]}"
         result["fields_set"] = list(resp.get("AbEntry",{}).get("Data",{}).keys())
         # Try to find entry to confirm duplicate detection works
         import time; time.sleep(1)
