@@ -1674,31 +1674,46 @@ def mx_fill_latest_company():
 
 @app.route("/api/maximizer/apply_udfs_to_latest")
 def mx_apply_to_latest():
-    """Read the FIRST entry from AbEntryRead (most recent) and apply UDFs to it."""
-    import requests as req
+    """Try all key variants for the given Identification, apply UDFs to working one."""
+    import requests as req, base64 as b64
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+    identification = request.args.get("id","").strip()
     reg = request.args.get("reg","1202982")
-    results = {}
-    try:
-        # Get the single most recently modified entry
-        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
-            "abEntry": {
-                "criteria": {"searchQuery": {}, "top": 1},
-                "scope": {"fields": {"key":1,"companyName":1,"type":1}},
-                "orderBy": {"fields": [{"lastModifyDate": "DESC"}]}
-            }
-        }, timeout=10)
-        d = r.json()
-        items = d.get("abEntry",{}).get("Data",[])
-        results["latest_entry"] = items[0] if items else None
-        if not items:
-            results["error"] = "No entries returned"
-            return jsonify(results)
-        key = items[0].get("key","")
-        results["key"] = key[:30]
-        c = {"reg_number": reg}
-        c = enrich_charity_from_cc(c)
-        results["udf_results"] = mx_apply_udfs(key, c)
-    except Exception as e:
-        results["error"] = str(e)
+    results = {"identification": identification, "reg": reg}
+
+    if not identification:
+        return jsonify({"error": "Provide ?id=IDENTIFICATION&reg=REG_NUMBER"}), 400
+
+    c = {"reg_number": reg}
+    c = enrich_charity_from_cc(c)
+
+    # Try every possible key variant
+    working_key = ""
+    for type_str in ["Company", "Contact", "Individual"]:
+        for suffix in ["0", "1", "2", "3", ""]:
+            raw = f"{type_str}	{identification}	{suffix}"
+            key = b64.b64encode(raw.encode()).decode()
+            # Test if this key works by trying a minimal update
+            try:
+                r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
+                    json={"AbEntry": {"Data": {"Key": key,
+                          "/AbEntry/Udf/$TYPEID(264)": "2"}}},
+                    timeout=6)
+                d = r.json()
+                if d.get("Code") == 0:
+                    working_key = key
+                    results["working_key_format"] = f"{type_str} suffix={suffix!r}"
+                    results["working_key"] = key[:30]
+                    break
+            except Exception as e:
+                pass
+        if working_key:
+            break
+
+    if not working_key:
+        results["error"] = "No working key variant found"
+        return jsonify(results)
+
+    # Apply all UDFs with the working key
+    results["udf_results"] = mx_apply_udfs(working_key, c)
     return jsonify(results)
