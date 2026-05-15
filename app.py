@@ -1127,12 +1127,16 @@ def build_charity_data_full(c):
     region = str(c.get("geo_area","") or c.get("region","") or "throughout england").strip()
     la = str(c.get("local_authority","") or c.get("town","") or "").strip()
 
-    # Organisation Number candidates: TYPEID(8) and TYPEID(26) both work
-    # Try TYPEID(8) first (Organisation Number - Numeric field in Maximizer)
+    # Organisation Number = Numeric UDF
+    # From probe: TYPEID(10) and TYPEID(11) are NumericField types
+    # Try as integer (Numeric fields need integer not string)
     reg = str(c.get("reg_number","")).strip()
     if reg:
-        data["/AbEntry/Udf/$TYPEID(8)"] = reg   # Try this
-        data["/AbEntry/Udf/$TYPEID(26)"] = reg  # And this
+        try:
+            reg_int = int(reg)
+            data["/AbEntry/Udf/$TYPEID(10)"] = reg_int  # Numeric - likely Organisation Number
+            data["/AbEntry/Udf/$TYPEID(11)"] = reg_int  # Try this too
+        except: pass
 
     what_keys = _multi_keys(WHAT_MAP, what)
     if what_keys: data["/AbEntry/Udf/$TYPEID(111)"] = what_keys[0]
@@ -1203,11 +1207,14 @@ def build_charity_udfs(c, key):
     who  = c.get("who","")  or fin.get("who","")
     how  = c.get("how","")  or fin.get("how","")
 
-    # Organisation Number - try TYPEID(8) and TYPEID(26)
+    # Organisation Number - Numeric type, try TYPEID(10) and TYPEID(11)
     reg = str(c.get("reg_number","")).strip()
     if reg:
-        upd(8, reg)
-        upd(26, reg)
+        try:
+            reg_int = int(reg)
+            updates.append({"Key": key, "/AbEntry/Udf/$TYPEID(10)": reg_int})
+            updates.append({"Key": key, "/AbEntry/Udf/$TYPEID(11)": reg_int})
+        except: pass
 
     what_keys = _multi_keys(WHAT_MAP, what)
     if what_keys: upd(111, what_keys[0])
