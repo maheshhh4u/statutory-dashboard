@@ -1739,10 +1739,28 @@ def mx_create_test_charity():
         else:
             result["note"] = f"FAILED: {str(resp.get('Msg',''))[:100]}"
         result["fields_set"] = list(resp.get("AbEntry",{}).get("Data",{}).keys())
-        # Try to find entry to confirm duplicate detection works
         import time; time.sleep(1)
+        # Debug: return full find response
+        try:
+            import requests as _req
+            _hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+            _body = {
+                "AbEntry": {
+                    "Scope": {"Fields": {"Key": 1, "CompanyName": 1, "/AbEntry/Udf/$TYPEID(114)": 1}},
+                    "Criteria": {"SearchQuery": {"$AND": [
+                        {"Type": {"$EQ": "Company"}},
+                        {"/AbEntry/Udf/$TYPEID(114)": {"$EQ": 1202982}}
+                    ]}}
+                },
+                "Configuration": {"Drivers": {"IAbEntrySearcher": "Maximizer.Model.Access.Sql.AbEntrySearcher"}},
+                "Compatibility": {"AbEntryKey": "2.0"}
+            }
+            _r = _req.post(f"{MX_BASE}/AbEntryRead", headers=_hdrs, json=_body, timeout=10)
+            result["find_debug"] = {"status": _r.status_code, "response": _r.json()}
+        except Exception as _e:
+            result["find_debug"] = {"error": str(_e)}
         found = mx_find_by_org_number("1202982")
-        result["find_after_create"] = found.get("companyName","NOT FOUND") if found else "NOT FOUND (check Render logs for mx_find debug)"
+        result["find_after_create"] = found.get("companyName","NOT FOUND") if found else "NOT FOUND"
     except Exception as e:
         result["error"] = str(e)
     return jsonify(result)
