@@ -1122,23 +1122,24 @@ def mx_find_by_org_number(reg_no):
 
 def build_charity_data_full(c):
     """Build complete Company entry data with ALL UDFs for single create/update call."""
-    name = title_case(c.get("name","") or "Unknown Charity")[:100]
+    name = title_case(c.get("name","") or "Unknown Charity")[:79]
     data = {"Type": "Company", "CompanyName": name}
     if c.get("phone"):   data["Phone1"]  = str(c["phone"])[:30]
     if c.get("email"):   data["Email1"]  = str(c["email"])[:100]
     if c.get("website"): data["WebSite"] = str(c["website"])[:200]
 
-    # Address fields (from UpdateCompanyWithUdfs in CCToMaximizerCRM.exe)
-    # AddressLine1 = address_line_one + address_line_two + address_line_three
-    # City = address_line_four, StateProvince = address_line_five, ZipCode = postcode
-    addr_parts = [c.get("address1",""), c.get("address2",""), c.get("address3","")]
-    addr1 = " ".join(p for p in addr_parts if p).strip()[:80]  # Max 80 chars
-    city   = str(c.get("county","") or "")[:40]    # address_line_four = county/borough
-    state  = str(c.get("city","") or "")[:40]      # address_line_five = city
+    # Address fields — all capped at 79 chars per Maximizer limit
+    # From CCToMaximizerCRM.exe: AddressLine1 = lines 1+2+3 joined, City=line4, State=line5
+    a1 = str(c.get("address1","") or "")
+    a2 = str(c.get("address2","") or "")
+    a3 = str(c.get("address3","") or "")
+    combined = " ".join(p for p in [a1, a2, a3] if p).strip()[:79]
+    city    = str(c.get("county","") or "")[:79]   # address_line_four
+    state   = str(c.get("city","") or "")[:79]     # address_line_five
     zipcode = str(c.get("postcode","") or "")[:10]
-    if addr1 or zipcode or city:
+    if combined or zipcode or city:
         data["Address"] = {
-            "AddressLine1": addr1,
+            "AddressLine1": combined,
             "City":          city,
             "StateProvince": state,
             "ZipCode":       zipcode
@@ -1714,6 +1715,8 @@ def mx_create_test_charity():
         # Only TYPEID(2) in create - everything else via separate updates
         result["type_check"] = data.get("Type","MISSING")
         result["udfs_in_create"] = [k for k in data if k.startswith("/AbEntry")]
+        result["data_sent_address"] = data.get("Address",{})
+        result["data_sent_company"] = data.get("CompanyName","")
         resp = mx_write_create(data)
         result["create_code"] = resp.get("Code")
         result["create_msg"]  = str(resp.get("Msg",""))
