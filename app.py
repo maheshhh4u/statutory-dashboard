@@ -1226,16 +1226,19 @@ def build_charity_udfs(c, key):
     return updates
 
 def mx_apply_udfs(key, c):
-    """Apply each UDF update separately."""
+    """Apply each UDF update separately, logging full error messages."""
     results = []
     for upd_data in build_charity_udfs(c, key):
         try:
             r = mx_write_update(upd_data)
             field = [k for k in upd_data if k.startswith("/AbEntry")][0]
-            results.append({"field":field,"val":upd_data[field],
-                            "Code":r.get("Code"),"ok":r.get("Code")==0})
+            ok = r.get("Code") == 0
+            result = {"field":field,"val":upd_data[field],"Code":r.get("Code"),"ok":ok}
+            if not ok:
+                result["Msg"] = str(r.get("Msg",""))[:150]
+            results.append(result)
         except Exception as e:
-            results.append({"error":str(e)[:80]})
+            results.append({"error":str(e)[:100]})
     return results
 
 def _mx_get_all_keys():
