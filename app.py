@@ -1150,7 +1150,8 @@ def build_charity_data_full(c):
             "AddressLine1": line1,
             "City":          city,
             "StateProvince": state,
-            "ZipCode":       zipcode
+            "ZipCode":       zipcode,
+            "Country":       "England"   # All CC charities are in England/Wales
         }
         if line2:
             addr_dict["AddressLine2"] = line2
