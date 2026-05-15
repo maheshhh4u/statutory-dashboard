@@ -1489,39 +1489,43 @@ def mx_fix_org_number():
     reg = request.args.get("reg","1202982")
     results = {}
 
-    # Step 1: Find entry by TYPEID(264)=2 (IsSync=Yes) which we know was saved
+    # Step 1: Find entry - try multiple search strategies
     key = ""
-    try:
-        r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
-            "abEntry": {
-                "criteria": {
-                    "searchQuery": {"/AbEntry/Udf/$TYPEID(264)": "2"},
-                    "top": 20
-                },
-                "scope": {"fields": {"key":1,"companyName":1,"type":1}}
-            }
-        }, timeout=10)
-        d = r.json()
-        results["search_264"] = {"Code": d.get("Code"),
-                                  "entries": d.get("abEntry",{}).get("Data",[])}
-        items = d.get("abEntry",{}).get("Data",[])
-        # Find our specific charity
-        c = {"reg_number": reg}
-        c = enrich_charity_from_cc(c)
-        name_hint = title_case(c.get("name","")).lower()[:12]
-        for item in items:
-            if name_hint in item.get("companyName","").lower():
-                key = item.get("key","")
-                results["found"] = item.get("companyName")
-                break
-        if not key and items:
-            key = items[0].get("key","")
-            results["found"] = items[0].get("companyName") + " (first match)"
-    except Exception as e:
-        results["search_err"] = str(e)
+    c = {"reg_number": reg}
+    c = enrich_charity_from_cc(c)
+    name_hint = title_case(c.get("name","")).lower()[:12]
+
+    search_bodies = [
+        # Strategy 1: type=Company filter (worked in probe=1 test!)
+        {"abEntry": {"criteria": {"searchQuery": {"type": "Company"}, "top": 50},
+                     "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
+        # Strategy 2: TYPEID(264)=2
+        {"abEntry": {"criteria": {"searchQuery": {"/AbEntry/Udf/$TYPEID(264)": "2"}, "top": 20},
+                     "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
+        # Strategy 3: empty search
+        {"abEntry": {"criteria": {"searchQuery": {}, "top": 200},
+                     "scope": {"fields": {"key":1,"companyName":1,"type":1}}}},
+    ]
+    for i, body in enumerate(search_bodies):
+        try:
+            r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json=body, timeout=12)
+            d = r.json()
+            items = d.get("abEntry",{}).get("Data",[])
+            results[f"search_{i+1}"] = {"Code": d.get("Code"), "count": len(items),
+                                         "first3": [x.get("companyName","") for x in items[:3]]}
+            for item in items:
+                cn = item.get("companyName","").lower()
+                if name_hint[:8] in cn or reg in cn:
+                    key = item.get("key","")
+                    results["found_strategy"] = i+1
+                    results["found_name"] = item.get("companyName")
+                    break
+            if key: break
+        except Exception as e:
+            results[f"search_{i+1}_err"] = str(e)
 
     if not key:
-        results["error"] = "Entry not found via TYPEID(264) search"
+        results["error"] = "Entry not found via any search strategy"
         return jsonify(results)
 
     results["key"] = key[:30]
