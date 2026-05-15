@@ -1129,6 +1129,7 @@ def build_charity_data_full(c):
 
     # Organisation Number candidates: TYPEID(8) and TYPEID(26) both work
     # Try TYPEID(8) first (Organisation Number - Numeric field in Maximizer)
+    reg = str(c.get("reg_number","")).strip()
     if reg:
         data["/AbEntry/Udf/$TYPEID(8)"] = reg   # Try this
         data["/AbEntry/Udf/$TYPEID(26)"] = reg  # And this
