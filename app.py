@@ -1134,15 +1134,13 @@ def build_charity_data_full(c):
     region = str(c.get("geo_area","") or c.get("region","") or "throughout england").strip()
     la = str(c.get("local_authority","") or c.get("town","") or "").strip()
 
-    # Organisation Number = Numeric UDF
-    # From probe: TYPEID(10) and TYPEID(11) are NumericField types
-    # Try as integer (Numeric fields need integer not string)
+    # Organisation Number = TYPEID(114) as integer (confirmed from CCToMaximizerCRM.exe)
+    # Charity Suffix = TYPEID(263) = 0 for main charity
     reg = str(c.get("reg_number","")).strip()
     if reg:
         try:
-            reg_int = int(reg)
-            data["/AbEntry/Udf/$TYPEID(10)"] = reg_int  # Numeric - likely Organisation Number
-            data["/AbEntry/Udf/$TYPEID(11)"] = reg_int  # Try this too
+            data["/AbEntry/Udf/$TYPEID(114)"] = int(reg)
+            data["/AbEntry/Udf/$TYPEID(263)"] = 0
         except: pass
 
     what_keys = _multi_keys(WHAT_MAP, what)
@@ -1281,43 +1279,35 @@ def _mx_get_all_keys():
         return {}
 
 def mx_create_entry(c, caller=""):
-    """Create entry, find its key by diffing key lists before/after, then apply UDFs."""
+    """Create Company entry - uses TYPEID(114) for org number, gets key from response."""
     import time
 
-    # Step 1: Get keys before create
-    keys_before = _mx_get_all_keys()
-    print(f"  Keys before: {len(keys_before)}")
+    # Enrich with full CC data
+    c = enrich_charity_from_cc(c)
 
-    # Step 2: Create
-    data = build_charity_base(c)
+    # Create with ALL UDFs in one call (Table types save correctly)
+    # TYPEID(114) for org number is also in create call
+    data = build_charity_data_full(c)
     print(f"  mx_create: {data.get('CompanyName','?')}")
     result = mx_write_create(data)
-    print(f"  Code={result.get('Code')} Msg={result.get('Msg','')}")
+    print(f"  Code={result.get('Code')} Msg={str(result.get('Msg',''))[:60]}")
     if result.get("Code") != 0:
         return result
 
-    # Step 3: Wait and get keys after
-    time.sleep(2)
-    keys_after = _mx_get_all_keys()
-    print(f"  Keys after: {len(keys_after)}")
+    # Get key from response (per CCToMaximizerCRM.exe: resp.AbEntry.Data.Key)
+    key = result.get("_extracted_key","")
+    if not key:
+        # Fallback: search by TYPEID(114) = reg number
+        time.sleep(1)
+        found = mx_find_by_org_number(str(c.get("reg_number","")))
+        if found: key = found.get("key","")
 
-    # Step 4: Find new key(s)
-    new_keys = [k for k in keys_after if k not in keys_before]
-    print(f"  New keys: {new_keys}")
-
-    if new_keys:
-        key = new_keys[0]
+    if key:
+        print(f"  Got key: {key[:25]}")
+        # Apply UDFs that couldn't go in create (one at a time)
         mx_apply_udfs(key, c)
-        print(f"  UDFs applied to key {key[:20]}…")
     else:
-        # Fallback: try by name
-        name = data.get("CompanyName","")
-        for key, cname in keys_after.items():
-            if name[:12].lower() in cname.lower():
-                mx_apply_udfs(key, c)
-                print(f"  UDFs applied by name match")
-                break
-
+        print(f"  No key found — entry created but UDFs not applied separately")
     return result
 
 def mx_update_entry(key, c, caller=""):
