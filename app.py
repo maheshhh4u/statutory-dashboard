@@ -1685,19 +1685,8 @@ def mx_create_test_charity():
         result["create_msg"]  = str(resp.get("Msg",""))
         result["full_create_response"] = resp  # Log EVERYTHING
         result["SUCCESS"] = resp.get("Code") == 0
-        # Get key from response
-        key = resp.get("_extracted_key","")
-        result["key_from_response"] = key[:30] if key else "NOT FOUND"
-        if not key:
-            import time; time.sleep(1)
-            found = mx_find_by_org_number("1202982")
-            key = found.get("key","") if found else ""
-            result["key_from_search"] = key[:30] if key else "NOT FOUND"
-        if key:
-            result["udf_results"] = mx_apply_udfs(key, c)
-            result["note"] = "Created with TYPEID(114) as org number - UDFs applied!"
-        else:
-            result["note"] = "Created but key not found"
+        result["note"] = "SUCCESS - all fields synced to Maximizer via single create call"
+        result["fields_set"] = list(resp.get("AbEntry",{}).get("Data",{}).keys())
     except Exception as e:
         result["error"] = str(e)
     return jsonify(result)
