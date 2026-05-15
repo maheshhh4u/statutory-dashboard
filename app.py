@@ -1143,12 +1143,13 @@ def build_charity_data_full(c):
             data["/AbEntry/Udf/$TYPEID(263)"] = 0
         except: pass
 
+    # Multi-value table UDFs - pass full array of matching keys
     what_keys = _multi_keys(WHAT_MAP, what)
-    if what_keys: data["/AbEntry/Udf/$TYPEID(111)"] = what_keys[0]
+    if what_keys: data["/AbEntry/Udf/$TYPEID(111)"] = what_keys  # Array for multi-select
     who_keys = _multi_keys(WHO_MAP, who)
-    if who_keys: data["/AbEntry/Udf/$TYPEID(112)"] = who_keys[0]
+    if who_keys: data["/AbEntry/Udf/$TYPEID(112)"] = who_keys
     how_keys = _multi_keys(HOW_MAP, how)
-    if how_keys: data["/AbEntry/Udf/$TYPEID(113)"] = how_keys[0]
+    if how_keys: data["/AbEntry/Udf/$TYPEID(113)"] = how_keys
     rk = _lookup(REGION_MAP, region)
     if rk: data["/AbEntry/Udf/$TYPEID(109)"] = rk
     lk = _lookup(LOCAL_AUTH_MAP, la)
@@ -1220,14 +1221,15 @@ def build_charity_udfs(c, key):
             upd(263, 0)
         except: pass
 
+    # Multi-value: pass full array to table UDFs
     what_keys = _multi_keys(WHAT_MAP, what)
-    if what_keys: upd(111, what_keys[0])
+    if what_keys: updates.append({"Key": key, "/AbEntry/Udf/$TYPEID(111)": what_keys})
 
     who_keys = _multi_keys(WHO_MAP, who)
-    if who_keys: upd(112, who_keys[0])
+    if who_keys: updates.append({"Key": key, "/AbEntry/Udf/$TYPEID(112)": who_keys})
 
     how_keys = _multi_keys(HOW_MAP, how)
-    if how_keys: upd(113, how_keys[0])
+    if how_keys: updates.append({"Key": key, "/AbEntry/Udf/$TYPEID(113)": how_keys})
 
     region = str(c.get("geo_area","") or c.get("region","") or "throughout england").strip()
     rk = _lookup(REGION_MAP, region)
@@ -1284,6 +1286,14 @@ def mx_create_entry(c, caller=""):
 
     # Enrich with full CC data
     c = enrich_charity_from_cc(c)
+
+    # Check for existing entry before creating (prevent duplicates)
+    reg = str(c.get("reg_number","")).strip()
+    if reg:
+        existing = mx_find_by_org_number(reg)
+        if existing:
+            print(f"  Entry already exists — updating instead")
+            return mx_update_entry(existing.get("key",""), c, caller)
 
     # Create with ALL UDFs in one call (Table types save correctly)
     # TYPEID(114) for org number is also in create call
@@ -1385,6 +1395,7 @@ def do_sync_one(reg, c, caller, page):
     reg_str = str(c.get("reg_number","")).strip()
     existing = mx_find_by_org_number(reg_str) if reg_str else None
     existing_key = existing.get("key","") if existing else ""
+    print(f"  {reg_str}: existing={'yes' if existing_key else 'no'}")
 
     if existing_key:
         print(f"  Updating: {charity_name[:30]}")
