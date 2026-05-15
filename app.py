@@ -1538,8 +1538,9 @@ def mx_create_test_charity():
     try:
         # Create Company with ALL UDFs in one call
         data = build_charity_data_full(c)
-        result["data_sent"] = data
+        # Only TYPEID(2) in create - everything else via separate updates
         result["type_check"] = data.get("Type","MISSING")
+        result["udfs_in_create"] = [k for k in data if k.startswith("/AbEntry")]
         resp = mx_write_create(data)
         result["create_code"] = resp.get("Code")
         result["create_msg"]  = str(resp.get("Msg",""))
@@ -1570,12 +1571,40 @@ def mx_update_by_id():
         return jsonify({"error":"Paste the actual Identification number from Maximizer System Information"}), 400
 
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
-    key = b64.b64encode(f"Company	{identification}	0".encode()).decode()
     c = {"reg_number": reg}
     c = enrich_charity_from_cc(c)
-    results = {"key": key[:30]+"...", "reg": reg, "cc_fetched": bool(c.get("what"))}
+    results = {"identification": identification, "reg": reg, "cc_fetched": bool(c.get("what"))}
 
-    # Apply known UDFs
+    # Find real key via TYPEID(2) search (most reliable)
+    found = mx_find_by_org_number(reg)
+    if found:
+        key = found.get("key","")
+        results["key_source"] = "TYPEID(2) search"
+    else:
+        # Fallback: try all suffix variants with the identification
+        key = ""
+        for suffix in ["0","1","2","3",""]:
+            try_key = b64.b64encode(f"Company	{identification}	{suffix}".encode()).decode()
+            try:
+                r = __import__('requests').post(
+                    f"{MX_BASE}/AbEntryRead", headers=hdrs,
+                    json={"abEntry":{"criteria":{"searchQuery":{},"top":1},
+                                     "scope":{"fields":{"key":1,"companyName":1}}}},
+                    timeout=5
+                )
+                # Just use suffix 0 as fallback
+                key = b64.b64encode(f"Company	{identification}	0".encode()).decode()
+                results["key_source"] = f"constructed suffix=0"
+            except: pass
+            break
+
+    if not key:
+        results["error"] = "Could not find entry"
+        return jsonify(results)
+
+    results["key"] = key[:30]+"..."
+
+    # Apply each UDF separately
     udf_results = mx_apply_udfs(key, c)
     results["udf_results"] = udf_results
 
