@@ -1196,6 +1196,18 @@ def build_charity_data_full(c):
     # Linked Charity: "1"=No (main charity, suffix=0), "2"=Yes (linked, suffix>0)
     linked_value = "2" if int(c.get("charity_suffix", 0) or 0) > 0 else "1"
     data["/AbEntry/Udf/$TYPEID(264)"] = linked_value
+
+    # Caller (TYPEID 378) - string field, who is calling from dashboard
+    caller = str(c.get("caller","") or "").strip()
+    if caller:
+        data["/AbEntry/Udf/$TYPEID(378)"] = caller[:50]
+
+    # Caller Status (TYPEID 379) - currently Yes/No, will be text after admin change
+    # Map dashboard status to value. If status is set, send as string
+    status = str(c.get("status","") or "").strip()
+    if status:
+        data["/AbEntry/Udf/$TYPEID(379)"] = status[:50]
+
     return data
 
 def build_charity_base(c):
@@ -1288,6 +1300,13 @@ def build_charity_udfs(c, key):
     # Linked Charity: "1"=No, "2"=Yes based on suffix
     linked_v = "2" if int(c.get("charity_suffix", 0) or 0) > 0 else "1"
     upd(264, linked_v)
+
+    # Caller and Caller Status
+    caller = str(c.get("caller","") or "").strip()
+    if caller: upd(378, caller[:50])
+    status = str(c.get("status","") or "").strip()
+    if status: upd(379, status[:50])
+
     return updates
 
 def mx_apply_udfs(key, c):
@@ -1440,11 +1459,20 @@ def do_sync_one(reg, c, caller, page):
     if not c.get("who")  and fin.get("who"):  c["who"]  = fin["who"]
     if not c.get("how")  and fin.get("how"):  c["how"]  = fin["how"]
 
-    charity_name = title_case(c.get("name","") or "")
+    # Set caller and status from dashboard for Maximizer UDFs
+    if caller: c["caller"] = caller
+    # Get status from caller_log if available
     reg_str = str(c.get("reg_number","")).strip()
+    if reg_str and reg_str in caller_log:
+        log_entry = caller_log[reg_str]
+        if log_entry.get("status"): c["status"] = log_entry["status"]
+        # If caller_log has caller name, prefer it
+        if log_entry.get("caller"): c["caller"] = log_entry["caller"]
+
+    charity_name = title_case(c.get("name","") or "")
     existing = mx_find_by_org_number(reg_str) if reg_str else None
     existing_key = existing.get("key","") if existing else ""
-    print(f"  {reg_str}: existing={'yes' if existing_key else 'no'}")
+    print(f"  {reg_str}: existing={'yes' if existing_key else 'no'} caller={c.get('caller','')} status={c.get('status','')}")
 
     if existing_key:
         print(f"  Updating: {charity_name[:30]}")
