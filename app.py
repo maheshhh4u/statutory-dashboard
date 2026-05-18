@@ -1780,10 +1780,10 @@ def mx_create_test_charity():
 
 @app.route("/api/maximizer/probe_caller")
 def mx_probe_caller():
-    """Probe ALL TYPEIDs as table values to find Caller/CallerStatus."""
+    """Read ALL UDFs from test entry and find ones containing 'CALLER_TEST' and 'STATUS_TEST'."""
     import requests as req, time
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
-    results = {"probe": {}}
+    results = {}
 
     found = mx_find_by_org_number("1202982")
     if not found or not found.get("key"):
@@ -1791,30 +1791,54 @@ def mx_probe_caller():
     key = found["key"]
     results["test_key"] = key[:30]
 
-    # Try ALL TYPEIDs 1-300 as table values (string key "1" wrapped in array)
-    # Table UDFs accept array of string keys like ["1"]
-    for typeid in list(range(1, 350)):
-        # Skip well-known ones
-        if typeid in {2,8,10,11,26,107,108,109,111,112,113,114,243,261,263,264}:
-            continue
+    # Read in batches of 20 TYPEIDs to find non-null values
+    all_udfs = {}
+    for batch_start in range(1, 300, 20):
+        batch = list(range(batch_start, min(batch_start+20, 300)))
+        fields = {"Key":1, "CompanyName":1}
+        for i in batch:
+            fields[f"/AbEntry/Udf/$TYPEID({i})"] = 1
         try:
-            r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
-                json={"AbEntry":{"Data":{"Key":key,
-                      f"/AbEntry/Udf/$TYPEID({typeid})": ["1"]}},
-                      "Compatibility":{"AbEntryKey":"2.0"}},
-                timeout=3)
+            r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
+                "AbEntry": {
+                    "Criteria": {"SearchQuery": {"$AND": [
+                        {"Type": {"$EQ": "Company"}},
+                        {"/AbEntry/Udf/$TYPEID(114)": {"$EQ": 1202982}}
+                    ]}},
+                    "Scope": {"Fields": fields}
+                },
+                "Configuration": {"Drivers": {"IAbEntrySearcher": "Maximizer.Model.Access.Sql.AbEntrySearcher"}},
+                "Compatibility": {"AbEntryKey": "2.0"}
+            }, timeout=10)
             d = r.json()
-            if d.get("Code") == 0:
-                results["probe"][f"TYPEID({typeid})"] = "table_key_1"
-            elif "Too Many" in str(d.get("Msg","")):
-                time.sleep(2)
-        except: pass
-        time.sleep(0.05)
+            items = d.get("AbEntry",{}).get("Data",[])
+            for item in items:
+                for k,v in item.items():
+                    if k.startswith("/AbEntry/Udf") and v and v not in ([], "", 0):
+                        all_udfs[k] = v
+        except Exception as e:
+            pass
+        time.sleep(0.3)
 
+    results["all_non_null_udfs"] = all_udfs
+    # Look for CALLER_TEST and STATUS_TEST values
+    caller_typeid = None
+    status_typeid = None
+    for k, v in all_udfs.items():
+        val_str = str(v).upper()
+        if "CALLER_TEST" in val_str or "MUHANNA_TEST" in val_str:
+            caller_typeid = k
+        elif "STATUS_TEST" in val_str or "CALLED_TEST" in val_str:
+            status_typeid = k
+    results["caller_typeid_found"] = caller_typeid
+    results["caller_status_typeid_found"] = status_typeid
     results["instructions"] = (
-        "Open St George's entry in Maximizer. "
-        "Look at Caller and Caller Status fields - they should show a value now. "
-        "Tell me what value each shows and I'll match it to the TYPEID."
+        "1. Open St George's entry in Maximizer\n"
+        "2. Click Edit (pencil)\n"
+        "3. Type 'CALLER_TEST' in the Caller field\n"
+        "4. Type 'STATUS_TEST' in the Caller Status field\n"
+        "5. Click SAVE\n"
+        "6. Run this URL again to find which TYPEIDs match"
     )
     return jsonify(results)
 
