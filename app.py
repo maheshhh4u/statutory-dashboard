@@ -1718,58 +1718,58 @@ def mx_find_by_org_number_by_name(reg_no):
 
 @app.route("/api/maximizer/create_test_charity")
 def mx_create_test_charity():
-    """Delete old + create fresh test entry with correct CC data & UDF mappings."""
-    # Remove existing test entry
-    existing = mx_find_by_org_number_by_name("1202982")
-    if existing:
-        try: mx_call("AbEntryDelete",{"AbEntry":{"Data":{"Key":existing["key"]}}})
-        except: pass
-
+    """Create or update test entry — checks for duplicates by TYPEID(114)."""
     c = {"reg_number": "1202982",
          "name": "ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"}
-    # Enrich with full CC API data
     c = enrich_charity_from_cc(c)
     result = {"cc_data": {k:v for k,v in c.items() if k not in ("financials",)}}
+
     try:
-        # Create Company with ALL UDFs in one call
-        data = build_charity_data_full(c)
-        # Only TYPEID(2) in create - everything else via separate updates
-        result["type_check"] = data.get("Type","MISSING")
-        result["udfs_in_create"] = [k for k in data if k.startswith("/AbEntry")]
-        result["data_sent_address"] = data.get("Address",{})
-        result["data_sent_company"] = data.get("CompanyName","")
-        resp = mx_write_create(data)
-        result["create_code"] = resp.get("Code")
-        result["create_msg"]  = str(resp.get("Msg",""))
-        result["full_create_response"] = resp  # Log EVERYTHING
-        result["SUCCESS"] = resp.get("Code") == 0
-        if resp.get("Code") == 0:
-            result["note"] = "SUCCESS - all fields synced to Maximizer via single create call"
+        # STEP 1: Check for existing entry by TYPEID(114) BEFORE create
+        existing = mx_find_by_org_number("1202982")
+        if existing and existing.get("key"):
+            existing_key = existing["key"]
+            result["action"] = "UPDATE (existing entry found)"
+            result["existing_key"] = existing_key[:30]
+            result["existing_name"] = existing.get("companyName","")
+            # Build data without Type (can't change type on update)
+            data = build_charity_data_full(c)
+            data.pop("Type", None)
+            data["Key"] = existing_key
+            result["data_sent_address"] = data.get("Address",{})
+            result["data_sent_company"] = data.get("CompanyName","")
+            result["udfs_in_create"] = [k for k in data if k.startswith("/AbEntry")]
+            resp = mx_call("AbEntryUpdate", {"AbEntry":{"Data":data}})
+            result["update_code"] = resp.get("Code")
+            result["update_msg"]  = str(resp.get("Msg",""))[:100]
+            result["full_create_response"] = resp
+            result["SUCCESS"] = resp.get("Code") == 0
+            result["note"] = "UPDATED existing entry — no duplicate created"
+            result["fields_set"] = list(resp.get("AbEntry",{}).get("Data",{}).keys())
         else:
-            result["note"] = f"FAILED: {str(resp.get('Msg',''))[:100]}"
-        result["fields_set"] = list(resp.get("AbEntry",{}).get("Data",{}).keys())
+            # STEP 2: Create new entry (only when no duplicate exists)
+            result["action"] = "CREATE (no existing entry)"
+            data = build_charity_data_full(c)
+            result["type_check"] = data.get("Type","MISSING")
+            result["udfs_in_create"] = [k for k in data if k.startswith("/AbEntry")]
+            result["data_sent_address"] = data.get("Address",{})
+            result["data_sent_company"] = data.get("CompanyName","")
+            resp = mx_write_create(data)
+            result["create_code"] = resp.get("Code")
+            result["create_msg"]  = str(resp.get("Msg",""))[:100]
+            result["full_create_response"] = resp
+            result["SUCCESS"] = resp.get("Code") == 0
+            if resp.get("Code") == 0:
+                result["note"] = "CREATED new entry"
+            else:
+                result["note"] = f"CREATE FAILED: {str(resp.get('Msg',''))[:100]}"
+            result["fields_set"] = list(resp.get("AbEntry",{}).get("Data",{}).keys())
+
+        # STEP 3: Verify find works after operation
         import time; time.sleep(1)
-        # Debug: return full find response
-        try:
-            import requests as _req
-            _hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
-            _body = {
-                "AbEntry": {
-                    "Scope": {"Fields": {"Key": 1, "CompanyName": 1, "/AbEntry/Udf/$TYPEID(114)": 1}},
-                    "Criteria": {"SearchQuery": {"$AND": [
-                        {"Type": {"$EQ": "Company"}},
-                        {"/AbEntry/Udf/$TYPEID(114)": {"$EQ": 1202982}}
-                    ]}}
-                },
-                "Configuration": {"Drivers": {"IAbEntrySearcher": "Maximizer.Model.Access.Sql.AbEntrySearcher"}},
-                "Compatibility": {"AbEntryKey": "2.0"}
-            }
-            _r = _req.post(f"{MX_BASE}/AbEntryRead", headers=_hdrs, json=_body, timeout=10)
-            result["find_debug"] = {"status": _r.status_code, "response": _r.json()}
-        except Exception as _e:
-            result["find_debug"] = {"error": str(_e)}
         found = mx_find_by_org_number("1202982")
         result["find_after_create"] = found.get("companyName","NOT FOUND") if found else "NOT FOUND"
+
     except Exception as e:
         result["error"] = str(e)
     return jsonify(result)
