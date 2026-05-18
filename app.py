@@ -1780,7 +1780,7 @@ def mx_create_test_charity():
 
 @app.route("/api/maximizer/probe_caller")
 def mx_probe_caller():
-    """Read entry by Key with all UDFs to find Caller/CallerStatus."""
+    """Read each TYPEID individually to find which has CALLER_TEST/STATUS_TEST."""
     import requests as req, time
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
     results = {}
@@ -1791,59 +1791,53 @@ def mx_probe_caller():
     key = found["key"]
     results["test_key"] = key[:30]
 
-    # Read entry using Key in SearchQuery (this works for Company entries)
-    # Try batches of 30 TYPEIDs at a time
-    all_udfs = {}
-    debug_responses = []
-    for batch_start in range(1, 300, 30):
-        batch = list(range(batch_start, min(batch_start+30, 300)))
-        fields = {"Key":1, "CompanyName":1, "Type":1}
-        for i in batch:
-            fields[f"/AbEntry/Udf/$TYPEID({i})"] = 1
+    # Use the known working string TYPEIDs from earlier probe
+    string_typeids = [53, 90, 100, 102, 103, 105, 119, 120, 125, 126, 127, 128, 129, 130,
+                      131, 132, 133, 135, 136, 145, 146, 147, 148, 149, 154,
+                      253, 254, 255, 256, 257, 260, 262, 286, 288]
+
+    found_udfs = {}
+    for typeid in string_typeids:
         try:
             r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
                 "AbEntry": {
-                    "Criteria": {"SearchQuery": {"Key": {"$EQ": key}}},
-                    "Scope": {"Fields": fields}
+                    "Criteria": {"SearchQuery": {"$AND": [
+                        {"Type": {"$EQ": "Company"}},
+                        {"/AbEntry/Udf/$TYPEID(114)": {"$EQ": 1202982}}
+                    ]}},
+                    "Scope": {"Fields": {
+                        "Key": 1, "CompanyName": 1,
+                        f"/AbEntry/Udf/$TYPEID({typeid})": 1
+                    }}
                 },
                 "Configuration": {"Drivers": {"IAbEntrySearcher": "Maximizer.Model.Access.Sql.AbEntrySearcher"}},
                 "Compatibility": {"AbEntryKey": "2.0"}
-            }, timeout=10)
+            }, timeout=8)
             d = r.json()
-            if batch_start == 1:
-                debug_responses.append({"batch": batch_start, "Code": d.get("Code"),
-                                        "Msg": str(d.get("Msg",""))[:100],
-                                        "items_count": len(d.get("AbEntry",{}).get("Data",[]))})
-            items = d.get("AbEntry",{}).get("Data",[])
-            if not isinstance(items, list): items = [items] if items else []
-            for item in items:
-                for k,v in item.items():
-                    if k.startswith("/AbEntry/Udf") and v not in (None, [], "", 0, 0.0):
-                        all_udfs[k] = v
+            if d.get("Code") == 0:
+                items = d.get("AbEntry",{}).get("Data",[])
+                if items:
+                    val = items[0].get(f"/AbEntry/Udf/$TYPEID({typeid})")
+                    if val and val not in ([], "", 0, 0.0):
+                        found_udfs[f"TYPEID({typeid})"] = val
         except Exception as e:
-            debug_responses.append({"batch": batch_start, "error": str(e)[:100]})
-        time.sleep(0.3)
+            pass
+        time.sleep(0.2)
 
-    results["debug"] = debug_responses
-    results["all_non_null_udfs"] = all_udfs
-    # Look for our test values
+    results["all_non_null_udfs"] = found_udfs
+
+    # Find CALLER_TEST and STATUS_TEST
     caller_typeid = None
     status_typeid = None
-    for k, v in all_udfs.items():
+    for k, v in found_udfs.items():
         val_str = str(v).upper()
-        if "CALLER_TEST" in val_str or "MUHANNA_TEST" in val_str:
+        if "CALLER_TEST" in val_str:
             caller_typeid = k
-        elif "STATUS_TEST" in val_str or "CALLED_TEST" in val_str:
+        elif "STATUS_TEST" in val_str:
             status_typeid = k
-    results["caller_typeid_found"] = caller_typeid
-    results["caller_status_typeid_found"] = status_typeid
-    results["instructions"] = (
-        "1. Open St George's entry in Maximizer, click Edit pencil\n"
-        "2. Type 'CALLER_TEST' in Caller field\n"
-        "3. Type 'STATUS_TEST' in Caller Status field\n"
-        "4. SAVE\n"
-        "5. Run this URL again"
-    )
+
+    results["CALLER_TYPEID"] = caller_typeid
+    results["CALLER_STATUS_TYPEID"] = status_typeid
     return jsonify(results)
 
 
