@@ -1,4 +1,4 @@
-import os, io, csv, zipfile, requests, threading
+import os, io, csv, zipfile, requests, threading, json
 from datetime import datetime, timedelta
 from flask import Flask, render_template, jsonify, request, Response, stream_with_context
 
@@ -12,9 +12,131 @@ CLASSIF_URL= f"{BULK_BASE}/publicextract.charity_classification.zip"
 CC_API_BASE = "https://api.charitycommission.gov.uk/register/api"
 AREA_URL   = f"{BULK_BASE}/publicextract.charity_area_of_operation.zip"
 
+# ─── Turso DB ─────────────────────────────────────────────────────────────────
+TURSO_URL   = os.environ.get("TURSO_DATABASE_URL", "")
+TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "")
+_db_lock = threading.Lock()
+_db = None
+
+def _db_conn():
+    """Get or create Turso connection (thread-local would be better but this works for free tier)."""
+    global _db
+    if _db is None and TURSO_URL and TURSO_TOKEN:
+        try:
+            import libsql
+            _db = libsql.connect(database=TURSO_URL, auth_token=TURSO_TOKEN)
+            print(f"[Turso] Connected to {TURSO_URL[:50]}…")
+        except Exception as e:
+            print(f"[Turso] Connection failed: {e}")
+            _db = None
+    return _db
+
+def db_init():
+    """Create tables if they don't exist."""
+    conn = _db_conn()
+    if not conn: return
+    try:
+        with _db_lock:
+            conn.execute("""CREATE TABLE IF NOT EXISTS users (
+                name TEXT PRIMARY KEY,
+                added_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS called_log (
+                key TEXT PRIMARY KEY,
+                reg_number TEXT, page TEXT, name TEXT,
+                called_by TEXT, timestamp TEXT, data TEXT
+            )""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS comments (
+                key TEXT PRIMARY KEY, text TEXT,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS statuses (
+                key TEXT PRIMARY KEY, status TEXT,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS saved_searches (
+                name TEXT PRIMARY KEY, criteria TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )""")
+            conn.commit()
+            # Seed default user if empty
+            r = conn.execute("SELECT COUNT(*) FROM users").fetchone()
+            if r and r[0] == 0:
+                conn.execute("INSERT INTO users(name) VALUES(?)", ("Muhanna",))
+                conn.commit()
+        print("[Turso] Tables initialized")
+    except Exception as e:
+        print(f"[Turso] db_init error: {e}")
+
+def db_exec(sql, params=()):
+    """Execute write query with auto-reconnect."""
+    conn = _db_conn()
+    if not conn: return None
+    try:
+        with _db_lock:
+            r = conn.execute(sql, params)
+            conn.commit()
+            return r
+    except Exception as e:
+        print(f"[Turso] db_exec error: {e}")
+        global _db; _db = None  # Force reconnect
+        return None
+
+def db_query(sql, params=()):
+    """Execute read query."""
+    conn = _db_conn()
+    if not conn: return []
+    try:
+        with _db_lock:
+            r = conn.execute(sql, params)
+            return r.fetchall()
+    except Exception as e:
+        print(f"[Turso] db_query error: {e}")
+        global _db; _db = None
+        return []
+
+# ─── Cache and load in-memory state from Turso ────────────────────────────────
 _cache={}; _called_log={}; _comments={}; _statuses={}; _saved_searches={}
 _bg_status={}; _bg_lock=threading.Lock()
 _users=["Muhanna"]  # admin-managed caller list
+
+def db_load_state():
+    """Load all DB state into in-memory dicts on startup."""
+    global _users, _called_log, _comments, _statuses, _saved_searches
+    if not _db_conn(): return
+
+    try:
+        users = db_query("SELECT name FROM users ORDER BY added_at")
+        if users:
+            _users = [r[0] for r in users]
+        print(f"[Turso] Loaded {len(_users)} users")
+
+        rows = db_query("SELECT key, reg_number, page, name, called_by, timestamp, data FROM called_log")
+        for r in rows:
+            extra = json.loads(r[6]) if r[6] else {}
+            _called_log[r[0]] = {"reg_number": r[1], "page": r[2], "name": r[3],
+                                  "called_by": r[4], "timestamp": r[5], **extra}
+        print(f"[Turso] Loaded {len(_called_log)} called_log entries")
+
+        rows = db_query("SELECT key, text FROM comments")
+        for r in rows: _comments[r[0]] = r[1]
+        print(f"[Turso] Loaded {len(_comments)} comments")
+
+        rows = db_query("SELECT key, status FROM statuses")
+        for r in rows: _statuses[r[0]] = r[1]
+        print(f"[Turso] Loaded {len(_statuses)} statuses")
+
+        rows = db_query("SELECT name, criteria FROM saved_searches")
+        for r in rows:
+            try: _saved_searches[r[0]] = json.loads(r[1])
+            except: _saved_searches[r[0]] = {}
+        print(f"[Turso] Loaded {len(_saved_searches)} saved searches")
+    except Exception as e:
+        print(f"[Turso] db_load_state error: {e}")
+
+# Initialize on import
+db_init()
+db_load_state()
 
 def cache_get(key,max_age=180):
     if key in _cache:
@@ -323,9 +445,14 @@ def mark_called():
     name=str(data.get("name","")).strip()
     if not reg or not page: return jsonify({"ok":False}),400
     key=f"{page}|{reg}"
-    if key in _called_log: del _called_log[key]; return jsonify({"ok":True,"marked":False})
-    _called_log[key]={"reg_number":reg,"name":name,"page":page,"called_by":"Muhanna",
-                      "timestamp":datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}
+    if key in _called_log:
+        del _called_log[key]
+        db_exec("DELETE FROM called_log WHERE key=?", (key,))
+        return jsonify({"ok":True,"marked":False})
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    _called_log[key]={"reg_number":reg,"name":name,"page":page,"called_by":"Muhanna","timestamp":ts}
+    db_exec("INSERT OR REPLACE INTO called_log(key,reg_number,page,name,called_by,timestamp,data) VALUES(?,?,?,?,?,?,?)",
+            (key, reg, page, name, "Muhanna", ts, "{}"))
     return jsonify({"ok":True,"marked":True})
 
 @app.route("/api/comment",methods=["POST"])
@@ -333,7 +460,10 @@ def save_comment():
     data=request.json or {}; reg=str(data.get("reg_number","")).strip(); page=str(data.get("page","")).strip()
     text=str(data.get("comment","")).strip()[:400]
     if not reg or not page: return jsonify({"ok":False}),400
-    _comments[f"{page}|{reg}"]=text; return jsonify({"ok":True})
+    key=f"{page}|{reg}"
+    _comments[key]=text
+    db_exec("INSERT OR REPLACE INTO comments(key,text) VALUES(?,?)", (key, text))
+    return jsonify({"ok":True})
 
 @app.route("/api/status",methods=["POST"])
 def save_status():
@@ -343,11 +473,43 @@ def save_status():
     key=f"{page}|{reg}"
     if status:
         _statuses[key]=status
+        db_exec("INSERT OR REPLACE INTO statuses(key,status) VALUES(?,?)", (key, status))
         if key not in _called_log:
-            _called_log[key]={"reg_number":reg,"page":page,"called_by":"Muhanna",
-                              "timestamp":datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}
-    else: _statuses.pop(key,None)
+            ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+            _called_log[key]={"reg_number":reg,"page":page,"called_by":"Muhanna","timestamp":ts}
+            db_exec("INSERT OR REPLACE INTO called_log(key,reg_number,page,name,called_by,timestamp,data) VALUES(?,?,?,?,?,?,?)",
+                    (key, reg, page, "", "Muhanna", ts, "{}"))
+    else:
+        _statuses.pop(key,None)
+        db_exec("DELETE FROM statuses WHERE key=?", (key,))
     return jsonify({"ok":True})
+
+@app.route("/api/db/stats")
+def db_stats():
+    """Show row counts for all DB tables."""
+    if not _db_conn():
+        return jsonify({"connected": False, "error": "TURSO_DATABASE_URL/TOKEN env vars not set"})
+    stats = {"connected": True, "url": TURSO_URL[:60] + "…"}
+    for tbl in ("users","called_log","comments","statuses","saved_searches"):
+        try:
+            r = db_query(f"SELECT COUNT(*) FROM {tbl}")
+            stats[tbl] = r[0][0] if r else 0
+        except Exception as e:
+            stats[tbl] = f"err: {e}"
+    return jsonify(stats)
+
+@app.route("/api/db/export/<table>")
+def db_export(table):
+    """Export a table as JSON for backup or viewing."""
+    if table not in ("users","called_log","comments","statuses","saved_searches"):
+        return jsonify({"error": "Invalid table"}), 400
+    rows = db_query(f"SELECT * FROM {table}")
+    # Get column names via PRAGMA
+    cols_info = db_query(f"PRAGMA table_info({table})")
+    cols = [c[1] for c in cols_info] if cols_info else []
+    return jsonify({"table": table, "columns": cols,
+                    "row_count": len(rows),
+                    "rows": [dict(zip(cols, r)) for r in rows]})
 
 @app.route("/api/saved_searches",methods=["GET"])
 def get_saved_searches(): return jsonify(list(_saved_searches.keys()))
@@ -356,7 +518,9 @@ def get_saved_searches(): return jsonify(list(_saved_searches.keys()))
 def save_search():
     data=request.json or {}; name=str(data.get("name","")).strip(); criteria=data.get("criteria",{})
     if not name: return jsonify({"ok":False}),400
-    _saved_searches[name]=criteria; return jsonify({"ok":True})
+    _saved_searches[name]=criteria
+    db_exec("INSERT OR REPLACE INTO saved_searches(name,criteria) VALUES(?,?)", (name, json.dumps(criteria)))
+    return jsonify({"ok":True})
 
 @app.route("/api/saved_searches/<name>",methods=["GET"])
 def get_saved_search(name):
@@ -364,7 +528,10 @@ def get_saved_search(name):
     return jsonify(_saved_searches[name])
 
 @app.route("/api/saved_searches/<name>",methods=["DELETE"])
-def delete_saved_search(name): _saved_searches.pop(name,None); return jsonify({"ok":True})
+def delete_saved_search(name):
+    _saved_searches.pop(name,None)
+    db_exec("DELETE FROM saved_searches WHERE name=?", (name,))
+    return jsonify({"ok":True})
 
 CONTACT_HDRS=["Phone","Email","Address 1","Address 2","Town","County","Postcode",
               "Activities","Call Status","Comment","Called By","Call Timestamp"]
@@ -464,12 +631,14 @@ def add_user():
         return jsonify({"ok":False,"error":"Invalid name"}), 400
     if name not in _users:
         _users.append(name)
+        db_exec("INSERT OR IGNORE INTO users(name) VALUES(?)", (name,))
     return jsonify({"ok":True,"users":_users})
 
 @app.route("/api/users/<name>", methods=["DELETE"])
 def delete_user(name):
     if name in _users and name != "Muhanna":
         _users.remove(name)
+        db_exec("DELETE FROM users WHERE name=?", (name,))
     return jsonify({"ok":True,"users":_users})
 
 # ── Called log now stores caller name ─────────────────────────────────────────
@@ -485,16 +654,17 @@ def mark_called_by():
     if not reg or not page:
         return jsonify({"ok":False,"error":"Missing reg_number or page"}), 400
     key = f"{page}|{reg}"
-    # If toggle=False, JS already toggled the UI — just mirror the current JS state
-    # If toggle=True (legacy), do server-side toggle
     if do_toggle and key in _called_log:
         del _called_log[key]
+        db_exec("DELETE FROM called_log WHERE key=?", (key,))
         return jsonify({"ok":True,"marked":False})
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     _called_log[key] = {
         "reg_number": reg, "name": name, "page": page,
-        "called_by": caller,
-        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        "called_by": caller, "timestamp": ts
     }
+    db_exec("INSERT OR REPLACE INTO called_log(key,reg_number,page,name,called_by,timestamp,data) VALUES(?,?,?,?,?,?,?)",
+            (key, reg, page, name, caller, ts, "{}"))
     return jsonify({"ok":True,"marked":True,"caller":caller})
 
 # ── Milestone charities (approaching age anniversary with zero statutory) ──────
