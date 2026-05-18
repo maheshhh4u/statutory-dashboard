@@ -59,40 +59,43 @@ def db_init():
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )""")
             conn.commit()
-            # Seed default user if empty
-            r = conn.execute("SELECT COUNT(*) FROM users").fetchone()
-            if r and r[0] == 0:
-                conn.execute("INSERT INTO users(name) VALUES(?)", ("Muhanna",))
-                conn.commit()
+        # Seed default user if empty (outside lock since db_query takes it)
+        rows = db_query("SELECT COUNT(*) FROM users")
+        if rows and rows[0][0] == 0:
+            db_exec("INSERT INTO users(name) VALUES(?)", ("Muhanna",))
         print("[Turso] Tables initialized")
     except Exception as e:
         print(f"[Turso] db_init error: {e}")
+        import traceback; traceback.print_exc()
 
 def db_exec(sql, params=()):
-    """Execute write query with auto-reconnect."""
+    """Execute write query with auto-reconnect. Returns None on failure but never raises."""
+    global _db
     conn = _db_conn()
     if not conn: return None
     try:
         with _db_lock:
-            r = conn.execute(sql, params)
+            conn.execute(sql, params)
             conn.commit()
-            return r
+            return True
     except Exception as e:
-        print(f"[Turso] db_exec error: {e}")
-        global _db; _db = None  # Force reconnect
+        print(f"[Turso] db_exec error on '{sql[:50]}': {e}")
+        _db = None
         return None
 
 def db_query(sql, params=()):
-    """Execute read query."""
+    """Execute read query. Returns list of rows or [] on failure."""
+    global _db
     conn = _db_conn()
     if not conn: return []
     try:
         with _db_lock:
-            r = conn.execute(sql, params)
-            return r.fetchall()
+            cur = conn.execute(sql, params)
+            # libsql cursor: fetchall() returns list of tuples
+            return cur.fetchall() if hasattr(cur, 'fetchall') else list(cur)
     except Exception as e:
-        print(f"[Turso] db_query error: {e}")
-        global _db; _db = None
+        print(f"[Turso] db_query error on '{sql[:50]}': {e}")
+        _db = None
         return []
 
 # ─── Cache and load in-memory state from Turso ────────────────────────────────
@@ -134,9 +137,13 @@ def db_load_state():
     except Exception as e:
         print(f"[Turso] db_load_state error: {e}")
 
-# Initialize on import
-db_init()
-db_load_state()
+# Initialize on import - never let DB issues crash the app
+try:
+    db_init()
+    db_load_state()
+except Exception as _e:
+    print(f"[Turso] FATAL during init (continuing without DB): {_e}")
+    import traceback; traceback.print_exc()
 
 def cache_get(key,max_age=180):
     if key in _cache:
