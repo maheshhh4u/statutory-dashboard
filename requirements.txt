@@ -4,4 +4,4 @@ pandas==2.2.2
 gunicorn==22.0.0
 numpy==1.26.4
 python-dateutil==2.9.0
-libsql==0.1.11
+libsql-client==0.3.1

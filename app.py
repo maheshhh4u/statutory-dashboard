@@ -19,75 +19,81 @@ _db_lock = threading.Lock()
 _db = None
 
 def _new_conn():
-    """Create a fresh Turso connection — used per request to avoid hangs."""
+    """Create a fresh Turso client per call — pure HTTP, no Rust runtime."""
     if not TURSO_URL or not TURSO_TOKEN: return None
     try:
-        import libsql
-        return libsql.connect(database=TURSO_URL, auth_token=TURSO_TOKEN)
+        import libsql_client
+        return libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_TOKEN)
     except Exception as e:
         print(f"[Turso] connect failed: {e}")
         return None
 
 def db_init():
     """Create tables if they don't exist."""
-    conn = _new_conn()
-    if not conn: return
+    client = _new_conn()
+    if not client: return
     try:
-        conn.execute("""CREATE TABLE IF NOT EXISTS users (
+        client.execute("""CREATE TABLE IF NOT EXISTS users (
             name TEXT PRIMARY KEY,
             added_at TEXT DEFAULT CURRENT_TIMESTAMP
         )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS called_log (
+        client.execute("""CREATE TABLE IF NOT EXISTS called_log (
             key TEXT PRIMARY KEY,
             reg_number TEXT, page TEXT, name TEXT,
             called_by TEXT, timestamp TEXT, data TEXT
         )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS comments (
+        client.execute("""CREATE TABLE IF NOT EXISTS comments (
             key TEXT PRIMARY KEY, text TEXT,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS statuses (
+        client.execute("""CREATE TABLE IF NOT EXISTS statuses (
             key TEXT PRIMARY KEY, status TEXT,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS saved_searches (
+        client.execute("""CREATE TABLE IF NOT EXISTS saved_searches (
             name TEXT PRIMARY KEY, criteria TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )""")
-        conn.commit()
         # Seed default user if empty
         try:
-            r = conn.execute("SELECT COUNT(*) FROM users").fetchone()
-            if r and r[0] == 0:
-                conn.execute("INSERT INTO users(name) VALUES(?)", ("Muhanna",))
-                conn.commit()
+            rs = client.execute("SELECT COUNT(*) FROM users")
+            if rs.rows and rs.rows[0][0] == 0:
+                client.execute("INSERT INTO users(name) VALUES(?)", ["Muhanna"])
         except: pass
         print("[Turso] Tables initialized")
     except Exception as e:
         print(f"[Turso] db_init error: {e}")
+    finally:
+        try: client.close()
+        except: pass
 
 def db_exec(sql, params=()):
-    """Execute write with a fresh short-lived connection."""
-    conn = _new_conn()
-    if not conn: return None
+    """Execute write with a fresh short-lived client."""
+    client = _new_conn()
+    if not client: return None
     try:
-        conn.execute(sql, params)
-        conn.commit()
+        client.execute(sql, list(params) if params else [])
         return True
     except Exception as e:
         print(f"[Turso] db_exec error on '{sql[:50]}': {e}")
         return None
+    finally:
+        try: client.close()
+        except: pass
 
 def db_query(sql, params=()):
-    """Read query with a fresh short-lived connection."""
-    conn = _new_conn()
-    if not conn: return []
+    """Read query with a fresh short-lived client. Returns list of tuples."""
+    client = _new_conn()
+    if not client: return []
     try:
-        cur = conn.execute(sql, params)
-        return cur.fetchall() if hasattr(cur, 'fetchall') else list(cur)
+        rs = client.execute(sql, list(params) if params else [])
+        return [tuple(r) for r in rs.rows]
     except Exception as e:
         print(f"[Turso] db_query error on '{sql[:50]}': {e}")
         return []
+    finally:
+        try: client.close()
+        except: pass
 
 # ─── Cache and load in-memory state from Turso ────────────────────────────────
 _cache={}; _called_log={}; _comments={}; _statuses={}; _saved_searches={}
