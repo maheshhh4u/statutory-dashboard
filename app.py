@@ -1461,13 +1461,18 @@ def do_sync_one(reg, c, caller, page):
 
     # Set caller and status from dashboard for Maximizer UDFs
     if caller: c["caller"] = caller
-    # Get status from caller_log if available
+    # Get status from _statuses (per-page reg) - use the most recent across pages
     reg_str = str(c.get("reg_number","")).strip()
-    if reg_str and reg_str in caller_log:
-        log_entry = caller_log[reg_str]
-        if log_entry.get("status"): c["status"] = log_entry["status"]
-        # If caller_log has caller name, prefer it
-        if log_entry.get("caller"): c["caller"] = log_entry["caller"]
+    if reg_str:
+        for key, status in _statuses.items():
+            if key.endswith(f"|{reg_str}") and status:
+                c["status"] = status
+                break
+        # Get caller name from _called_log if set
+        for key, log in _called_log.items():
+            if key.endswith(f"|{reg_str}") and log.get("called_by"):
+                c["caller"] = log["called_by"]
+                break
 
     charity_name = title_case(c.get("name","") or "")
     existing = mx_find_by_org_number(reg_str) if reg_str else None
@@ -1752,7 +1757,9 @@ def mx_find_by_org_number_by_name(reg_no):
 def mx_create_test_charity():
     """Create or update test entry — checks for duplicates by TYPEID(114)."""
     c = {"reg_number": "1202982",
-         "name": "ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON"}
+         "name": "ST GEORGE'S INDIAN ORTHODOX CHURCH, LONDON",
+         "caller": "Muhanna",
+         "status": "Contacted"}
     c = enrich_charity_from_cc(c)
     result = {"cc_data": {k:v for k,v in c.items() if k not in ("financials",)}}
 
