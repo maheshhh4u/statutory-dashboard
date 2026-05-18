@@ -1780,25 +1780,24 @@ def mx_create_test_charity():
 
 @app.route("/api/maximizer/probe_caller")
 def mx_probe_caller():
-    """Probe ALL TYPEIDs 1-500 as string to find Caller/CallerStatus."""
+    """Probe TYPEIDs 500-1000 to find Caller Status."""
     import requests as req, time
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
     results = {}
 
     found = mx_find_by_org_number("1202982")
     if not found or not found.get("key"):
-        return jsonify({"error": "No test entry. Create one first."})
+        return jsonify({"error": "No test entry."})
     key = found["key"]
     results["test_key"] = key[:30]
 
-    # First WRITE a string to all TYPEIDs 290-500 (wider range)
-    # Use "CALLER_TYPEID_X" pattern so we can read back and find Caller field
+    # Probe 500-1000 to find Caller Status TYPEID
     writable = []
-    for typeid in range(290, 500):
+    for typeid in range(500, 1000):
         try:
             r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
                 json={"AbEntry":{"Data":{"Key":key,
-                      f"/AbEntry/Udf/$TYPEID({typeid})": f"TID_{typeid}"}},
+                      f"/AbEntry/Udf/$TYPEID({typeid})": f"CS_{typeid}"}},
                       "Compatibility":{"AbEntryKey":"2.0"}},
                 timeout=3)
             d = r.json()
@@ -1809,12 +1808,9 @@ def mx_probe_caller():
         except: pass
         time.sleep(0.05)
 
-    results["writable_290_500"] = writable
-    results["instructions"] = (
-        "Open St George's entry in Maximizer. Check Caller field - it should now show TID_<num>. "
-        "Tell me what number appears in Caller field. Also check Caller Status field for another TID_<num>. "
-        "If they still empty, the Caller fields are very recent UDFs with higher TYPEIDs."
-    )
+    results["writable_500_1000"] = writable
+    results["caller_typeid_confirmed"] = 378
+    results["note"] = "Check Caller Status field in Maximizer - it should show CS_<num>"
     return jsonify(results)
 
 
