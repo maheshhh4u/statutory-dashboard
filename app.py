@@ -1780,7 +1780,7 @@ def mx_create_test_charity():
 
 @app.route("/api/maximizer/probe_caller")
 def mx_probe_caller():
-    """Write IDENTIFIABLE values to each working TYPEID so we can see which is Caller/CallerStatus."""
+    """Probe ALL TYPEIDs as table values to find Caller/CallerStatus."""
     import requests as req, time
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
     results = {"probe": {}}
@@ -1791,54 +1791,33 @@ def mx_probe_caller():
     key = found["key"]
     results["test_key"] = key[:30]
 
-    # The working TYPEIDs from previous probe
-    string_typeids = [53, 90, 100, 102, 103, 105, 119, 120, 125, 126, 127, 128, 129, 130,
-                      131, 132, 133, 135, 136, 145, 146, 147, 148, 149, 154,
-                      253, 254, 255, 256, 257, 260, 262, 286, 288]
-    number_typeids = [123, 138, 139, 140, 144, 248, 249, 251, 259,
-                      274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284]
-
-    # Write "T<id>" to each string field (e.g. T127)
-    for typeid in string_typeids:
-        val = f"T{typeid}"
+    # Try ALL TYPEIDs 1-300 as table values (string key "1" wrapped in array)
+    # Table UDFs accept array of string keys like ["1"]
+    for typeid in list(range(1, 350)):
+        # Skip well-known ones
+        if typeid in {2,8,10,11,26,107,108,109,111,112,113,114,243,261,263,264}:
+            continue
         try:
             r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
                 json={"AbEntry":{"Data":{"Key":key,
-                      f"/AbEntry/Udf/$TYPEID({typeid})": val}},
+                      f"/AbEntry/Udf/$TYPEID({typeid})": ["1"]}},
                       "Compatibility":{"AbEntryKey":"2.0"}},
-                timeout=4)
+                timeout=3)
             d = r.json()
             if d.get("Code") == 0:
-                results["probe"][f"TYPEID({typeid})"] = f"string='{val}'"
+                results["probe"][f"TYPEID({typeid})"] = "table_key_1"
             elif "Too Many" in str(d.get("Msg","")):
-                time.sleep(3)
+                time.sleep(2)
         except: pass
-        time.sleep(0.15)
-
-    # Write 999XX to each number field where XX = last 2 digits of typeid
-    for typeid in number_typeids:
-        val = 99900 + typeid
-        try:
-            r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
-                json={"AbEntry":{"Data":{"Key":key,
-                      f"/AbEntry/Udf/$TYPEID({typeid})": val}},
-                      "Compatibility":{"AbEntryKey":"2.0"}},
-                timeout=4)
-            d = r.json()
-            if d.get("Code") == 0:
-                results["probe"][f"TYPEID({typeid})"] = f"number={val}"
-            elif "Too Many" in str(d.get("Msg","")):
-                time.sleep(3)
-        except: pass
-        time.sleep(0.15)
+        time.sleep(0.05)
 
     results["instructions"] = (
         "Open St George's entry in Maximizer. "
-        "Caller field shows 'T<num>' or '99<num>' - that <num> is the Caller TYPEID. "
-        "Caller Status field shows another T<num> - that <num> is the Caller Status TYPEID. "
-        "Tell me both numbers."
+        "Look at Caller and Caller Status fields - they should show a value now. "
+        "Tell me what value each shows and I'll match it to the TYPEID."
     )
     return jsonify(results)
+
 
 @app.route("/api/maximizer/update_by_id")
 def mx_update_by_id():
