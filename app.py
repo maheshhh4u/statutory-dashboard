@@ -1193,7 +1193,9 @@ def build_charity_data_full(c):
     if rk: data["/AbEntry/Udf/$TYPEID(109)"] = rk
     lk = _lookup(LOCAL_AUTH_MAP, la)
     if lk: data["/AbEntry/Udf/$TYPEID(108)"] = lk
-    data["/AbEntry/Udf/$TYPEID(264)"] = "2"
+    # Linked Charity: "1"=No (main charity, suffix=0), "2"=Yes (linked, suffix>0)
+    linked_value = "2" if int(c.get("charity_suffix", 0) or 0) > 0 else "1"
+    data["/AbEntry/Udf/$TYPEID(264)"] = linked_value
     return data
 
 def build_charity_base(c):
@@ -1283,7 +1285,9 @@ def build_charity_udfs(c, key):
         pk = _lookup(POLICY_MAP, policy)
         if pk: upd(261, pk)
 
-    upd(264, "2")  # IsSync = Yes
+    # Linked Charity: "1"=No, "2"=Yes based on suffix
+    linked_v = "2" if int(c.get("charity_suffix", 0) or 0) > 0 else "1"
+    upd(264, linked_v)
     return updates
 
 def mx_apply_udfs(key, c):
@@ -1773,6 +1777,49 @@ def mx_create_test_charity():
     except Exception as e:
         result["error"] = str(e)
     return jsonify(result)
+
+@app.route("/api/maximizer/probe_caller")
+def mx_probe_caller():
+    """Probe TYPEIDs to find Caller and Caller Status UDFs."""
+    import requests as req, time
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+    results = {"caller_typeid": None, "caller_status_typeid": None, "probe": {}}
+
+    # First find our test entry
+    found = mx_find_by_org_number("1202982")
+    if not found or not found.get("key"):
+        return jsonify({"error": "No test entry to probe with. Create one first."})
+    key = found["key"]
+    results["test_key"] = key[:30]
+
+    # Probe TYPEIDs that haven't been mapped yet
+    known = {2,8,10,11,26,107,108,109,111,112,113,114,243,261,263,264}
+    test_values = {
+        "string": "Muhanna",
+        "number": 1,
+    }
+
+    for typeid in list(range(200, 290)) + list(range(50, 110)) + list(range(115, 200)):
+        if typeid in known: continue
+        # Try as string (for Caller name)
+        for val_type, val in test_values.items():
+            try:
+                r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
+                    json={"AbEntry":{"Data":{"Key":key,
+                          f"/AbEntry/Udf/$TYPEID({typeid})": val}},
+                          "Compatibility":{"AbEntryKey":"2.0"}},
+                    timeout=4)
+                d = r.json()
+                if d.get("Code") == 0:
+                    results["probe"][f"TYPEID({typeid})_{val_type}"] = "WORKS"
+                    break
+                elif "Too Many" in str(d.get("Msg","")):
+                    time.sleep(2)
+            except: pass
+        time.sleep(0.1)
+
+    results["note"] = "Check Maximizer UI for which TYPEID populated Caller/Caller Status fields"
+    return jsonify(results)
 
 @app.route("/api/maximizer/update_by_id")
 def mx_update_by_id():
