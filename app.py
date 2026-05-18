@@ -18,84 +18,75 @@ TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "")
 _db_lock = threading.Lock()
 _db = None
 
-def _db_conn():
-    """Get or create Turso connection (thread-local would be better but this works for free tier)."""
-    global _db
-    if _db is None and TURSO_URL and TURSO_TOKEN:
-        try:
-            import libsql
-            _db = libsql.connect(database=TURSO_URL, auth_token=TURSO_TOKEN)
-            print(f"[Turso] Connected to {TURSO_URL[:50]}…")
-        except Exception as e:
-            print(f"[Turso] Connection failed: {e}")
-            _db = None
-    return _db
+def _new_conn():
+    """Create a fresh Turso connection — used per request to avoid hangs."""
+    if not TURSO_URL or not TURSO_TOKEN: return None
+    try:
+        import libsql
+        return libsql.connect(database=TURSO_URL, auth_token=TURSO_TOKEN)
+    except Exception as e:
+        print(f"[Turso] connect failed: {e}")
+        return None
 
 def db_init():
     """Create tables if they don't exist."""
-    conn = _db_conn()
+    conn = _new_conn()
     if not conn: return
     try:
-        with _db_lock:
-            conn.execute("""CREATE TABLE IF NOT EXISTS users (
-                name TEXT PRIMARY KEY,
-                added_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )""")
-            conn.execute("""CREATE TABLE IF NOT EXISTS called_log (
-                key TEXT PRIMARY KEY,
-                reg_number TEXT, page TEXT, name TEXT,
-                called_by TEXT, timestamp TEXT, data TEXT
-            )""")
-            conn.execute("""CREATE TABLE IF NOT EXISTS comments (
-                key TEXT PRIMARY KEY, text TEXT,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )""")
-            conn.execute("""CREATE TABLE IF NOT EXISTS statuses (
-                key TEXT PRIMARY KEY, status TEXT,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )""")
-            conn.execute("""CREATE TABLE IF NOT EXISTS saved_searches (
-                name TEXT PRIMARY KEY, criteria TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )""")
-            conn.commit()
-        # Seed default user if empty (outside lock since db_query takes it)
-        rows = db_query("SELECT COUNT(*) FROM users")
-        if rows and rows[0][0] == 0:
-            db_exec("INSERT INTO users(name) VALUES(?)", ("Muhanna",))
+        conn.execute("""CREATE TABLE IF NOT EXISTS users (
+            name TEXT PRIMARY KEY,
+            added_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS called_log (
+            key TEXT PRIMARY KEY,
+            reg_number TEXT, page TEXT, name TEXT,
+            called_by TEXT, timestamp TEXT, data TEXT
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS comments (
+            key TEXT PRIMARY KEY, text TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS statuses (
+            key TEXT PRIMARY KEY, status TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS saved_searches (
+            name TEXT PRIMARY KEY, criteria TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )""")
+        conn.commit()
+        # Seed default user if empty
+        try:
+            r = conn.execute("SELECT COUNT(*) FROM users").fetchone()
+            if r and r[0] == 0:
+                conn.execute("INSERT INTO users(name) VALUES(?)", ("Muhanna",))
+                conn.commit()
+        except: pass
         print("[Turso] Tables initialized")
     except Exception as e:
         print(f"[Turso] db_init error: {e}")
-        import traceback; traceback.print_exc()
 
 def db_exec(sql, params=()):
-    """Execute write query with auto-reconnect. Returns None on failure but never raises."""
-    global _db
-    conn = _db_conn()
+    """Execute write with a fresh short-lived connection."""
+    conn = _new_conn()
     if not conn: return None
     try:
-        with _db_lock:
-            conn.execute(sql, params)
-            conn.commit()
-            return True
+        conn.execute(sql, params)
+        conn.commit()
+        return True
     except Exception as e:
         print(f"[Turso] db_exec error on '{sql[:50]}': {e}")
-        _db = None
         return None
 
 def db_query(sql, params=()):
-    """Execute read query. Returns list of rows or [] on failure."""
-    global _db
-    conn = _db_conn()
+    """Read query with a fresh short-lived connection."""
+    conn = _new_conn()
     if not conn: return []
     try:
-        with _db_lock:
-            cur = conn.execute(sql, params)
-            # libsql cursor: fetchall() returns list of tuples
-            return cur.fetchall() if hasattr(cur, 'fetchall') else list(cur)
+        cur = conn.execute(sql, params)
+        return cur.fetchall() if hasattr(cur, 'fetchall') else list(cur)
     except Exception as e:
         print(f"[Turso] db_query error on '{sql[:50]}': {e}")
-        _db = None
         return []
 
 # ─── Cache and load in-memory state from Turso ────────────────────────────────
@@ -106,7 +97,7 @@ _users=["Muhanna"]  # admin-managed caller list
 def db_load_state():
     """Load all DB state into in-memory dicts on startup."""
     global _users, _called_log, _comments, _statuses, _saved_searches
-    if not _db_conn(): return
+    if not TURSO_URL or not TURSO_TOKEN: return
 
     try:
         users = db_query("SELECT name FROM users ORDER BY added_at")
@@ -494,7 +485,7 @@ def save_status():
 @app.route("/api/db/stats")
 def db_stats():
     """Show row counts for all DB tables."""
-    if not _db_conn():
+    if not TURSO_URL or not TURSO_TOKEN:
         return jsonify({"connected": False, "error": "TURSO_DATABASE_URL/TOKEN env vars not set"})
     stats = {"connected": True, "url": TURSO_URL[:60] + "…"}
     for tbl in ("users","called_log","comments","statuses","saved_searches"):
