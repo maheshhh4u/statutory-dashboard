@@ -1780,45 +1780,64 @@ def mx_create_test_charity():
 
 @app.route("/api/maximizer/probe_caller")
 def mx_probe_caller():
-    """Probe TYPEIDs to find Caller and Caller Status UDFs."""
+    """Write IDENTIFIABLE values to each working TYPEID so we can see which is Caller/CallerStatus."""
     import requests as req, time
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
-    results = {"caller_typeid": None, "caller_status_typeid": None, "probe": {}}
+    results = {"probe": {}}
 
-    # First find our test entry
     found = mx_find_by_org_number("1202982")
     if not found or not found.get("key"):
-        return jsonify({"error": "No test entry to probe with. Create one first."})
+        return jsonify({"error": "No test entry. Create one first."})
     key = found["key"]
     results["test_key"] = key[:30]
 
-    # Probe TYPEIDs that haven't been mapped yet
-    known = {2,8,10,11,26,107,108,109,111,112,113,114,243,261,263,264}
-    test_values = {
-        "string": "Muhanna",
-        "number": 1,
-    }
+    # The working TYPEIDs from previous probe
+    string_typeids = [53, 90, 100, 102, 103, 105, 119, 120, 125, 126, 127, 128, 129, 130,
+                      131, 132, 133, 135, 136, 145, 146, 147, 148, 149, 154,
+                      253, 254, 255, 256, 257, 260, 262, 286, 288]
+    number_typeids = [123, 138, 139, 140, 144, 248, 249, 251, 259,
+                      274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284]
 
-    for typeid in list(range(200, 290)) + list(range(50, 110)) + list(range(115, 200)):
-        if typeid in known: continue
-        # Try as string (for Caller name)
-        for val_type, val in test_values.items():
-            try:
-                r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
-                    json={"AbEntry":{"Data":{"Key":key,
-                          f"/AbEntry/Udf/$TYPEID({typeid})": val}},
-                          "Compatibility":{"AbEntryKey":"2.0"}},
-                    timeout=4)
-                d = r.json()
-                if d.get("Code") == 0:
-                    results["probe"][f"TYPEID({typeid})_{val_type}"] = "WORKS"
-                    break
-                elif "Too Many" in str(d.get("Msg","")):
-                    time.sleep(2)
-            except: pass
-        time.sleep(0.1)
+    # Write "T<id>" to each string field (e.g. T127)
+    for typeid in string_typeids:
+        val = f"T{typeid}"
+        try:
+            r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
+                json={"AbEntry":{"Data":{"Key":key,
+                      f"/AbEntry/Udf/$TYPEID({typeid})": val}},
+                      "Compatibility":{"AbEntryKey":"2.0"}},
+                timeout=4)
+            d = r.json()
+            if d.get("Code") == 0:
+                results["probe"][f"TYPEID({typeid})"] = f"string='{val}'"
+            elif "Too Many" in str(d.get("Msg","")):
+                time.sleep(3)
+        except: pass
+        time.sleep(0.15)
 
-    results["note"] = "Check Maximizer UI for which TYPEID populated Caller/Caller Status fields"
+    # Write 999XX to each number field where XX = last 2 digits of typeid
+    for typeid in number_typeids:
+        val = 99900 + typeid
+        try:
+            r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
+                json={"AbEntry":{"Data":{"Key":key,
+                      f"/AbEntry/Udf/$TYPEID({typeid})": val}},
+                      "Compatibility":{"AbEntryKey":"2.0"}},
+                timeout=4)
+            d = r.json()
+            if d.get("Code") == 0:
+                results["probe"][f"TYPEID({typeid})"] = f"number={val}"
+            elif "Too Many" in str(d.get("Msg","")):
+                time.sleep(3)
+        except: pass
+        time.sleep(0.15)
+
+    results["instructions"] = (
+        "Open St George's entry in Maximizer. "
+        "Caller field shows 'T<num>' or '99<num>' - that <num> is the Caller TYPEID. "
+        "Caller Status field shows another T<num> - that <num> is the Caller Status TYPEID. "
+        "Tell me both numbers."
+    )
     return jsonify(results)
 
 @app.route("/api/maximizer/update_by_id")
