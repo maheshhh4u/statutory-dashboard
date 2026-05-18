@@ -1780,7 +1780,7 @@ def mx_create_test_charity():
 
 @app.route("/api/maximizer/probe_caller")
 def mx_probe_caller():
-    """Read ALL UDFs from test entry and find ones containing 'CALLER_TEST' and 'STATUS_TEST'."""
+    """Read entry by Key with all UDFs to find Caller/CallerStatus."""
     import requests as req, time
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
     results = {}
@@ -1791,37 +1791,42 @@ def mx_probe_caller():
     key = found["key"]
     results["test_key"] = key[:30]
 
-    # Read in batches of 20 TYPEIDs to find non-null values
+    # Read entry using Key in SearchQuery (this works for Company entries)
+    # Try batches of 30 TYPEIDs at a time
     all_udfs = {}
-    for batch_start in range(1, 300, 20):
-        batch = list(range(batch_start, min(batch_start+20, 300)))
-        fields = {"Key":1, "CompanyName":1}
+    debug_responses = []
+    for batch_start in range(1, 300, 30):
+        batch = list(range(batch_start, min(batch_start+30, 300)))
+        fields = {"Key":1, "CompanyName":1, "Type":1}
         for i in batch:
             fields[f"/AbEntry/Udf/$TYPEID({i})"] = 1
         try:
             r = req.post(f"{MX_BASE}/AbEntryRead", headers=hdrs, json={
                 "AbEntry": {
-                    "Criteria": {"SearchQuery": {"$AND": [
-                        {"Type": {"$EQ": "Company"}},
-                        {"/AbEntry/Udf/$TYPEID(114)": {"$EQ": 1202982}}
-                    ]}},
+                    "Criteria": {"SearchQuery": {"Key": {"$EQ": key}}},
                     "Scope": {"Fields": fields}
                 },
                 "Configuration": {"Drivers": {"IAbEntrySearcher": "Maximizer.Model.Access.Sql.AbEntrySearcher"}},
                 "Compatibility": {"AbEntryKey": "2.0"}
             }, timeout=10)
             d = r.json()
+            if batch_start == 1:
+                debug_responses.append({"batch": batch_start, "Code": d.get("Code"),
+                                        "Msg": str(d.get("Msg",""))[:100],
+                                        "items_count": len(d.get("AbEntry",{}).get("Data",[]))})
             items = d.get("AbEntry",{}).get("Data",[])
+            if not isinstance(items, list): items = [items] if items else []
             for item in items:
                 for k,v in item.items():
-                    if k.startswith("/AbEntry/Udf") and v and v not in ([], "", 0):
+                    if k.startswith("/AbEntry/Udf") and v not in (None, [], "", 0, 0.0):
                         all_udfs[k] = v
         except Exception as e:
-            pass
+            debug_responses.append({"batch": batch_start, "error": str(e)[:100]})
         time.sleep(0.3)
 
+    results["debug"] = debug_responses
     results["all_non_null_udfs"] = all_udfs
-    # Look for CALLER_TEST and STATUS_TEST values
+    # Look for our test values
     caller_typeid = None
     status_typeid = None
     for k, v in all_udfs.items():
@@ -1833,12 +1838,11 @@ def mx_probe_caller():
     results["caller_typeid_found"] = caller_typeid
     results["caller_status_typeid_found"] = status_typeid
     results["instructions"] = (
-        "1. Open St George's entry in Maximizer\n"
-        "2. Click Edit (pencil)\n"
-        "3. Type 'CALLER_TEST' in the Caller field\n"
-        "4. Type 'STATUS_TEST' in the Caller Status field\n"
-        "5. Click SAVE\n"
-        "6. Run this URL again to find which TYPEIDs match"
+        "1. Open St George's entry in Maximizer, click Edit pencil\n"
+        "2. Type 'CALLER_TEST' in Caller field\n"
+        "3. Type 'STATUS_TEST' in Caller Status field\n"
+        "4. SAVE\n"
+        "5. Run this URL again"
     )
     return jsonify(results)
 
