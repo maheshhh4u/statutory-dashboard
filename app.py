@@ -1780,10 +1780,10 @@ def mx_create_test_charity():
 
 @app.route("/api/maximizer/probe_caller")
 def mx_probe_caller():
-    """Probe TYPEIDs 500-1000 to find Caller Status."""
+    """Probe specifically near TYPEID(378) and test different value types."""
     import requests as req, time
     hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
-    results = {}
+    results = {"attempts": {}}
 
     found = mx_find_by_org_number("1202982")
     if not found or not found.get("key"):
@@ -1791,26 +1791,35 @@ def mx_probe_caller():
     key = found["key"]
     results["test_key"] = key[:30]
 
-    # Probe 500-1000 to find Caller Status TYPEID
-    writable = []
-    for typeid in range(500, 1000):
-        try:
-            r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
-                json={"AbEntry":{"Data":{"Key":key,
-                      f"/AbEntry/Udf/$TYPEID({typeid})": f"CS_{typeid}"}},
-                      "Compatibility":{"AbEntryKey":"2.0"}},
-                timeout=3)
-            d = r.json()
-            if d.get("Code") == 0:
-                writable.append(typeid)
-            elif "Too Many" in str(d.get("Msg","")):
-                time.sleep(2)
-        except: pass
-        time.sleep(0.05)
+    # Try TYPEIDs near 378 with different value types
+    # 378 is Caller (string). Caller Status was created with it - likely 377 or 379
+    test_typeids = [370, 371, 372, 373, 374, 375, 376, 377, 379, 380, 381, 382, 383, 384, 385]
 
-    results["writable_500_1000"] = writable
-    results["caller_typeid_confirmed"] = 378
-    results["note"] = "Check Caller Status field in Maximizer - it should show CS_<num>"
+    for typeid in test_typeids:
+        attempts = {}
+        # Try string
+        for val_type, val in [("str", "STATUSCHECK"), ("int", 1), ("table", ["1"]),
+                               ("yn", "1"), ("yn2", "2")]:
+            try:
+                r = req.post(f"{MX_BASE}/AbEntryUpdate", headers=hdrs,
+                    json={"AbEntry":{"Data":{"Key":key,
+                          f"/AbEntry/Udf/$TYPEID({typeid})": val}},
+                          "Compatibility":{"AbEntryKey":"2.0"}},
+                    timeout=3)
+                d = r.json()
+                if d.get("Code") == 0:
+                    attempts[val_type] = "WORKS"
+                else:
+                    msg = str(d.get("Msg",""))[:80]
+                    if "Too Many" in msg: time.sleep(2)
+                    elif "doesn't support" not in msg:
+                        attempts[val_type] = f"err: {msg[:50]}"
+            except: pass
+            time.sleep(0.1)
+        if attempts:
+            results["attempts"][f"TYPEID({typeid})"] = attempts
+
+    results["note"] = "Check Maximizer Caller Status field. Tell me what value it shows now."
     return jsonify(results)
 
 
