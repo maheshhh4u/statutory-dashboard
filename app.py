@@ -488,6 +488,30 @@ def save_status():
         db_exec("DELETE FROM statuses WHERE key=?", (key,))
     return jsonify({"ok":True})
 
+@app.route("/api/db/test_write")
+def db_test_write():
+    """Test writing and reading to confirm DB works end-to-end."""
+    import time
+    test_name = f"TEST_{int(time.time())}"
+    result = {"test_name": test_name}
+
+    # Write
+    result["write_result"] = db_exec("INSERT OR IGNORE INTO users(name) VALUES(?)", (test_name,))
+
+    # Read back
+    rows = db_query("SELECT name FROM users WHERE name=?", (test_name,))
+    result["read_back"] = [r[0] for r in rows] if rows else "NOT FOUND"
+
+    # All users
+    all_rows = db_query("SELECT name, added_at FROM users")
+    result["all_users"] = [{"name": r[0], "added_at": r[1]} for r in all_rows]
+    result["all_count"] = len(all_rows)
+
+    # Cleanup
+    db_exec("DELETE FROM users WHERE name=?", (test_name,))
+
+    return jsonify(result)
+
 @app.route("/api/db/stats")
 def db_stats():
     """Show row counts for all DB tables."""
@@ -507,13 +531,19 @@ def db_export(table):
     """Export a table as JSON for backup or viewing."""
     if table not in ("users","called_log","comments","statuses","saved_searches"):
         return jsonify({"error": "Invalid table"}), 400
-    rows = db_query(f"SELECT * FROM {table}")
-    # Get column names via PRAGMA
-    cols_info = db_query(f"PRAGMA table_info({table})")
-    cols = [c[1] for c in cols_info] if cols_info else []
-    return jsonify({"table": table, "columns": cols,
-                    "row_count": len(rows),
-                    "rows": [dict(zip(cols, r)) for r in rows]})
+    # Get columns + rows via libsql_client ResultSet
+    try:
+        client = _new_conn()
+        if not client:
+            return jsonify({"error": "No DB connection"}), 500
+        rs = client.execute(f"SELECT * FROM {table}")
+        cols = list(rs.columns) if hasattr(rs, 'columns') else []
+        rows = [dict(zip(cols, tuple(r))) for r in rs.rows]
+        client.close()
+        return jsonify({"table": table, "columns": cols,
+                        "row_count": len(rows), "rows": rows})
+    except Exception as e:
+        return jsonify({"error": str(e), "table": table}), 500
 
 @app.route("/api/saved_searches",methods=["GET"])
 def get_saved_searches(): return jsonify(list(_saved_searches.keys()))
