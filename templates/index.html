@@ -790,17 +790,28 @@ function showModal(title, html){
   if(!m){
     m=document.createElement('div');
     m.id='generic-modal';
-    m.className='modal';
-    m.innerHTML=`<div class="modal-content" style="max-width:650px">
-      <div class="modal-head"><h3 id="gm-title"></h3><button class="modal-x" onclick="document.getElementById('generic-modal').classList.remove('open')">×</button></div>
+    m.className='modal-bg';
+    m.innerHTML=`<div class="modal" style="max-width:650px;max-height:80vh;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <h3 id="gm-title" style="margin:0"></h3>
+        <button onclick="closeGenericModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--t3);padding:0 6px;line-height:1">×</button>
+      </div>
       <div id="gm-body"></div>
-      <div style="text-align:right;margin-top:14px"><button class="btn btn-outline btn-sm" onclick="document.getElementById('generic-modal').classList.remove('open')">Close</button></div>
+      <div style="text-align:right;margin-top:14px"><button class="btn btn-outline btn-sm" onclick="closeGenericModal()">Close</button></div>
     </div>`;
     document.body.appendChild(m);
+    // Click outside content to close
+    m.addEventListener('click', function(e){
+      if(e.target===m) closeGenericModal();
+    });
   }
   document.getElementById('gm-title').textContent=title;
   document.getElementById('gm-body').innerHTML=html;
   m.classList.add('open');
+}
+function closeGenericModal(){
+  const m=document.getElementById('generic-modal');
+  if(m) m.classList.remove('open');
 }
 
 // ── Prospect criteria descriptions ────────────────────────────────────────────

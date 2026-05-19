@@ -1620,7 +1620,8 @@ def _mx_get_all_keys():
 
 def mx_create_note(entry_key, note_text, caller_name=""):
     """Create a Note on a Maximizer Address Book entry.
-    Per CCToMaximizerCRM.exe: POST to /NoteCreate with Note.Data structure."""
+    Per CCToMaximizerCRM.exe: POST to /Create with Note.Data structure.
+    Body's top-level 'Note' key tells the server it's a Note operation."""
     if not entry_key or not note_text: return None
     from datetime import datetime as _dt
     now_iso = _dt.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
@@ -1640,13 +1641,73 @@ def mx_create_note(entry_key, note_text, caller_name=""):
         },
         "Compatibility": {"AbEntryKey": "2.0"}
     }
-    try:
-        resp = mx_call("NoteCreate", body)
-        print(f"  mx_create_note: Code={resp.get('Code')} for {entry_key[:25]}")
-        return resp
-    except Exception as e:
-        print(f"  mx_create_note error: {e}")
-        return None
+    # Try endpoints in order — the C# decompile shows just /Create works with body discrimination
+    for endpoint in ("Create", "NoteCreate", "Note/Create"):
+        try:
+            resp = mx_call(endpoint, body)
+            code = resp.get("Code")
+            print(f"  mx_create_note via /{endpoint}: Code={code} for {entry_key[:25]}")
+            if code == 0:
+                return resp
+            # If Code != 0 but no exception, try next endpoint
+        except Exception as e:
+            err_str = str(e)[:120]
+            print(f"  mx_create_note /{endpoint} error: {err_str}")
+            # If it's a 404, try the next endpoint
+            if "404" not in err_str and "405" not in err_str:
+                # For other errors, give up
+                return None
+    return None
+
+@app.route("/api/maximizer/test_note")
+def mx_test_note():
+    """Test note creation directly. Pass ?reg=1202982&text=hello&caller=Mahesh."""
+    reg    = str(request.args.get("reg","1202982")).strip()
+    text   = str(request.args.get("text","Test note from API")).strip()
+    caller = str(request.args.get("caller","TestUser")).strip()
+    result = {"reg": reg, "text": text, "caller": caller}
+
+    found = mx_find_by_org_number(reg)
+    if not found or not found.get("key"):
+        result["error"] = "Charity not found in Maximizer"
+        return jsonify(result)
+
+    entry_key = found["key"]
+    result["entry_key"] = entry_key[:30]
+    result["company_name"] = found.get("companyName","")
+
+    # Try each endpoint and report full response
+    from datetime import datetime as _dt
+    now_iso = _dt.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    html = f"<p><strong>{caller}</strong> — {now_iso[:10]}</p><p>{text}</p>"
+    body = {
+        "Note": {
+            "Data": {
+                "Key": None,
+                "ParentKey": entry_key,
+                "DateTime": now_iso,
+                "RichText": html,
+                "Category": "Dashboard Note"
+            }
+        },
+        "Compatibility": {"AbEntryKey": "2.0"}
+    }
+
+    result["attempts"] = {}
+    import requests as req
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+    for endpoint in ("Create", "NoteCreate", "Note/Create", "NotesCreate"):
+        try:
+            r = req.post(f"{MX_BASE}/{endpoint}", headers=hdrs, json=body, timeout=12)
+            try: resp_data = r.json()
+            except: resp_data = r.text[:200]
+            result["attempts"][endpoint] = {
+                "status": r.status_code,
+                "response": resp_data
+            }
+        except Exception as e:
+            result["attempts"][endpoint] = {"error": str(e)[:200]}
+    return jsonify(result)
 
 def mx_create_entry(c, caller=""):
     """Create Company entry - uses TYPEID(114) for org number, gets key from response."""
