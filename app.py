@@ -231,7 +231,8 @@ def compute_prospects():
         "income_from_government_contracts","total_gross_income",
         "total_gross_expenditure","fin_period_end_date"}
     CC={"registered_charity_number","charity_name","charity_contact_web",
-        "charity_registration_status"}
+        "charity_registration_status","charity_contact_phone","charity_contact_email",
+        "charity_contact_address3","charity_contact_address4"}
     latest={}; prev={}
     for row in stream_zip_csv(PARTA_URL,PC):
         reg=row.get("registered_charity_number","").strip()
@@ -242,11 +243,16 @@ def compute_prospects():
             latest[reg]=row
         elif reg not in prev or yr>prev[reg].get("fin_period_end_date",""):
             prev[reg]=row
-    names={}; webs={}
+    contacts={}
     for row in stream_zip_csv(CHARITY_URL,CC):
         reg=row.get("registered_charity_number","").strip()
-        if reg and row.get("charity_name",""):  # include all charities for name lookup
-            names[reg]=row.get("charity_name",""); webs[reg]=row.get("charity_contact_web","")
+        if reg and row.get("charity_name",""):
+            contacts[reg]={"name":row.get("charity_name",""),
+                           "website":row.get("charity_contact_web",""),
+                           "phone":row.get("charity_contact_phone",""),
+                           "email":row.get("charity_contact_email",""),
+                           "town":row.get("charity_contact_address3",""),
+                           "county":row.get("charity_contact_address4","")}
     results={"best":[],"readiness":[],"contract":[],"retention":[]}
     for reg,row in latest.items():
         ti=flt(row.get("total_gross_income"))
@@ -259,12 +265,14 @@ def compute_prospects():
         pr=prev.get(reg,{}); pgg=flt(pr.get("income_from_government_grants")); pgc=flt(pr.get("income_from_government_contracts")); pstat=pgg+pgc
         lists=classify(ti,stat,pct,gc)
         if not lists: continue
-        name=names.get(reg,"") or names.get(reg.lstrip("0"),"") or ""
-        web=webs.get(reg,"") or webs.get(reg.lstrip("0"),"") or ""
+        ct=contacts.get(reg,{}) or contacts.get(reg.lstrip("0"),{}) or {}
         fin={"total_income":ti,"total_expenditure":te,"gov_grants":gg,"gov_contracts":gc,
              "statutory":stat,"stat_pct":pct,"prev_grants":pgg,"prev_contracts":pgc,
              "prev_statutory":pstat,"fin_year":yr,"flags":build_flags(ti,te,stat,pstat,pgc,gc)}
-        obj={"reg_number":reg,"name":name,"website":web,"financials":fin,"lists":lists}
+        obj={"reg_number":reg,"name":ct.get("name",""),"website":ct.get("website",""),
+             "phone":ct.get("phone",""),"email":ct.get("email",""),
+             "town":ct.get("town",""),"county":ct.get("county",""),
+             "financials":fin,"lists":lists}
         if "Best Immediate" in lists: results["best"].append(obj)
         if "Readiness Package" in lists: results["readiness"].append(obj)
         if "Contract Growth" in lists: results["contract"].append(obj)
@@ -276,7 +284,9 @@ def compute_prospects():
 def compute_new(days):
     cutoff=(datetime.utcnow()-timedelta(days=int(days))).strftime("%Y-%m-%d")
     COLS={"registered_charity_number","charity_name","date_of_registration",
-          "charity_registration_status","charity_contact_web"}
+          "charity_registration_status","charity_contact_web",
+          "charity_contact_phone","charity_contact_email",
+          "charity_contact_address3","charity_contact_address4"}
     results=[]
     for row in stream_zip_csv(CHARITY_URL,COLS):
         if row.get("charity_registration_status","").upper().strip() not in ("REGISTERED","R"): continue
@@ -284,7 +294,12 @@ def compute_new(days):
         if dt>=cutoff:
             results.append({"reg_number":row.get("registered_charity_number",""),
                             "name":row.get("charity_name",""),"date_registered":dt,
-                            "website":row.get("charity_contact_web",""),"status":"Active"})
+                            "website":row.get("charity_contact_web",""),
+                            "phone":row.get("charity_contact_phone",""),
+                            "email":row.get("charity_contact_email",""),
+                            "town":row.get("charity_contact_address3",""),
+                            "county":row.get("charity_contact_address4",""),
+                            "status":"Active"})
     results.sort(key=lambda x:x.get("date_registered",""),reverse=True)
     return {"charities":results,"count":len(results),"days":days,"cutoff":cutoff}
 
@@ -292,15 +307,25 @@ def compute_late():
     today=datetime.utcnow().date()
     PC={"registered_charity_number","ar_due_date","latest_fin_period_submitted_ind",
         "total_gross_income","fin_period_end_date"}
-    NC={"registered_charity_number","charity_name"}
+    NC={"registered_charity_number","charity_name","charity_contact_phone",
+        "charity_contact_email","charity_contact_address3","charity_contact_address4",
+        "charity_contact_web"}
     latest={}
     for row in stream_zip_csv(PARTA_URL,PC):
         reg=row.get("registered_charity_number","").strip()
         if not reg: continue
         yr=row.get("fin_period_end_date","")[:10]
         if reg not in latest or yr>latest[reg].get("fin_period_end_date",""): latest[reg]=row
-    names={row.get("registered_charity_number","").strip():row.get("charity_name","")
-           for row in stream_zip_csv(CHARITY_URL,NC) if row.get("registered_charity_number","")}
+    contacts={}
+    for row in stream_zip_csv(CHARITY_URL,NC):
+        reg=row.get("registered_charity_number","").strip()
+        if reg:
+            contacts[reg]={"name":row.get("charity_name",""),
+                           "phone":row.get("charity_contact_phone",""),
+                           "email":row.get("charity_contact_email",""),
+                           "town":row.get("charity_contact_address3",""),
+                           "county":row.get("charity_contact_address4",""),
+                           "website":row.get("charity_contact_web","")}
     results=[]
     for reg,row in latest.items():
         if row.get("latest_fin_period_submitted_ind","").upper().strip() not in ("FALSE","0","NO","N"): continue
@@ -310,9 +335,13 @@ def compute_late():
         except: continue
         if due_d>=today: continue
         ml=round((today-due_d).days/30.4,1)
-        results.append({"reg_number":reg,"name":names.get(reg,reg) or reg,
+        ct=contacts.get(reg,{})
+        results.append({"reg_number":reg,"name":ct.get("name",reg) or reg,
                         "due_date":str(due_d),"months_late":ml,
-                        "latest_income":flt(row.get("total_gross_income",""))})
+                        "latest_income":flt(row.get("total_gross_income","")),
+                        "phone":ct.get("phone",""),"email":ct.get("email",""),
+                        "town":ct.get("town",""),"county":ct.get("county",""),
+                        "website":ct.get("website","")})
     results.sort(key=lambda x:x.get("months_late",0),reverse=True)
     o12=len([r for r in results if r["months_late"]>12])
     b612=len([r for r in results if 6<=r["months_late"]<=12])
@@ -324,7 +353,9 @@ def compute_old():
     PC={"registered_charity_number","income_from_government_grants",
         "income_from_government_contracts","total_gross_income","fin_period_end_date"}
     CC={"registered_charity_number","charity_name","date_of_registration",
-        "charity_registration_status","charity_contact_web"}
+        "charity_registration_status","charity_contact_web",
+        "charity_contact_phone","charity_contact_email",
+        "charity_contact_address3","charity_contact_address4"}
     pl={}
     for row in stream_zip_csv(PARTA_URL,PC):
         reg=row.get("registered_charity_number","").strip()
@@ -346,6 +377,10 @@ def compute_old():
         web=row.get("charity_contact_web","")
         results.append({"reg_number":reg,"name":row.get("charity_name","") or reg,
                         "website":web if web not in ("nan","None") else "",
+                        "phone":row.get("charity_contact_phone",""),
+                        "email":row.get("charity_contact_email",""),
+                        "town":row.get("charity_contact_address3",""),
+                        "county":row.get("charity_contact_address4",""),
                         "date_registered":dt,"age_years":today.year-ry,
                         "total_income":flt(fin.get("total_gross_income","")),
                         "fin_year":fin.get("fin_period_end_date","")[:4]})
@@ -834,7 +869,9 @@ def compute_milestones(milestone_years):
     PC={"registered_charity_number","income_from_government_grants",
         "income_from_government_contracts","total_gross_income","fin_period_end_date"}
     CC={"registered_charity_number","charity_name","date_of_registration",
-        "charity_registration_status","charity_contact_web"}
+        "charity_registration_status","charity_contact_web",
+        "charity_contact_phone","charity_contact_email",
+        "charity_contact_address3","charity_contact_address4"}
 
     # Get parta latest per charity
     pl = {}
@@ -872,6 +909,10 @@ def compute_milestones(milestone_years):
             "reg_number":   reg,
             "name":         row.get("charity_name","") or reg,
             "website":      web if web not in ("nan","None") else "",
+            "phone":        row.get("charity_contact_phone",""),
+            "email":        row.get("charity_contact_email",""),
+            "town":         row.get("charity_contact_address3",""),
+            "county":       row.get("charity_contact_address4",""),
             "date_registered": dt,
             "age_years":    today.year - reg_date.year,
             "milestone":    milestone_years,

@@ -244,6 +244,8 @@ select:focus{outline:none;border-color:var(--green)}
         <th onclick="sortP('prev_statutory')">Prev Stat.</th>
         <th>Trend</th>
         <th onclick="sortP('fin_year')">Fin Year</th>
+        <th style="min-width:100px">Phone</th>
+        <th style="min-width:140px">Email</th>
         <th>Flags</th>
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
@@ -368,7 +370,10 @@ select:focus{outline:none;border-color:var(--green)}
         <th onclick="sortN('reg_number')">Reg No.</th>
         <th onclick="sortN('name')" style="min-width:200px">Charity Name</th>
         <th onclick="sortN('date_registered')">Date Registered</th>
-        <th>Website</th><th>Stat.</th>
+        <th>Website</th>
+        <th style="min-width:100px">Phone</th>
+        <th style="min-width:140px">Email</th>
+        <th>Stat.</th>
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
         <th>Called</th>
@@ -420,6 +425,8 @@ select:focus{outline:none;border-color:var(--green)}
         <th onclick="sortL('months_late')">Months Late</th>
         <th onclick="sortL('latest_income')">Latest Income</th>
         <th>Severity</th>
+        <th style="min-width:100px">Phone</th>
+        <th style="min-width:140px">Email</th>
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
         <th>Called</th>
@@ -471,6 +478,8 @@ select:focus{outline:none;border-color:var(--green)}
         <th onclick="sortO('total_income')">Latest Income</th>
         <th onclick="sortO('fin_year')">Fin Year</th>
         <th>Website</th>
+        <th style="min-width:100px">Phone</th>
+        <th style="min-width:140px">Email</th>
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
         <th>Called</th>
@@ -543,6 +552,8 @@ select:focus{outline:none;border-color:var(--green)}
         <th onclick="sortMs('months_to_anniversary')">Months Away</th>
         <th onclick="sortMs('total_income')">Latest Income</th>
         <th>Website</th>
+        <th style="min-width:100px">Phone</th>
+        <th style="min-width:140px">Email</th>
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
         <th>Called</th>
@@ -923,6 +934,8 @@ function renderPT(pg){
       <td class="mono">${fmt(prev)}</td>
       <td>${trend(stat,prev)}</td>
       <td class="mono">${f.fin_year||'—'}</td>
+      <td class="mono" style="font-size:10px">${esc(c.phone||'')}</td>
+      <td class="mono" style="font-size:10px">${esc(c.email||'')}</td>
       <td>${flgs}</td>
       <td>${sSelect('prospects',c.reg_number)}</td>
       <td>${cmBox('prospects',c.reg_number)}</td>
@@ -1073,7 +1086,7 @@ function renderNT(pg){
   document.getElementById('new-body').innerHTML=nFil.slice(s,e).map(c=>{
     const web=c.website?`<a href="${esc(c.website)}" target="_blank" style="color:var(--green)">${c.website.substring(0,22)}… ↗</a>`:'—';
     const st=statuses['new|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.date_registered}</td><td>${web}</td><td><span class="tag tag-green">Active</span></td><td>${sSelect('new',c.reg_number)}</td><td>${cmBox('new',c.reg_number)}</td><td>${cBtn('new',c.reg_number,c.name||'')}</td><td>${callerCol('new',c.reg_number)}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.date_registered}</td><td>${web}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td><span class="tag tag-green">Active</span></td><td>${sSelect('new',c.reg_number)}</td><td>${cmBox('new',c.reg_number)}</td><td>${cBtn('new',c.reg_number,c.name||'')}</td><td>${callerCol('new',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('new-pag-info','new-pag-btns',pg,nFil.length,renderNT);
 }
@@ -1121,7 +1134,7 @@ function renderLT(pg){
   document.getElementById('late-rmeta').textContent=`Showing ${lFil.length} of ${lAll.length} charities`;
   document.getElementById('late-body').innerHTML=lFil.slice(s,e).map(c=>{
     const st=statuses['late|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td><td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td><td>${callerCol('late',c.reg_number)}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td><td>${callerCol('late',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('late-pag-info','late-pag-btns',pg,lFil.length,renderLT);
 }
@@ -1171,7 +1184,7 @@ function renderOT(pg){
   document.getElementById('old-body').innerHTML=oFil.slice(s,e).map(c=>{
     const web=c.website?`<a href="${esc(c.website)}" target="_blank" style="color:var(--green)">${c.website.substring(0,22)}… ↗</a>`:'—';
     const st=statuses['old|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td><td class="mono">${c.date_registered}</td><td class="mono" style="font-weight:600">${c.age_years}</td><td class="mono">${fmt(c.total_income)}</td><td class="mono">${c.fin_year||'—'}</td><td>${web}</td><td>${sSelect('old',c.reg_number)}</td><td>${cmBox('old',c.reg_number)}</td><td>${cBtn('old',c.reg_number,c.name||'')}</td><td>${callerCol('old',c.reg_number)}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td><td class="mono">${c.date_registered}</td><td class="mono" style="font-weight:600">${c.age_years}</td><td class="mono">${fmt(c.total_income)}</td><td class="mono">${c.fin_year||'—'}</td><td>${web}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td>${sSelect('old',c.reg_number)}</td><td>${cmBox('old',c.reg_number)}</td><td>${cBtn('old',c.reg_number,c.name||'')}</td><td>${callerCol('old',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('old-pag-info','old-pag-btns',pg,oFil.length,renderOT);
 }
@@ -1501,6 +1514,8 @@ function renderMsT(pg){
       <td class="mono" style="color:${urgency};font-weight:600">${mo} mo</td>
       <td class="mono">${fmt(c.total_income)}</td>
       <td>${web}</td>
+      <td class="mono" style="font-size:10px">${esc(c.phone||'')}</td>
+      <td class="mono" style="font-size:10px">${esc(c.email||'')}</td>
       <td>${sSelect('milestones',c.reg_number)}</td>
       <td>${cmBox('milestones',c.reg_number)}</td>
       <td>${cBtn('milestones',c.reg_number,c.name||'')}</td>
