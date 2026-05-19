@@ -961,9 +961,15 @@ function doSimple(){
   fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(data=>{sAll=data;renderSR(data);}).catch(e=>showSE(e.message));
 }
 function doAdv(){
-  const p=new URLSearchParams({name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),county:v('adv-county'),what:v('adv-what'),who:v('adv-who'),how:v('adv-how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to')});
+  const p=new URLSearchParams({name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),county:v('adv-county'),what:v('adv-what'),who:v('adv-who'),how:v('adv-how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to'),limit:'5000'});
   showSL();
-  fetch('/api/advanced_search?'+p).then(r=>r.json()).then(d=>{sAll=d.charities||[];renderSR(sAll);}).catch(e=>showSE(e.message));
+  fetch('/api/advanced_search?'+p).then(r=>r.json()).then(d=>{
+    sAll=d.charities||[];
+    renderSR(sAll);
+    if(d.truncated){
+      document.getElementById('s-msg').innerHTML=`<div style="background:#fef3c7;color:#92400e;padding:10px 14px;border-radius:6px;border:1px solid #fcd34d;font-size:13px;margin-top:10px">⚠ Showing first ${d.limit.toLocaleString()} matches. There are more results — narrow your filters (add postcode, county, name, income range, or smaller date range) to see all.</div>`;
+    }
+  }).catch(e=>showSE(e.message));
 }
 function v(id){const el=document.getElementById(id);return el?el.value:'';}
 function showSL(){document.getElementById('s-loading').style.display='flex';document.getElementById('s-results').style.display='none';document.getElementById('s-empty').style.display='none';document.getElementById('s-msg').innerHTML='';}

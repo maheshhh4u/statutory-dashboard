@@ -484,12 +484,16 @@ def advanced_search():
     imin=flt(request.args.get("inc_min","")); imax=flt(request.args.get("inc_max","")) or float("inf")
     df=request.args.get("reg_date_from","").strip(); dt=request.args.get("reg_date_to","").strip()
     tq=request.args.get("charity_type","").upper().strip()
+    # Optional limit (default 5000 to prevent runaway memory, callers can request fewer)
+    try: limit = max(1, min(int(request.args.get("limit","5000")), 20000))
+    except: limit = 5000
     COLS={"registered_charity_number","charity_name","charity_registration_status",
           "date_of_registration","date_of_removal","charity_contact_web",
           "charity_contact_phone","charity_contact_email",
           "charity_contact_address3","charity_contact_address4",
           "charity_contact_postcode","charity_activities","charity_type","latest_income"}
     results=[]
+    truncated=False
     for row in stream_zip_csv(CHARITY_URL,COLS):
         st=row.get("charity_registration_status","").upper().strip()
         if sq=="registered" and st not in ("REGISTERED","R"): continue
@@ -518,8 +522,10 @@ def advanced_search():
                         "town":row.get("charity_contact_address3",""),"county":row.get("charity_contact_address4",""),
                         "postcode":pc,"activities":row.get("charity_activities","")[:200],
                         "charity_type":row.get("charity_type",""),"financials":{},"lists":[]})
-        if len(results)>=200: break
-    return jsonify({"charities":results,"count":len(results)})
+        if len(results)>=limit:
+            truncated=True
+            break
+    return jsonify({"charities":results,"count":len(results),"truncated":truncated,"limit":limit})
 
 @app.route("/api/mark_called",methods=["POST"])
 def mark_called():
