@@ -243,16 +243,32 @@ def compute_prospects():
             latest[reg]=row
         elif reg not in prev or yr>prev[reg].get("fin_period_end_date",""):
             prev[reg]=row
+
+    # PRE-FILTER: figure out which charities pass financial criteria BEFORE loading contacts
+    # This saves ~200MB by only storing contact info for ~5K prospects, not all 200K charities
+    prospect_regs = set()
+    for reg, row in latest.items():
+        ti=flt(row.get("total_gross_income"))
+        if ti<150_000 or ti>5_000_000: continue
+        gg=flt(row.get("income_from_government_grants"))
+        gc=flt(row.get("income_from_government_contracts"))
+        stat=gg+gc; pct=round(stat/ti*100,1) if ti>0 else 0.0
+        if classify(ti,stat,pct,gc):
+            prospect_regs.add(reg)
+            prospect_regs.add(reg.lstrip("0"))
+
+    # Only load contact info for prospects (much smaller memory footprint)
     contacts={}
     for row in stream_zip_csv(CHARITY_URL,CC):
         reg=row.get("registered_charity_number","").strip()
-        if reg and row.get("charity_name",""):
+        if reg in prospect_regs and row.get("charity_name",""):
             contacts[reg]={"name":row.get("charity_name",""),
                            "website":row.get("charity_contact_web",""),
                            "phone":row.get("charity_contact_phone",""),
                            "email":row.get("charity_contact_email",""),
                            "town":row.get("charity_contact_address3",""),
                            "county":row.get("charity_contact_address4","")}
+
     results={"best":[],"readiness":[],"contract":[],"retention":[]}
     for reg,row in latest.items():
         ti=flt(row.get("total_gross_income"))
@@ -316,17 +332,10 @@ def compute_late():
         if not reg: continue
         yr=row.get("fin_period_end_date","")[:10]
         if reg not in latest or yr>latest[reg].get("fin_period_end_date",""): latest[reg]=row
-    contacts={}
-    for row in stream_zip_csv(CHARITY_URL,NC):
-        reg=row.get("registered_charity_number","").strip()
-        if reg:
-            contacts[reg]={"name":row.get("charity_name",""),
-                           "phone":row.get("charity_contact_phone",""),
-                           "email":row.get("charity_contact_email",""),
-                           "town":row.get("charity_contact_address3",""),
-                           "county":row.get("charity_contact_address4",""),
-                           "website":row.get("charity_contact_web","")}
-    results=[]
+
+    # PRE-FILTER: determine which charities are late, then only load contacts for those
+    late_regs = set()
+    late_data = {}
     for reg,row in latest.items():
         if row.get("latest_fin_period_submitted_ind","").upper().strip() not in ("FALSE","0","NO","N"): continue
         due_str=row.get("ar_due_date","")[:10]
@@ -335,10 +344,28 @@ def compute_late():
         except: continue
         if due_d>=today: continue
         ml=round((today-due_d).days/30.4,1)
+        late_regs.add(reg)
+        late_data[reg]={"due_date":str(due_d),"months_late":ml,
+                        "latest_income":flt(row.get("total_gross_income",""))}
+
+    # Only load contact info for late charities (much smaller dict)
+    contacts={}
+    for row in stream_zip_csv(CHARITY_URL,NC):
+        reg=row.get("registered_charity_number","").strip()
+        if reg in late_regs:
+            contacts[reg]={"name":row.get("charity_name",""),
+                           "phone":row.get("charity_contact_phone",""),
+                           "email":row.get("charity_contact_email",""),
+                           "town":row.get("charity_contact_address3",""),
+                           "county":row.get("charity_contact_address4",""),
+                           "website":row.get("charity_contact_web","")}
+
+    results=[]
+    for reg, d in late_data.items():
         ct=contacts.get(reg,{})
         results.append({"reg_number":reg,"name":ct.get("name",reg) or reg,
-                        "due_date":str(due_d),"months_late":ml,
-                        "latest_income":flt(row.get("total_gross_income","")),
+                        "due_date":d["due_date"],"months_late":d["months_late"],
+                        "latest_income":d["latest_income"],
                         "phone":ct.get("phone",""),"email":ct.get("email",""),
                         "town":ct.get("town",""),"county":ct.get("county",""),
                         "website":ct.get("website","")})
