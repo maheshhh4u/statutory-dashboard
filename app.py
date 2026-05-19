@@ -103,7 +103,7 @@ _bg_status={}; _bg_lock=threading.Lock()
 _users=["Muhanna"]  # admin-managed caller list
 
 def db_load_state():
-    """Load all DB state into in-memory dicts on startup."""
+    """Load all DB state into in-memory dicts. Clears existing state first."""
     global _users, _called_log, _comments, _statuses, _saved_searches
     if not TURSO_URL or not TURSO_TOKEN: return
 
@@ -112,6 +112,12 @@ def db_load_state():
         if users:
             _users = [r[0] for r in users]
         print(f"[Turso] Loaded {len(_users)} users")
+
+        # Clear existing state so removed rows are also removed from memory
+        _called_log.clear()
+        _comments.clear()
+        _statuses.clear()
+        _saved_searches.clear()
 
         rows = db_query("SELECT key, reg_number, page, name, called_by, timestamp, data FROM called_log")
         for r in rows:
@@ -657,7 +663,26 @@ def debug(): return jsonify({"status":dict(_bg_status),"cache":list(_cache.keys(
 # ── Users / Callers API ────────────────────────────────────────────────────────
 @app.route("/api/users", methods=["GET"])
 def get_users():
+    """Always fetch fresh from DB so manual DB edits show immediately."""
+    rows = db_query("SELECT name FROM users ORDER BY added_at")
+    if rows:
+        # Update in-memory cache too so other code stays in sync
+        global _users
+        _users = [r[0] for r in rows]
     return jsonify(_users)
+
+@app.route("/api/db/refresh", methods=["GET","POST"])
+def db_refresh():
+    """Reload all in-memory state from DB. Call this after editing the DB manually."""
+    try:
+        db_load_state()
+        return jsonify({"ok": True, "users": len(_users),
+                        "statuses": len(_statuses),
+                        "comments": len(_comments),
+                        "called_log": len(_called_log),
+                        "saved_searches": len(_saved_searches)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/users", methods=["POST"])
 def add_user():
