@@ -508,14 +508,68 @@ def save_comment():
 
 @app.route("/api/comment/history")
 def comment_history():
-    """Get all past comments for a charity (most recent first)."""
+    """Get all past comments for a charity from both dashboard DB and Maximizer Notes."""
+    import re as _re
     reg = str(request.args.get("reg","")).strip()
     if not reg: return jsonify({"history": []})
+
+    # Local DB history
     rows = db_query("SELECT text, caller, timestamp, synced_to_maximizer FROM comment_history WHERE reg_number=? ORDER BY id DESC", (reg,))
-    return jsonify({"reg_number": reg, "history": [
-        {"text": r[0], "caller": r[1], "timestamp": r[2], "synced": bool(r[3])}
+    local = [
+        {"text": r[0], "caller": r[1], "timestamp": r[2],
+         "synced": bool(r[3]), "source": "dashboard"}
         for r in rows
-    ]})
+    ]
+
+    # Maximizer notes
+    mx_notes = []
+    try:
+        found = mx_find_by_org_number(reg)
+        if found and found.get("key"):
+            notes = mx_read_notes(found["key"], top=50)
+            for n in notes:
+                rich = n.get("RichText","") or ""
+                # Strip HTML for clean display
+                clean = _re.sub(r"<br\s*/?>", "\n", rich)
+                clean = _re.sub(r"</p>\s*<p[^>]*>", "\n", clean)
+                clean = _re.sub(r"<[^>]+>", "", clean).strip()
+                dt = n.get("DateTime","")
+                # Try to extract caller name from "<strong>NAME</strong>" pattern
+                caller_match = _re.search(r"<strong>([^<]+)</strong>", rich)
+                caller = caller_match.group(1) if caller_match else (n.get("Creator","") or "Maximizer User")
+                mx_notes.append({
+                    "text": clean,
+                    "caller": caller,
+                    "timestamp": dt.replace("T"," ")[:19] if dt else "",
+                    "synced": True,
+                    "source": "maximizer",
+                    "category": n.get("Category","")
+                })
+    except Exception as e:
+        print(f"  history maximizer fetch error: {e}")
+
+    # Merge - dashboard notes already in DB are duplicates of synced Maximizer notes
+    # Deduplicate by matching text content
+    seen_texts = set()
+    merged = []
+    # Show Maximizer notes first (they're the authoritative source for synced items)
+    for item in mx_notes:
+        key = item["text"].strip()[:100]
+        seen_texts.add(key)
+        merged.append(item)
+    # Then any dashboard notes that aren't already represented
+    for item in local:
+        key = item["text"].strip()[:100]
+        if key not in seen_texts:
+            merged.append(item)
+            seen_texts.add(key)
+
+    # Sort by timestamp descending
+    merged.sort(key=lambda x: x.get("timestamp",""), reverse=True)
+
+    return jsonify({"reg_number": reg, "history": merged,
+                    "dashboard_count": len(local),
+                    "maximizer_count": len(mx_notes)})
 
 @app.route("/api/status",methods=["POST"])
 def save_status():
@@ -1619,13 +1673,10 @@ def _mx_get_all_keys():
         return {}
 
 def mx_create_note(entry_key, note_text, caller_name=""):
-    """Create a Note on a Maximizer Address Book entry.
-    Per CCToMaximizerCRM.exe: POST to /Create with Note.Data structure.
-    Body's top-level 'Note' key tells the server it's a Note operation."""
+    """Create a Note on a Maximizer Address Book entry."""
     if not entry_key or not note_text: return None
     from datetime import datetime as _dt
     now_iso = _dt.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
-    # Wrap plain text in basic HTML for RichText
     html = f"<p>{note_text.replace(chr(10),'<br/>')}</p>"
     if caller_name:
         html = f"<p><strong>{caller_name}</strong> — {now_iso[:10]}</p>" + html
@@ -1641,23 +1692,46 @@ def mx_create_note(entry_key, note_text, caller_name=""):
         },
         "Compatibility": {"AbEntryKey": "2.0"}
     }
-    # Try endpoints in order — the C# decompile shows just /Create works with body discrimination
-    for endpoint in ("Create", "NoteCreate", "Note/Create"):
-        try:
-            resp = mx_call(endpoint, body)
-            code = resp.get("Code")
-            print(f"  mx_create_note via /{endpoint}: Code={code} for {entry_key[:25]}")
-            if code == 0:
-                return resp
-            # If Code != 0 but no exception, try next endpoint
-        except Exception as e:
-            err_str = str(e)[:120]
-            print(f"  mx_create_note /{endpoint} error: {err_str}")
-            # If it's a 404, try the next endpoint
-            if "404" not in err_str and "405" not in err_str:
-                # For other errors, give up
-                return None
-    return None
+    try:
+        resp = mx_call("Create", body)
+        print(f"  mx_create_note: Code={resp.get('Code')} for {entry_key[:25]}")
+        return resp
+    except Exception as e:
+        print(f"  mx_create_note error: {e}")
+        return None
+
+def mx_read_notes(entry_key, top=50):
+    """Read all Notes for a given Address Book entry, newest first."""
+    if not entry_key: return []
+    import requests as req
+    hdrs = {"Authorization": f"Bearer {MX_TOKEN}", "Content-Type": "application/json"}
+    body = {
+        "Note": {
+            "Criteria": {
+                "SearchQuery": {"ParentKey": {"$EQ": entry_key}}
+            },
+            "Scope": {
+                "Fields": {
+                    "Key": 1, "ParentKey": 1, "DateTime": 1,
+                    "RichText": 1, "Category": 1, "Creator": 1
+                }
+            },
+            "OrderBy": {"Fields": [{"DateTime": "DESC"}], "PageSize": top}
+        },
+        "Compatibility": {"AbEntryKey": "2.0"}
+    }
+    try:
+        r = req.post(f"{MX_BASE}/Read", headers=hdrs, json=body, timeout=12)
+        d = r.json()
+        if d.get("Code") != 0:
+            print(f"  mx_read_notes: Code={d.get('Code')} Msg={str(d.get('Msg',''))[:80]}")
+            return []
+        items = d.get("Note",{}).get("Data",[])
+        if not isinstance(items, list): items = [items] if items else []
+        return items
+    except Exception as e:
+        print(f"  mx_read_notes error: {e}")
+        return []
 
 @app.route("/api/maximizer/test_note")
 def mx_test_note():
