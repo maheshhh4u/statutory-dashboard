@@ -64,6 +64,23 @@ def db_init():
             name TEXT PRIMARY KEY, criteria TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )""")
+        # Phone overrides — user-edited phone numbers per charity
+        client.execute("""CREATE TABLE IF NOT EXISTS phone_overrides (
+            reg_number TEXT PRIMARY KEY,
+            phone TEXT,
+            updated_by TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )""")
+        # Call log — every call made through dashboard
+        client.execute("""CREATE TABLE IF NOT EXISTS call_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reg_number TEXT, page TEXT,
+            phone_used TEXT, outcome TEXT, notes TEXT,
+            duration_sec INTEGER DEFAULT 0,
+            caller TEXT, timestamp TEXT,
+            synced_to_maximizer INTEGER DEFAULT 0
+        )""")
+        client.execute("CREATE INDEX IF NOT EXISTS idx_call_reg ON call_log(reg_number)")
         # Seed default user if empty
         try:
             rs = client.execute("SELECT COUNT(*) FROM users")
@@ -573,6 +590,93 @@ def save_comment():
         db_exec("INSERT INTO comment_history(reg_number,page,text,caller,timestamp,synced_to_maximizer) VALUES(?,?,?,?,?,?)",
                 (reg, page, text, caller, ts, synced))
     return jsonify({"ok":True, "synced_to_maximizer": synced})
+
+# ── Phone overrides ───────────────────────────────────────────────────────────
+@app.route("/api/phone", methods=["GET","POST"])
+def phone_override():
+    """GET ?reg=X → returns override; POST → saves override."""
+    if request.method == "GET":
+        reg = str(request.args.get("reg","")).strip()
+        if not reg: return jsonify({"phone": ""})
+        rows = db_query("SELECT phone FROM phone_overrides WHERE reg_number=?", (reg,))
+        return jsonify({"reg_number": reg, "phone": rows[0][0] if rows else ""})
+    data = request.json or {}
+    reg = str(data.get("reg_number","")).strip()
+    phone = str(data.get("phone","")).strip()[:30]
+    caller = str(data.get("caller","")).strip() or "Unknown"
+    if not reg: return jsonify({"ok": False, "error": "Missing reg_number"}), 400
+    if phone:
+        db_exec("INSERT OR REPLACE INTO phone_overrides(reg_number,phone,updated_by,updated_at) VALUES(?,?,?,?)",
+                (reg, phone, caller, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+    else:
+        db_exec("DELETE FROM phone_overrides WHERE reg_number=?", (reg,))
+    return jsonify({"ok": True, "phone": phone})
+
+@app.route("/api/phones/bulk")
+def phones_bulk():
+    """Return all phone overrides as a {reg_number: phone} dict for frontend caching."""
+    rows = db_query("SELECT reg_number, phone FROM phone_overrides")
+    return jsonify({r[0]: r[1] for r in rows})
+
+# ── Call log ──────────────────────────────────────────────────────────────────
+@app.route("/api/call", methods=["POST"])
+def save_call():
+    """Save a completed call. Pushes to Maximizer Notes if entry exists."""
+    data = request.json or {}
+    reg     = str(data.get("reg_number","")).strip()
+    page    = str(data.get("page","")).strip()
+    phone   = str(data.get("phone","")).strip()
+    outcome = str(data.get("outcome","")).strip()[:40]
+    notes   = str(data.get("notes","")).strip()[:800]
+    caller  = str(data.get("caller","")).strip() or "Unknown"
+    try: duration = max(0, int(data.get("duration_sec", 0) or 0))
+    except: duration = 0
+    if not reg or not outcome:
+        return jsonify({"ok": False, "error": "Missing reg_number or outcome"}), 400
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Push to Maximizer as a Note
+    synced = 0
+    try:
+        found = mx_find_by_org_number(reg)
+        if found and found.get("key"):
+            note_text = f"📞 Call: {outcome}"
+            if duration: note_text += f" ({duration//60}m {duration%60}s)"
+            if phone: note_text += f"\nPhone: {phone}"
+            if notes: note_text += f"\n\n{notes}"
+            resp = mx_create_note(found["key"], note_text, caller)
+            if resp and resp.get("Code") == 0:
+                synced = 1
+    except Exception as e:
+        print(f"  call→mx note error: {e}")
+
+    db_exec("""INSERT INTO call_log
+        (reg_number,page,phone_used,outcome,notes,duration_sec,caller,timestamp,synced_to_maximizer)
+        VALUES(?,?,?,?,?,?,?,?,?)""",
+        (reg, page, phone, outcome, notes, duration, caller, ts, synced))
+
+    # Also mark called in called_log
+    key = f"{page}|{reg}"
+    _called_log[key] = {"reg_number": reg, "page": page,
+                        "called_by": caller, "timestamp": ts}
+    db_exec("INSERT OR REPLACE INTO called_log(key,reg_number,page,name,called_by,timestamp,data) VALUES(?,?,?,?,?,?,?)",
+            (key, reg, page, "", caller, ts, "{}"))
+
+    return jsonify({"ok": True, "synced_to_maximizer": synced})
+
+@app.route("/api/call/history")
+def call_history():
+    """Get all calls for a charity, most recent first."""
+    reg = str(request.args.get("reg","")).strip()
+    if not reg: return jsonify({"calls": []})
+    rows = db_query("""SELECT phone_used, outcome, notes, duration_sec, caller, timestamp, synced_to_maximizer
+                       FROM call_log WHERE reg_number=? ORDER BY id DESC""", (reg,))
+    return jsonify({"reg_number": reg, "calls": [
+        {"phone": r[0], "outcome": r[1], "notes": r[2],
+         "duration_sec": r[3], "caller": r[4],
+         "timestamp": r[5], "synced": bool(r[6])}
+        for r in rows
+    ]})
 
 @app.route("/api/comment/history")
 def comment_history():

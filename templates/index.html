@@ -233,6 +233,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="rmeta" id="p-rmeta"></div>
     <div class="tbl-wrap tbl-scroll"><table>
       <thead><tr>
+        <th style="width:40px;text-align:center">📞</th>
         <th onclick="sortP('reg_number')">Reg No.</th>
         <th onclick="sortP('name')" style="min-width:150px">Charity Name</th>
         <th onclick="sortP('total_income')">Total Income</th>
@@ -313,6 +314,7 @@ select:focus{outline:none;border-color:var(--green)}
     </div>
     <div class="tbl-wrap tbl-scroll"><table>
       <thead><tr>
+        <th style="width:40px;text-align:center">📞</th>
         <th onclick="sortS('reg_number')">Reg No.</th>
         <th onclick="sortS('name')" style="min-width:140px">Name</th>
         <th>Status</th>
@@ -368,6 +370,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="rmeta" id="new-rmeta"></div>
     <div class="tbl-wrap tbl-scroll"><table>
       <thead><tr>
+        <th style="width:40px;text-align:center">📞</th>
         <th onclick="sortN('reg_number')">Reg No.</th>
         <th onclick="sortN('name')" style="min-width:200px">Charity Name</th>
         <th onclick="sortN('date_registered')">Date Registered</th>
@@ -420,6 +423,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="rmeta" id="late-rmeta"></div>
     <div class="tbl-wrap tbl-scroll"><table>
       <thead><tr>
+        <th style="width:40px;text-align:center">📞</th>
         <th onclick="sortL('reg_number')">Reg No.</th>
         <th onclick="sortL('name')" style="min-width:200px">Charity Name</th>
         <th onclick="sortL('due_date')">Due Date</th>
@@ -472,6 +476,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="rmeta" id="old-rmeta"></div>
     <div class="tbl-wrap tbl-scroll"><table>
       <thead><tr>
+        <th style="width:40px;text-align:center">📞</th>
         <th onclick="sortO('reg_number')">Reg No.</th>
         <th onclick="sortO('name')" style="min-width:190px">Charity Name</th>
         <th onclick="sortO('date_registered')">Date Registered</th>
@@ -545,6 +550,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="rmeta" id="ms-rmeta"></div>
     <div class="tbl-wrap tbl-scroll"><table>
       <thead><tr>
+        <th style="width:40px;text-align:center">📞</th>
         <th onclick="sortMs('reg_number')">Reg No.</th>
         <th onclick="sortMs('name')" style="min-width:190px">Charity Name</th>
         <th onclick="sortMs('date_registered')">Date Registered</th>
@@ -683,10 +689,136 @@ let pList='best';
 let called={};  // "page|reg" → true
 let statuses={}; // "page|reg" → status
 let comments={}; // "page|reg" → comment
+let phoneOverrides={}; // reg → override phone
 let pLoaded=false;
 let sMode='simple';
 let ss={}; // saved searches name→criteria
 let srt={p:{c:'',d:1},n:{c:'',d:1},l:{c:'months_late',d:-1},o:{c:'date_registered',d:1},s:{c:'',d:1}};
+
+// Load phone overrides on startup
+fetch('/api/phones/bulk').then(r=>r.json()).then(d=>{phoneOverrides=d||{};}).catch(()=>{});
+
+// ── Call button & modal ────────────────────────────────────────────────────────
+// Phone icon shown as first column in every list row
+function callBtn(pg,reg,name,ccPhone){
+  const phone=phoneOverrides[reg]||ccPhone||'';
+  const title=phone?`Call ${phone}`:'No phone — click to add';
+  const color=phone?'var(--green)':'var(--t3)';
+  return`<button onclick="openCallModal('${pg}','${esc(reg)}','${esc(name||'').replace(/'/g,"\\'")}','${esc(ccPhone||'')}')" title="${title}" style="background:none;border:1px solid ${phone?'var(--green)':'var(--bd)'};border-radius:4px;cursor:pointer;padding:3px 6px;font-size:13px;color:${color}">📞</button>`;
+}
+
+function openCallModal(pg,reg,name,ccPhone){
+  const overridePhone=phoneOverrides[reg]||'';
+  const currentPhone=overridePhone||ccPhone||'';
+  const caller=window.currentCaller||localStorage.getItem('caller')||'';
+  const callerWarn=caller?'':'<div style="color:var(--red);font-size:11px;margin-bottom:8px">⚠ Select your name from "Calling as:" dropdown first.</div>';
+  const html=`
+    <div style="font-size:12px;color:var(--t3);margin-bottom:6px">Charity:</div>
+    <div style="font-weight:600;margin-bottom:14px">${esc(name||'')} <span style="color:var(--t3);font-weight:400;font-size:12px">· Reg ${esc(reg)}</span></div>
+    ${callerWarn}
+    <div style="display:grid;grid-template-columns:1fr auto;gap:6px;margin-bottom:6px;align-items:end">
+      <div>
+        <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Phone Number</label>
+        <input id="call-phone" value="${esc(currentPhone)}" placeholder="+44..." style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;font-family:monospace">
+      </div>
+      <a id="call-dial" href="tel:${esc(currentPhone)}" onclick="startCallTimer()" style="background:var(--green);color:white;padding:7px 14px;border-radius:4px;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap">📞 Dial</a>
+    </div>
+    <div style="font-size:10px;color:var(--t3);margin-bottom:14px">CC default: ${esc(ccPhone||'—')} ${overridePhone?'· <span style="color:var(--gold)">edited</span>':''}</div>
+
+    <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Call Outcome</label>
+    <select id="call-outcome" style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;margin-bottom:10px">
+      <option value="">— Select outcome —</option>
+      <option value="Connected">✓ Connected</option>
+      <option value="Voicemail">📧 Voicemail Left</option>
+      <option value="No Answer">📵 No Answer</option>
+      <option value="Wrong Number">⚠ Wrong Number</option>
+      <option value="Busy">⏱ Busy</option>
+      <option value="Not Interested">✗ Not Interested</option>
+      <option value="Interested">★ Interested — Follow Up</option>
+    </select>
+
+    <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Duration (mm:ss)</label>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
+      <input id="call-duration" placeholder="0:00" style="width:100px;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:monospace;font-size:13px">
+      <button onclick="resetCallTimer()" type="button" style="background:none;border:1px solid var(--bd);border-radius:4px;cursor:pointer;padding:4px 10px;font-size:11px">Reset</button>
+      <span id="call-timer-display" style="font-family:monospace;font-size:12px;color:var(--t3)"></span>
+    </div>
+
+    <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Notes</label>
+    <textarea id="call-notes" placeholder="Call summary, key points, follow-up actions..." maxlength="800" style="width:100%;min-height:80px;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;resize:vertical"></textarea>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button onclick="closeGenericModal()" class="btn btn-outline btn-sm">Cancel</button>
+      <button onclick="saveCall('${pg}','${esc(reg)}','${esc(ccPhone||'')}')" class="btn btn-green btn-sm">💾 Save Call</button>
+    </div>
+  `;
+  showModal('📞 New Call · '+esc(name||reg), html);
+}
+
+let _callTimerStart=null, _callTimerInterval=null;
+function startCallTimer(){
+  _callTimerStart=Date.now();
+  if(_callTimerInterval) clearInterval(_callTimerInterval);
+  _callTimerInterval=setInterval(()=>{
+    const sec=Math.floor((Date.now()-_callTimerStart)/1000);
+    const m=Math.floor(sec/60),s=sec%60;
+    const td=document.getElementById('call-timer-display');
+    if(td) td.textContent='⏱ Timer: '+m+':'+String(s).padStart(2,'0');
+    const dur=document.getElementById('call-duration');
+    if(dur) dur.value=m+':'+String(s).padStart(2,'0');
+  },1000);
+}
+function resetCallTimer(){
+  if(_callTimerInterval){clearInterval(_callTimerInterval);_callTimerInterval=null;}
+  _callTimerStart=null;
+  const td=document.getElementById('call-timer-display');if(td)td.textContent='';
+  const dur=document.getElementById('call-duration');if(dur)dur.value='';
+}
+
+function saveCall(pg,reg,ccPhone){
+  const phone=document.getElementById('call-phone').value.trim();
+  const outcome=document.getElementById('call-outcome').value;
+  const notes=document.getElementById('call-notes').value.trim();
+  const durStr=document.getElementById('call-duration').value.trim();
+  const caller=window.currentCaller||localStorage.getItem('caller')||'';
+  if(!caller){alert('Please select your name from "Calling as:" dropdown first.');return;}
+  if(!outcome){alert('Please select an outcome.');return;}
+  // Parse duration mm:ss → seconds
+  let durSec=0;
+  if(durStr){
+    const parts=durStr.split(':').map(s=>parseInt(s)||0);
+    if(parts.length===2) durSec=parts[0]*60+parts[1];
+    else if(parts.length===1) durSec=parts[0];
+  }
+  // Save phone override if different from CC
+  if(phone && phone!==ccPhone){
+    phoneOverrides[reg]=phone;
+    fetch('/api/phone',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({reg_number:reg,phone:phone,caller:caller})});
+  } else if(!phone && phoneOverrides[reg]){
+    delete phoneOverrides[reg];
+    fetch('/api/phone',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({reg_number:reg,phone:'',caller:caller})});
+  }
+  // Save call
+  fetch('/api/call',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({reg_number:reg,page:pg,phone:phone,outcome:outcome,notes:notes,
+                          duration_sec:durSec,caller:caller})})
+    .then(r=>r.json()).then(d=>{
+      resetCallTimer();
+      closeGenericModal();
+      // Mark called in UI
+      called[pg+'|'+reg]=true;
+      refreshCalled();
+      // Show toast
+      const synced=d.synced_to_maximizer?'✓ Synced to Maximizer':'⊘ Saved locally (not in Maximizer)';
+      const t=document.createElement('div');
+      t.style.cssText='position:fixed;bottom:20px;right:20px;background:var(--green);color:white;padding:10px 16px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2)';
+      t.textContent='✓ Call saved. '+synced;
+      document.body.appendChild(t);
+      setTimeout(()=>t.remove(),3500);
+    });
+}
 
 document.getElementById('hdrDate').textContent=new Date().toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
 
@@ -775,13 +907,36 @@ function saveComment(pg,reg,el){
 }
 
 function showCommentHistory(reg){
-  fetch('/api/comment/history?reg='+encodeURIComponent(reg)).then(r=>r.json()).then(d=>{
-    const hist=d.history||[];
+  Promise.all([
+    fetch('/api/comment/history?reg='+encodeURIComponent(reg)).then(r=>r.json()),
+    fetch('/api/call/history?reg='+encodeURIComponent(reg)).then(r=>r.json())
+  ]).then(([cd,kd])=>{
+    const hist=cd.history||[];
+    const calls=kd.calls||[];
     let html=`<div style="max-height:60vh;overflow-y:auto">`;
-    if(!hist.length){
-      html+=`<div style="text-align:center;padding:30px;color:var(--t3)">No past notes for charity ${esc(reg)}.</div>`;
-    } else {
-      html+=`<div style="font-size:12px;color:var(--t3);margin-bottom:10px">${hist.length} note(s) for charity ${esc(reg)} (most recent first) · ${d.maximizer_count||0} from Maximizer · ${d.dashboard_count||0} from dashboard</div>`;
+
+    // Calls section first
+    if(calls.length){
+      html+=`<div style="font-size:12px;font-weight:700;color:var(--t1);margin-bottom:6px">📞 Call History (${calls.length})</div>`;
+      calls.forEach(c=>{
+        const dur=c.duration_sec?` · ${Math.floor(c.duration_sec/60)}m ${c.duration_sec%60}s`:'';
+        html+=`<div style="border:1px solid var(--bd);border-left:3px solid var(--green);border-radius:6px;padding:10px;margin-bottom:8px;background:#f0fdf4">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--t3);margin-bottom:5px;gap:8px;flex-wrap:wrap">
+            <span><strong>${esc(c.caller||'Unknown')}</strong> · ${esc(c.timestamp||'')}${dur}</span>
+            <span>${c.synced?'<span style="color:var(--green);font-size:10px">✓ Synced</span>':'<span style="color:var(--t3);font-size:10px">⊘ Not synced</span>'}</span>
+          </div>
+          <div style="font-size:13px;color:var(--t1);margin-bottom:4px"><strong>${esc(c.outcome||'')}</strong>${c.phone?` · <span style="font-family:monospace;font-size:11px">${esc(c.phone)}</span>`:''}</div>
+          ${c.notes?`<div style="font-size:13px;color:var(--t1);white-space:pre-wrap">${esc(c.notes)}</div>`:''}
+        </div>`;
+      });
+      html+=`<div style="height:14px"></div>`;
+    }
+
+    // Comments / Notes section
+    if(!hist.length && !calls.length){
+      html+=`<div style="text-align:center;padding:30px;color:var(--t3)">No history for charity ${esc(reg)}.</div>`;
+    } else if(hist.length) {
+      html+=`<div style="font-size:12px;font-weight:700;color:var(--t1);margin-bottom:6px">📝 Notes & Comments (${hist.length}) · ${cd.maximizer_count||0} from Maximizer · ${cd.dashboard_count||0} from dashboard</div>`;
       hist.forEach(h=>{
         const isMx=h.source==='maximizer';
         const badge=isMx
@@ -798,7 +953,7 @@ function showCommentHistory(reg){
       });
     }
     html+=`</div>`;
-    showModal('📜 Comment History — Reg '+esc(reg), html);
+    showModal('📜 History — Reg '+esc(reg), html);
   });
 }
 
@@ -924,6 +1079,7 @@ function renderPT(pg){
     const ai=[ol,cc].filter(Boolean).join(' ');
     const st=statuses['prospects|'+c.reg_number]||'';
     return`<tr class="${st==='Client'?'row-client':''}">
+      <td style="text-align:center">${callBtn('prospects',c.reg_number,c.name,c.phone)}</td>
       <td class="mono">${c.reg_number}</td>
       <td title="${esc(c.name)}">${esc((c.name||'').substring(0,28))}${(c.name||'').length>28?'…':''}</td>
       <td class="mono">${fmt(f.total_income)}</td>
@@ -990,6 +1146,7 @@ function renderSR(data,pg){
     const inc=f.total_income||c.latest_income||0;
     const st=statuses['search|'+c.reg_number]||'';
     return`<tr class="${st==='Client'?'row-client':''}">
+      <td style="text-align:center">${callBtn('search',c.reg_number,c.name,c.phone)}</td>
       <td class="mono">${c.reg_number}</td>
       <td title="${esc(c.name)}">${esc((c.name||'').substring(0,24))}${(c.name||'').length>24?'…':''}</td>
       <td><span class="tag tag-green">${c.status||'Active'}</span></td>
@@ -1099,7 +1256,7 @@ function renderNT(pg){
   document.getElementById('new-body').innerHTML=nFil.slice(s,e).map(c=>{
     const web=c.website?`<a href="${esc(c.website)}" target="_blank" style="color:var(--green)">${c.website.substring(0,22)}… ↗</a>`:'—';
     const st=statuses['new|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.date_registered}</td><td>${web}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td><span class="tag tag-green">Active</span></td><td>${sSelect('new',c.reg_number)}</td><td>${cmBox('new',c.reg_number)}</td><td>${cBtn('new',c.reg_number,c.name||'')}</td><td>${callerCol('new',c.reg_number)}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center">${callBtn('new',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.date_registered}</td><td>${web}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td><span class="tag tag-green">Active</span></td><td>${sSelect('new',c.reg_number)}</td><td>${cmBox('new',c.reg_number)}</td><td>${cBtn('new',c.reg_number,c.name||'')}</td><td>${callerCol('new',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('new-pag-info','new-pag-btns',pg,nFil.length,renderNT);
 }
@@ -1147,7 +1304,7 @@ function renderLT(pg){
   document.getElementById('late-rmeta').textContent=`Showing ${lFil.length} of ${lAll.length} charities`;
   document.getElementById('late-body').innerHTML=lFil.slice(s,e).map(c=>{
     const st=statuses['late|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td><td>${callerCol('late',c.reg_number)}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center">${callBtn('late',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td><td>${callerCol('late',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('late-pag-info','late-pag-btns',pg,lFil.length,renderLT);
 }
@@ -1197,7 +1354,7 @@ function renderOT(pg){
   document.getElementById('old-body').innerHTML=oFil.slice(s,e).map(c=>{
     const web=c.website?`<a href="${esc(c.website)}" target="_blank" style="color:var(--green)">${c.website.substring(0,22)}… ↗</a>`:'—';
     const st=statuses['old|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td><td class="mono">${c.date_registered}</td><td class="mono" style="font-weight:600">${c.age_years}</td><td class="mono">${fmt(c.total_income)}</td><td class="mono">${c.fin_year||'—'}</td><td>${web}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td>${sSelect('old',c.reg_number)}</td><td>${cmBox('old',c.reg_number)}</td><td>${cBtn('old',c.reg_number,c.name||'')}</td><td>${callerCol('old',c.reg_number)}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center">${callBtn('old',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td><td class="mono">${c.date_registered}</td><td class="mono" style="font-weight:600">${c.age_years}</td><td class="mono">${fmt(c.total_income)}</td><td class="mono">${c.fin_year||'—'}</td><td>${web}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td>${sSelect('old',c.reg_number)}</td><td>${cmBox('old',c.reg_number)}</td><td>${cBtn('old',c.reg_number,c.name||'')}</td><td>${callerCol('old',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('old-pag-info','old-pag-btns',pg,oFil.length,renderOT);
 }
@@ -1519,6 +1676,7 @@ function renderMsT(pg){
     const urgency=mo<=1?'var(--green)':mo<=3?'var(--gold)':'var(--text)';
     const st=statuses['milestones|'+c.reg_number]||'';
     return`<tr class="${st==='Client'?'row-client':''}">
+      <td style="text-align:center">${callBtn('milestones',c.reg_number,c.name,c.phone)}</td>
       <td class="mono">${c.reg_number}</td>
       <td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td>
       <td class="mono">${c.date_registered}</td>
