@@ -23,7 +23,9 @@ def _new_conn():
     if not TURSO_URL or not TURSO_TOKEN: return None
     try:
         import libsql_client
-        return libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_TOKEN)
+        # Force HTTPS - libsql-client otherwise tries wss:// which Turso rejects with 505
+        url = TURSO_URL.replace("libsql://", "https://", 1)
+        return libsql_client.create_client_sync(url=url, auth_token=TURSO_TOKEN)
     except Exception as e:
         print(f"[Turso] connect failed: {e}")
         return None
