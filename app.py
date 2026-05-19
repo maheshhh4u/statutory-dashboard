@@ -48,6 +48,14 @@ def db_init():
             key TEXT PRIMARY KEY, text TEXT,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )""")
+        # Comment history — every comment ever added (for viewing past notes)
+        client.execute("""CREATE TABLE IF NOT EXISTS comment_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reg_number TEXT, page TEXT, text TEXT,
+            caller TEXT, timestamp TEXT,
+            synced_to_maximizer INTEGER DEFAULT 0
+        )""")
+        client.execute("CREATE INDEX IF NOT EXISTS idx_ch_reg ON comment_history(reg_number)")
         client.execute("""CREATE TABLE IF NOT EXISTS statuses (
             key TEXT PRIMARY KEY, status TEXT,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -469,13 +477,45 @@ def mark_called():
 
 @app.route("/api/comment",methods=["POST"])
 def save_comment():
-    data=request.json or {}; reg=str(data.get("reg_number","")).strip(); page=str(data.get("page","")).strip()
-    text=str(data.get("comment","")).strip()[:400]
+    data = request.json or {}
+    reg  = str(data.get("reg_number","")).strip()
+    page = str(data.get("page","")).strip()
+    text = str(data.get("comment","")).strip()[:400]
+    caller = str(data.get("caller","")).strip() or "Unknown"
     if not reg or not page: return jsonify({"ok":False}),400
-    key=f"{page}|{reg}"
-    _comments[key]=text
+    key = f"{page}|{reg}"
+
+    # Save latest in comments (for dashboard display)
+    _comments[key] = text
     db_exec("INSERT OR REPLACE INTO comments(key,text) VALUES(?,?)", (key, text))
-    return jsonify({"ok":True})
+
+    # Also save to history if non-empty
+    synced = 0
+    if text:
+        ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        # Push to Maximizer Note if entry exists
+        try:
+            found = mx_find_by_org_number(reg)
+            if found and found.get("key"):
+                resp = mx_create_note(found["key"], text, caller)
+                if resp and resp.get("Code") == 0:
+                    synced = 1
+        except Exception as e:
+            print(f"  Note sync error: {e}")
+        db_exec("INSERT INTO comment_history(reg_number,page,text,caller,timestamp,synced_to_maximizer) VALUES(?,?,?,?,?,?)",
+                (reg, page, text, caller, ts, synced))
+    return jsonify({"ok":True, "synced_to_maximizer": synced})
+
+@app.route("/api/comment/history")
+def comment_history():
+    """Get all past comments for a charity (most recent first)."""
+    reg = str(request.args.get("reg","")).strip()
+    if not reg: return jsonify({"history": []})
+    rows = db_query("SELECT text, caller, timestamp, synced_to_maximizer FROM comment_history WHERE reg_number=? ORDER BY id DESC", (reg,))
+    return jsonify({"reg_number": reg, "history": [
+        {"text": r[0], "caller": r[1], "timestamp": r[2], "synced": bool(r[3])}
+        for r in rows
+    ]})
 
 @app.route("/api/status",methods=["POST"])
 def save_status():
@@ -1577,6 +1617,36 @@ def _mx_get_all_keys():
     except Exception as e:
         print(f"  _mx_get_all_keys: {e}")
         return {}
+
+def mx_create_note(entry_key, note_text, caller_name=""):
+    """Create a Note on a Maximizer Address Book entry.
+    Per CCToMaximizerCRM.exe: POST to /NoteCreate with Note.Data structure."""
+    if not entry_key or not note_text: return None
+    from datetime import datetime as _dt
+    now_iso = _dt.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    # Wrap plain text in basic HTML for RichText
+    html = f"<p>{note_text.replace(chr(10),'<br/>')}</p>"
+    if caller_name:
+        html = f"<p><strong>{caller_name}</strong> — {now_iso[:10]}</p>" + html
+    body = {
+        "Note": {
+            "Data": {
+                "Key": None,
+                "ParentKey": entry_key,
+                "DateTime": now_iso,
+                "RichText": html,
+                "Category": "Dashboard Note"
+            }
+        },
+        "Compatibility": {"AbEntryKey": "2.0"}
+    }
+    try:
+        resp = mx_call("NoteCreate", body)
+        print(f"  mx_create_note: Code={resp.get('Code')} for {entry_key[:25]}")
+        return resp
+    except Exception as e:
+        print(f"  mx_create_note error: {e}")
+        return None
 
 def mx_create_entry(c, caller=""):
     """Create Company entry - uses TYPEID(114) for org number, gets key from response."""

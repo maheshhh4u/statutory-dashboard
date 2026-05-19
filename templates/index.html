@@ -744,7 +744,13 @@ function refreshCalled(){
 // ── Comments ───────────────────────────────────────────────────────────────────
 function cmBox(pg,reg){
   const k=pg+'|'+reg,val=esc(comments[k]||'');
-  return`<div><textarea class="cm-input" id="cm-${pg}-${reg}" maxlength="400" placeholder="Add notes…" oninput="saveComment('${pg}','${esc(reg)}',this)">${val}</textarea><div class="cm-count" id="cc-${pg}-${reg}">${(comments[k]||'').length}/400</div></div>`;
+  return`<div style="position:relative">
+    <textarea class="cm-input" id="cm-${pg}-${reg}" maxlength="400" placeholder="Add notes…" oninput="saveComment('${pg}','${esc(reg)}',this)">${val}</textarea>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;margin-top:2px">
+      <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:10px" onclick="showCommentHistory('${esc(reg)}')" title="View past notes">📜 History</button>
+      <div class="cm-count" id="cc-${pg}-${reg}">${(comments[k]||'').length}/400</div>
+    </div>
+  </div>`;
 }
 function saveComment(pg,reg,el){
   const k=pg+'|'+reg,txt=el.value.slice(0,400);
@@ -752,7 +758,49 @@ function saveComment(pg,reg,el){
   const cc=document.getElementById('cc-'+pg+'-'+reg);
   if(cc)cc.textContent=txt.length+'/400';
   clearTimeout(el._t);
-  el._t=setTimeout(()=>fetch('/api/comment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reg_number:reg,page:pg,comment:txt})}),600);
+  const caller=(window.currentCaller||localStorage.getItem('caller')||'Unknown');
+  el._t=setTimeout(()=>fetch('/api/comment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reg_number:reg,page:pg,comment:txt,caller:caller})}),600);
+}
+
+function showCommentHistory(reg){
+  fetch('/api/comment/history?reg='+encodeURIComponent(reg)).then(r=>r.json()).then(d=>{
+    const hist=d.history||[];
+    let html=`<div style="max-height:60vh;overflow-y:auto">`;
+    if(!hist.length){
+      html+=`<div style="text-align:center;padding:30px;color:var(--t3)">No past notes for charity ${esc(reg)}.</div>`;
+    } else {
+      html+=`<div style="font-size:12px;color:var(--t3);margin-bottom:10px">${hist.length} note(s) for charity ${esc(reg)} (most recent first)</div>`;
+      hist.forEach(h=>{
+        html+=`<div style="border:1px solid var(--bd);border-radius:6px;padding:10px;margin-bottom:8px;background:#fafafa">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--t3);margin-bottom:5px">
+            <span><strong>${esc(h.caller||'Unknown')}</strong> · ${esc(h.timestamp||'')}</span>
+            <span>${h.synced?'<span style="color:var(--green)">✓ Synced to Maximizer</span>':'<span style="color:var(--t3)">⊘ Not synced</span>'}</span>
+          </div>
+          <div style="font-size:13px;color:var(--t1);white-space:pre-wrap">${esc(h.text||'')}</div>
+        </div>`;
+      });
+    }
+    html+=`</div>`;
+    showModal('📜 Comment History — Reg '+esc(reg), html);
+  });
+}
+
+function showModal(title, html){
+  let m=document.getElementById('generic-modal');
+  if(!m){
+    m=document.createElement('div');
+    m.id='generic-modal';
+    m.className='modal';
+    m.innerHTML=`<div class="modal-content" style="max-width:650px">
+      <div class="modal-head"><h3 id="gm-title"></h3><button class="modal-x" onclick="document.getElementById('generic-modal').classList.remove('open')">×</button></div>
+      <div id="gm-body"></div>
+      <div style="text-align:right;margin-top:14px"><button class="btn btn-outline btn-sm" onclick="document.getElementById('generic-modal').classList.remove('open')">Close</button></div>
+    </div>`;
+    document.body.appendChild(m);
+  }
+  document.getElementById('gm-title').textContent=title;
+  document.getElementById('gm-body').innerHTML=html;
+  m.classList.add('open');
 }
 
 // ── Prospect criteria descriptions ────────────────────────────────────────────
