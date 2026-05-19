@@ -331,6 +331,7 @@ select:focus{outline:none;border-color:var(--green)}
       </tr></thead>
       <tbody id="s-body"></tbody>
     </table></div>
+    <div class="pag"><div class="pag-info" id="s-pag-info"></div><div class="pag-btns" id="s-pag-btns"></div></div>
   </div>
   <div id="s-empty" style="text-align:center;padding:48px;color:var(--t3);font-size:13px">Enter a charity name or registration number, or use Advanced Search above.</div>
 </section>
@@ -958,26 +959,31 @@ function setMode(m){
 function doSimple(){
   const q=document.getElementById('search-q').value.trim();if(!q)return;
   showSL();
-  fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(data=>{sAll=data;renderSR(data);}).catch(e=>showSE(e.message));
+  fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(data=>{sAll=data;renderSR(data,1);}).catch(e=>showSE(e.message));
 }
 function doAdv(){
-  const p=new URLSearchParams({name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),county:v('adv-county'),what:v('adv-what'),who:v('adv-who'),how:v('adv-how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to'),limit:'5000'});
+  const p=new URLSearchParams({name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),county:v('adv-county'),what:v('adv-what'),who:v('adv-who'),how:v('adv-how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to'),limit:'50000'});
   showSL();
   fetch('/api/advanced_search?'+p).then(r=>r.json()).then(d=>{
     sAll=d.charities||[];
-    renderSR(sAll);
+    renderSR(sAll,1);
     if(d.truncated){
-      document.getElementById('s-msg').innerHTML=`<div style="background:#fef3c7;color:#92400e;padding:10px 14px;border-radius:6px;border:1px solid #fcd34d;font-size:13px;margin-top:10px">⚠ Showing first ${d.limit.toLocaleString()} matches. There are more results — narrow your filters (add postcode, county, name, income range, or smaller date range) to see all.</div>`;
+      document.getElementById('s-msg').innerHTML=`<div style="background:#fef3c7;color:#92400e;padding:10px 14px;border-radius:6px;border:1px solid #fcd34d;font-size:13px;margin-top:10px">⚠ Showing first ${d.limit.toLocaleString()} matches. Narrow your filters to see all.</div>`;
+    } else {
+      document.getElementById('s-msg').innerHTML='';
     }
   }).catch(e=>showSE(e.message));
 }
 function v(id){const el=document.getElementById(id);return el?el.value:'';}
 function showSL(){document.getElementById('s-loading').style.display='flex';document.getElementById('s-results').style.display='none';document.getElementById('s-empty').style.display='none';document.getElementById('s-msg').innerHTML='';}
 function showSE(msg){document.getElementById('s-msg').innerHTML=`<div class="err-box">⚠ ${msg}</div>`;document.getElementById('s-loading').style.display='none';}
-function renderSR(data){
+function renderSR(data,pg){
   if(srt.s.c) data=sa(data,srt.s.c,srt.s.d,null);
+  window._sLast=data;
+  pg=pg||1;
   document.getElementById('s-meta').textContent=data.length+' result'+(data.length!==1?'s':'')+' found';
-  document.getElementById('s-body').innerHTML=data.map(c=>{
+  const s=(pg-1)*PER,e=s+PER;
+  document.getElementById('s-body').innerHTML=data.slice(s,e).map(c=>{
     const f=c.financials||{};const stat=f.statutory||0;const prev=f.prev_statutory||0;
     const pct=f.stat_pct||0;const pc=pct>50?'var(--red)':pct>30?'var(--gold)':'var(--green)';
     const flgs=(f.flags||[]).map(fl=>`<span class="tag tag-${fl.cls}">${fl.label}</span>`).join('');
@@ -1004,10 +1010,11 @@ function renderSR(data){
       <td>${callerCol('search',c.reg_number)}</td>
     </tr>`;
   }).join('');
+  renderPag('s-pag-info','s-pag-btns',pg,data.length,p=>renderSR(window._sLast,p));
   document.getElementById('s-loading').style.display='none';
   document.getElementById('s-results').style.display='block';
 }
-function sortS(col){const s=srt.s;s.d=(s.c===col)?-s.d:1;s.c=col;renderSR(sAll);}
+function sortS(col){const s=srt.s;s.d=(s.c===col)?-s.d:1;s.c=col;renderSR(sAll,1);}
 function clearSearch(){document.getElementById('search-q').value='';document.getElementById('s-results').style.display='none';document.getElementById('s-empty').style.display='block';sAll=[];}
 function clearAdv(){['adv-name','adv-reg','adv-postcode','adv-county','adv-what','adv-who','adv-how','adv-inc-min','adv-inc-max','adv-date-from','adv-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('adv-status').value='registered';document.getElementById('adv-type').value='';}
 function dlSearch(){
@@ -1313,7 +1320,7 @@ function selectCallerFromPopup(name){
   if(lFil.length)renderLT(lPg);
   if(oFil.length)renderOT(oPg);
   if(msFil.length)renderMsT(msPg);
-  if(sAll.length)renderSR(sAll);
+  if(sAll.length)renderSR(sAll,1);
 }
 
 function closeCallerPopup(){

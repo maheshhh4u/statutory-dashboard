@@ -484,9 +484,9 @@ def advanced_search():
     imin=flt(request.args.get("inc_min","")); imax=flt(request.args.get("inc_max","")) or float("inf")
     df=request.args.get("reg_date_from","").strip(); dt=request.args.get("reg_date_to","").strip()
     tq=request.args.get("charity_type","").upper().strip()
-    # Optional limit (default 5000 to prevent runaway memory, callers can request fewer)
-    try: limit = max(1, min(int(request.args.get("limit","5000")), 20000))
-    except: limit = 5000
+    # Optional limit (default 50000 - allows full UK charity range, pagination handles UI rendering)
+    try: limit = max(1, min(int(request.args.get("limit","50000")), 200000))
+    except: limit = 50000
     COLS={"registered_charity_number","charity_name","charity_registration_status",
           "date_of_registration","date_of_removal","charity_contact_web",
           "charity_contact_phone","charity_contact_email",
