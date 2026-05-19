@@ -293,12 +293,12 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-outline btn-sm" onclick="clearAdv()">Clear All</button>
       <button class="btn btn-gold btn-sm" onclick="openSaveModal()">💾 Save This Search</button>
     </div>
-    <div class="saved-bar" id="saved-bar" style="display:none">
-      <span class="filter-label">📁 Saved:</span>
-      <select id="saved-sel" style="font-size:12px;padding:4px 8px"><option value="">— Select —</option></select>
-      <button class="btn btn-gold btn-sm" onclick="loadSaved()">▶ Load &amp; Search</button>
-      <button class="btn btn-outline btn-sm" onclick="deleteSaved()" style="color:var(--red);border-color:var(--red)">✕ Delete</button>
-    </div>
+  </div>
+  <div class="saved-bar" id="saved-bar" style="display:none">
+    <span class="filter-label">📁 Saved Searches:</span>
+    <select id="saved-sel" style="font-size:12px;padding:4px 8px;min-width:200px"><option value="">— Select a saved search —</option></select>
+    <button class="btn btn-gold btn-sm" onclick="loadSaved()">▶ Load &amp; Search</button>
+    <button class="btn btn-outline btn-sm" onclick="deleteSaved()" style="color:var(--red);border-color:var(--red)">✕ Delete</button>
   </div>
   <div id="s-msg"></div>
   <div id="s-loading" style="display:none" class="loading"><div class="spinner"></div><div class="loading-txt">Searching…</div></div>
