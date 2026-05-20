@@ -42,8 +42,8 @@ h1,h2,h3,h4,.brand-font{font-family:'Montserrat','Inter',sans-serif;letter-spaci
 /* HEADER */
 .hdr{background:linear-gradient(135deg,var(--navy) 0%,var(--navy-d) 100%);color:#fff;padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200;box-shadow:0 2px 8px rgba(30,58,95,.20)}
 .hdr-brand{display:flex;align-items:center;gap:12px}
-.hdr-logo{width:42px;height:42px;background:#fff;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:4px}
-.hdr-logo img{width:100%;height:100%;object-fit:contain}
+.hdr-logo{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;overflow:hidden;border:1.5px solid rgba(232,179,57,.35);box-shadow:0 0 0 1px rgba(0,0,0,.25)}
+.hdr-logo img{width:100%;height:100%;object-fit:cover;display:block}
 .hdr-title{font-family:'Montserrat',sans-serif;font-size:16px;font-weight:700;letter-spacing:.02em}
 .hdr-sub{font-size:10px;opacity:.7;margin-top:2px;font-weight:500;letter-spacing:.05em;text-transform:uppercase}
 .nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;display:flex;overflow-x:auto;box-shadow:0 1px 3px rgba(30,58,95,.04)}
@@ -54,7 +54,8 @@ h1,h2,h3,h4,.brand-font{font-family:'Montserrat','Inter',sans-serif;letter-spaci
 .section{display:none}.section.active{display:block}
 /* HOME - 9M design from PDF */
 .home-hero{text-align:center;padding:40px 20px 24px}
-.home-hero-logo{width:110px;height:110px;margin:0 auto 18px;display:block}
+.home-hero-logo-wrap{width:120px;height:120px;margin:0 auto 22px;border-radius:18px;overflow:hidden;box-shadow:0 6px 24px rgba(30,58,95,.22),0 0 0 2.5px rgba(232,179,57,.50);display:block}
+.home-hero-logo{width:100%;height:100%;object-fit:cover;display:block}
 .home-hero h1{font-family:'Montserrat',sans-serif;font-size:30px;font-weight:800;margin-bottom:8px;color:var(--navy);letter-spacing:.02em}
 .home-hero p{font-size:14px;color:var(--t2);margin-bottom:6px;font-weight:500}
 .home-tag{color:var(--gold-text);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
@@ -137,11 +138,12 @@ tbody tr{border-bottom:1px solid var(--border)}
 tbody tr:last-child{border-bottom:none}
 tbody td{padding:8px 12px;font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mono{font-family:'JetBrains Mono','Consolas','SF Mono',monospace;font-size:11px}
-/* CALL BUTTON - Yellow phone icon, blue box */
-.call-btn{background:var(--navy);border:1px solid var(--navy);color:var(--gold);border-radius:6px;cursor:pointer;padding:5px 10px;font-size:15px;transition:all .15s;display:inline-flex;align-items:center;justify-content:center;line-height:1;font-family:inherit}
-.call-btn:hover{background:var(--navy-d);transform:scale(1.08);box-shadow:0 3px 8px rgba(30,58,95,.30)}
+/* CALL BUTTON - Gold SVG phone icon on navy */
+.call-btn{background:var(--navy);border:1.5px solid rgba(232,179,57,.45);color:var(--gold);border-radius:6px;cursor:pointer;padding:5px 9px;font-size:15px;transition:all .15s;display:inline-flex;align-items:center;justify-content:center;line-height:1;font-family:inherit}
+.call-btn:hover{background:var(--navy-d);border-color:var(--gold);transform:scale(1.10);box-shadow:0 3px 10px rgba(232,179,57,.30)}
 .call-btn.no-phone{background:var(--s2);border-color:var(--border);color:var(--t3)}
 .call-btn.no-phone:hover{background:var(--border);color:var(--t2);transform:none;box-shadow:none}
+.call-btn svg{width:14px;height:14px;fill:currentColor;display:block}
 
 /* TAGS */
 .tag{display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600;white-space:nowrap}
@@ -227,7 +229,7 @@ select:focus{outline:none;border-color:var(--green)}
 <!-- HOME -->
 <section id="tab-home" class="section active">
   <div class="home-hero">
-    <img src="/static/9m-logo.png" alt="9 Mountains" class="home-hero-logo">
+    <div class="home-hero-logo-wrap"><img src="/static/9m-logo.png" alt="9 Mountains" class="home-hero-logo"></div>
     <h1>Prospecting Dashboard</h1>
     <p>Live charity data from the Charity Commission for England &amp; Wales</p>
     <div class="home-tag">Calling as: <strong id="home-caller-name" style="color:var(--navy)">— not selected —</strong></div>
@@ -317,7 +319,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="rmeta" id="p-rmeta"></div>
     <div class="tbl-wrap tbl-scroll"><table>
       <thead><tr>
-        <th style="width:40px;text-align:center">📞</th>
+        <th style="width:40px;text-align:center"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#e8b339;display:inline-block;vertical-align:middle"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg></th>
         <th onclick="sortP('reg_number')">Reg No.</th>
         <th onclick="sortP('name')" style="min-width:150px">Charity Name</th>
         <th onclick="sortP('total_income')">Total Income</th>
@@ -398,7 +400,7 @@ select:focus{outline:none;border-color:var(--green)}
     </div>
     <div class="tbl-wrap tbl-scroll"><table>
       <thead><tr>
-        <th style="width:40px;text-align:center">📞</th>
+        <th style="width:40px;text-align:center"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#e8b339;display:inline-block;vertical-align:middle"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg></th>
         <th onclick="sortS('reg_number')">Reg No.</th>
         <th onclick="sortS('name')" style="min-width:140px">Name</th>
         <th>Status</th>
@@ -454,7 +456,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="rmeta" id="new-rmeta"></div>
     <div class="tbl-wrap tbl-scroll"><table>
       <thead><tr>
-        <th style="width:40px;text-align:center">📞</th>
+        <th style="width:40px;text-align:center"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#e8b339;display:inline-block;vertical-align:middle"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg></th>
         <th onclick="sortN('reg_number')">Reg No.</th>
         <th onclick="sortN('name')" style="min-width:200px">Charity Name</th>
         <th onclick="sortN('date_registered')">Date Registered</th>
@@ -507,7 +509,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="rmeta" id="late-rmeta"></div>
     <div class="tbl-wrap tbl-scroll"><table>
       <thead><tr>
-        <th style="width:40px;text-align:center">📞</th>
+        <th style="width:40px;text-align:center"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#e8b339;display:inline-block;vertical-align:middle"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg></th>
         <th onclick="sortL('reg_number')">Reg No.</th>
         <th onclick="sortL('name')" style="min-width:200px">Charity Name</th>
         <th onclick="sortL('due_date')">Due Date</th>
@@ -560,7 +562,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="rmeta" id="old-rmeta"></div>
     <div class="tbl-wrap tbl-scroll"><table>
       <thead><tr>
-        <th style="width:40px;text-align:center">📞</th>
+        <th style="width:40px;text-align:center"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#e8b339;display:inline-block;vertical-align:middle"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg></th>
         <th onclick="sortO('reg_number')">Reg No.</th>
         <th onclick="sortO('name')" style="min-width:190px">Charity Name</th>
         <th onclick="sortO('date_registered')">Date Registered</th>
@@ -634,7 +636,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="rmeta" id="ms-rmeta"></div>
     <div class="tbl-wrap tbl-scroll"><table>
       <thead><tr>
-        <th style="width:40px;text-align:center">📞</th>
+        <th style="width:40px;text-align:center"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#e8b339;display:inline-block;vertical-align:middle"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg></th>
         <th onclick="sortMs('reg_number')">Reg No.</th>
         <th onclick="sortMs('name')" style="min-width:190px">Charity Name</th>
         <th onclick="sortMs('date_registered')">Date Registered</th>
@@ -788,7 +790,7 @@ function callBtn(pg,reg,name,ccPhone){
   const phone=phoneOverrides[reg]||ccPhone||'';
   const title=phone?`Call ${phone}`:'No phone — click to add';
   const cls=phone?'call-btn':'call-btn no-phone';
-  return`<button onclick="openCallModal('${pg}','${esc(reg)}','${esc(name||'').replace(/'/g,"\\'")}','${esc(ccPhone||'')}')" title="${title}" class="${cls}">📞</button>`;
+  return`<button onclick="openCallModal('${pg}','${esc(reg)}','${esc(name||'').replace(/'/g,"\\'")}','${esc(ccPhone||'')}')" title="${title}" class="${cls}"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="width:14px;height:14px;fill:currentColor;display:block"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg></button>`;
 }
 
 function openCallModal(pg,reg,name,ccPhone){
@@ -805,7 +807,7 @@ function openCallModal(pg,reg,name,ccPhone){
         <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Phone Number</label>
         <input id="call-phone" value="${esc(currentPhone)}" placeholder="+44..." style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;font-family:monospace">
       </div>
-      <a id="call-dial" href="tel:${esc(currentPhone)}" onclick="startCallTimer()" style="background:var(--green);color:white;padding:7px 14px;border-radius:4px;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap">📞 Dial</a>
+      <a id="call-dial" href="tel:${esc(currentPhone)}" onclick="startCallTimer()" style="background:var(--green);color:white;padding:7px 14px;border-radius:4px;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:currentColor;display:inline-block;vertical-align:middle;margin-right:4px"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg> Dial</a>
     </div>
     <div style="font-size:10px;color:var(--t3);margin-bottom:14px">CC default: ${esc(ccPhone||'—')} ${overridePhone?'· <span style="color:var(--gold)">edited</span>':''}</div>
 
@@ -836,7 +838,7 @@ function openCallModal(pg,reg,name,ccPhone){
       <button onclick="saveCall('${pg}','${esc(reg)}','${esc(ccPhone||'')}')" class="btn btn-green btn-sm">💾 Save Call</button>
     </div>
   `;
-  showModal('📞 New Call · '+esc(name||reg), html);
+  showModal('<svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#e8b339;display:inline-block;vertical-align:middle"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg> New Call · '+esc(name||reg), html);
 }
 
 let _callTimerStart=null, _callTimerInterval=null;
@@ -1001,7 +1003,7 @@ function showCommentHistory(reg){
 
     // Calls section first
     if(calls.length){
-      html+=`<div style="font-size:12px;font-weight:700;color:var(--t1);margin-bottom:6px">📞 Call History (${calls.length})</div>`;
+      html+=`<div style="font-size:12px;font-weight:700;color:var(--t1);margin-bottom:6px"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#e8b339;display:inline-block;vertical-align:middle"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg> Call History (${calls.length})</div>`;
       calls.forEach(c=>{
         const dur=c.duration_sec?` · ${Math.floor(c.duration_sec/60)}m ${c.duration_sec%60}s`:'';
         html+=`<div style="border:1px solid var(--bd);border-left:3px solid var(--green);border-radius:6px;padding:10px;margin-bottom:8px;background:#f0fdf4">
