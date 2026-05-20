@@ -42,8 +42,8 @@ h1,h2,h3,h4,.brand-font{font-family:'Montserrat','Inter',sans-serif;letter-spaci
 /* HEADER */
 .hdr{background:linear-gradient(135deg,var(--navy) 0%,var(--navy-d) 100%);color:#fff;padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200;box-shadow:0 2px 8px rgba(30,58,95,.20)}
 .hdr-brand{display:flex;align-items:center;gap:12px}
-.hdr-logo{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;overflow:hidden;border:1.5px solid rgba(232,179,57,.35);box-shadow:0 0 0 1px rgba(0,0,0,.25)}
-.hdr-logo img{width:100%;height:100%;object-fit:cover;display:block}
+.hdr-logo{width:44px;height:44px;border-radius:10px;background:var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden}
+.hdr-logo img{width:100%;height:100%;object-fit:cover;display:block;mix-blend-mode:screen}
 .hdr-title{font-family:'Montserrat',sans-serif;font-size:16px;font-weight:700;letter-spacing:.02em}
 .hdr-sub{font-size:10px;opacity:.7;margin-top:2px;font-weight:500;letter-spacing:.05em;text-transform:uppercase}
 .nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;display:flex;overflow-x:auto;box-shadow:0 1px 3px rgba(30,58,95,.04)}
@@ -54,8 +54,8 @@ h1,h2,h3,h4,.brand-font{font-family:'Montserrat','Inter',sans-serif;letter-spaci
 .section{display:none}.section.active{display:block}
 /* HOME - 9M design from PDF */
 .home-hero{text-align:center;padding:40px 20px 24px}
-.home-hero-logo-wrap{width:120px;height:120px;margin:0 auto 22px;border-radius:18px;overflow:hidden;box-shadow:0 6px 24px rgba(30,58,95,.22),0 0 0 2.5px rgba(232,179,57,.50);display:block}
-.home-hero-logo{width:100%;height:100%;object-fit:cover;display:block}
+.home-hero-logo-wrap{width:120px;height:120px;margin:0 auto 22px;border-radius:18px;background:var(--navy);overflow:hidden;box-shadow:0 6px 24px rgba(30,58,95,.25);display:block}
+.home-hero-logo{width:100%;height:100%;object-fit:cover;display:block;mix-blend-mode:screen}
 .home-hero h1{font-family:'Montserrat',sans-serif;font-size:30px;font-weight:800;margin-bottom:8px;color:var(--navy);letter-spacing:.02em}
 .home-hero p{font-size:14px;color:var(--t2);margin-bottom:6px;font-weight:500}
 .home-tag{color:var(--gold-text);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
@@ -838,7 +838,7 @@ function openCallModal(pg,reg,name,ccPhone){
       <button onclick="saveCall('${pg}','${esc(reg)}','${esc(ccPhone||'')}')" class="btn btn-green btn-sm">💾 Save Call</button>
     </div>
   `;
-  showModal('<svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#e8b339;display:inline-block;vertical-align:middle"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg> New Call · '+esc(name||reg), html);
+  showModal('<span style="color:var(--gold)">☎</span> New Call · '+esc(name||reg), html);
 }
 
 let _callTimerStart=null, _callTimerInterval=null;
@@ -1063,7 +1063,7 @@ function showModal(title, html){
       if(e.target===m) closeGenericModal();
     });
   }
-  document.getElementById('gm-title').textContent=title;
+  document.getElementById('gm-title').innerHTML=title;
   document.getElementById('gm-body').innerHTML=html;
   m.classList.add('open');
 }
