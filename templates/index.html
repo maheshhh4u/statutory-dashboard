@@ -42,8 +42,8 @@ h1,h2,h3,h4,.brand-font{font-family:'Montserrat','Inter',sans-serif;letter-spaci
 /* HEADER */
 .hdr{background:linear-gradient(135deg,var(--navy) 0%,var(--navy-d) 100%);color:#fff;padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200;box-shadow:0 2px 8px rgba(30,58,95,.20)}
 .hdr-brand{display:flex;align-items:center;gap:12px}
-.hdr-logo{width:44px;height:44px;border-radius:10px;background:var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden}
-.hdr-logo img{width:100%;height:100%;object-fit:cover;display:block;mix-blend-mode:screen}
+.hdr-logo{width:44px;height:44px;border-radius:10px;background:var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;padding:5px}
+.hdr-logo img{width:100%;height:100%;object-fit:contain;display:block;filter:brightness(0) invert(1)}
 .hdr-title{font-family:'Montserrat',sans-serif;font-size:16px;font-weight:700;letter-spacing:.02em}
 .hdr-sub{font-size:10px;opacity:.7;margin-top:2px;font-weight:500;letter-spacing:.05em;text-transform:uppercase}
 .nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;display:flex;overflow-x:auto;box-shadow:0 1px 3px rgba(30,58,95,.04)}
@@ -54,8 +54,7 @@ h1,h2,h3,h4,.brand-font{font-family:'Montserrat','Inter',sans-serif;letter-spaci
 .section{display:none}.section.active{display:block}
 /* HOME - 9M design from PDF */
 .home-hero{text-align:center;padding:40px 20px 24px}
-.home-hero-logo-wrap{width:120px;height:120px;margin:0 auto 22px;border-radius:18px;background:var(--navy);overflow:hidden;box-shadow:0 6px 24px rgba(30,58,95,.25);display:block}
-.home-hero-logo{width:100%;height:100%;object-fit:cover;display:block;mix-blend-mode:screen}
+.home-hero-logo{width:140px;height:140px;margin:0 auto 22px;display:block;object-fit:contain}
 .home-hero h1{font-family:'Montserrat',sans-serif;font-size:30px;font-weight:800;margin-bottom:8px;color:var(--navy);letter-spacing:.02em}
 .home-hero p{font-size:14px;color:var(--t2);margin-bottom:6px;font-weight:500}
 .home-tag{color:var(--gold-text);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
@@ -200,7 +199,7 @@ select:focus{outline:none;border-color:var(--green)}
 </head>
 <body>
 <header class="hdr">
-  <div class="hdr-brand"><div class="hdr-logo"><img src="/static/9m-logo.png" alt="9 Mountains"></div><div><div class="hdr-title">Prospecting Dashboard</div><div class="hdr-sub">9 Mountains · Charity Commission Live Data</div></div></div>
+  <div class="hdr-brand"><div class="hdr-logo"><img src="/static/9m-mark.png" alt="9 Mountains"></div><div><div class="hdr-title">Prospecting Dashboard</div><div class="hdr-sub">9 Mountains · Charity Commission Live Data</div></div></div>
   <div style="display:flex;align-items:center;gap:10px">
     <div style="display:flex;align-items:center;gap:7px">
       <span style="font-size:11px;color:rgba(255,255,255,.5)">Calling as:</span>
@@ -229,7 +228,7 @@ select:focus{outline:none;border-color:var(--green)}
 <!-- HOME -->
 <section id="tab-home" class="section active">
   <div class="home-hero">
-    <div class="home-hero-logo-wrap"><img src="/static/9m-logo.png" alt="9 Mountains" class="home-hero-logo"></div>
+    <img src="/static/9m-mark.png" alt="9 Mountains" class="home-hero-logo">
     <h1>Prospecting Dashboard</h1>
     <p>Live charity data from the Charity Commission for England &amp; Wales</p>
     <div class="home-tag">Calling as: <strong id="home-caller-name" style="color:var(--navy)">— not selected —</strong></div>
