@@ -3,100 +3,152 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Prospecting Dashboard</title>
+<title>9 Mountains · Prospecting Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#f4f6f9;--surface:#fff;--s2:#f0f2f6;--border:#e2e6ea;
+  /* 9 Mountains brand colors */
+  --navy:#1e3a5f;       /* primary brand navy from logo */
+  --navy-d:#152a44;     /* darker navy for hover */
+  --navy-l:#2d5683;     /* lighter accent */
+  --navy-pale:#e7edf4;  /* very pale navy tint */
+  --gold:#e8b339;       /* yellow/gold CTA */
+  --gold-d:#c89829;     /* darker gold hover */
+  --gold-l:#fef4d8;     /* pale gold badge */
+  --gold-text:#7a5d10;  /* readable gold text */
+
+  --bg:#fafbfc;--surface:#fff;--s2:#f0f3f7;--border:#dde3ec;
   --text:#1a1d23;--t2:#5a6070;--t3:#9aa0ac;
-  --green:#1a6b35;--gl:#e6f4ec;--gm:#2d9e55;--grow:#f0faf4;
-  --gold:#9a6c00;--goldl:#fef9e7;
   --red:#9a1a1a;--redl:#fdecea;
-  --blue:#1a3d7a;--bluel:#e8eef8;
   --orange:#8b4200;--orangel:#fef0e6;
   --purple:#5a1a7a;--purplel:#f3eef8;
-  --alt:#f8fdf9;--radius:8px;--shadow:0 1px 4px rgba(0,0,0,.09);
+
+  /* Backward-compat aliases (existing code still works) */
+  --green:var(--navy);--gl:var(--navy-pale);--gm:var(--navy);--grow:#f4f7fb;
+  --blue:var(--navy);--bluel:var(--navy-pale);
+  --goldl:var(--gold-l);
+  --bd:var(--border);--t1:var(--text);
+
+  --alt:#f7f9fc;--radius:8px;
+  --shadow:0 1px 4px rgba(30,58,95,.10);
+  --shadow-lg:0 8px 24px rgba(30,58,95,.15);
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
-.hdr{background:#1a1d23;color:#fff;padding:0 24px;height:54px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200}
-.hdr-brand{display:flex;align-items:center;gap:10px}
-.hdr-logo{width:28px;height:28px;background:var(--gm);border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
-.hdr-title{font-size:15px;font-weight:600}.hdr-sub{font-size:10px;opacity:.45;margin-top:1px}
-.nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;display:flex;overflow-x:auto}
-.nav-btn{padding:12px 16px;font-size:13px;font-weight:500;color:var(--t3);cursor:pointer;background:none;border:none;border-bottom:2px solid transparent;white-space:nowrap;font-family:inherit;transition:all .15s}
-.nav-btn:hover{color:var(--text)}.nav-btn.active{color:var(--green);border-bottom-color:var(--green)}
-.main{padding:20px 24px;max-width:1500px;margin:0 auto}
+body{font-family:'Inter',-apple-system,system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4,.brand-font{font-family:'Montserrat','Inter',sans-serif;letter-spacing:.01em}
+
+/* HEADER */
+.hdr{background:linear-gradient(135deg,var(--navy) 0%,var(--navy-d) 100%);color:#fff;padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200;box-shadow:0 2px 8px rgba(30,58,95,.20)}
+.hdr-brand{display:flex;align-items:center;gap:12px}
+.hdr-logo{width:42px;height:42px;background:#fff;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:4px}
+.hdr-logo img{width:100%;height:100%;object-fit:contain}
+.hdr-title{font-family:'Montserrat',sans-serif;font-size:16px;font-weight:700;letter-spacing:.02em}
+.hdr-sub{font-size:10px;opacity:.7;margin-top:2px;font-weight:500;letter-spacing:.05em;text-transform:uppercase}
+.nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;display:flex;overflow-x:auto;box-shadow:0 1px 3px rgba(30,58,95,.04)}
+.nav-btn{padding:14px 18px;font-size:13px;font-weight:600;color:var(--t3);cursor:pointer;background:none;border:none;border-bottom:3px solid transparent;white-space:nowrap;font-family:inherit;transition:all .15s;letter-spacing:.01em}
+.nav-btn:hover{color:var(--navy)}
+.nav-btn.active{color:var(--navy);border-bottom-color:var(--gold)}
+.main{padding:24px;max-width:1500px;margin:0 auto}
 .section{display:none}.section.active{display:block}
-/* HOME */
-.home-hero{text-align:center;padding:40px 20px 32px}
-.home-hero h1{font-size:26px;font-weight:700;margin-bottom:8px}
-.home-hero p{font-size:14px;color:var(--t2);margin-bottom:28px}
-.home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;max-width:960px;margin:0 auto}
-.home-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;cursor:pointer;transition:all .2s;box-shadow:var(--shadow)}
-.home-card:hover{border-color:var(--green);transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,.12)}
-.home-card-icon{font-size:26px;margin-bottom:10px}.home-card-title{font-size:14px;font-weight:700;margin-bottom:5px}
-.home-card-desc{font-size:12px;color:var(--t2);line-height:1.5}
-.home-card-count{display:inline-block;margin-top:10px;font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;background:var(--gl);color:var(--green)}
+/* HOME - 9M design from PDF */
+.home-hero{text-align:center;padding:40px 20px 24px}
+.home-hero-logo{width:110px;height:110px;margin:0 auto 18px;display:block}
+.home-hero h1{font-family:'Montserrat',sans-serif;font-size:30px;font-weight:800;margin-bottom:8px;color:var(--navy);letter-spacing:.02em}
+.home-hero p{font-size:14px;color:var(--t2);margin-bottom:6px;font-weight:500}
+.home-tag{color:var(--gold-text);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;max-width:1000px;margin:24px auto 32px}
+.home-card{background:var(--surface);border:none;border-radius:14px;padding:28px 22px;cursor:pointer;transition:all .25s;box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center;text-align:center;min-height:300px;position:relative;overflow:hidden}
+.home-card:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg)}
+.home-card.c1{background:#a4b2c4}
+.home-card.c2{background:#dde2e8}
+.home-card.c3{background:#c5d3e1}
+.home-card.c4{background:#d4d8dc}
+.home-card.c5{background:#ece2c4}
+.home-card.c6{background:var(--navy)}
+.home-card.c6 .home-card-title,.home-card.c6 .home-card-desc{color:#fff}
+.home-card.c6 .home-card-desc{opacity:.88}
+.home-card-icon{font-size:40px;color:var(--navy);margin-bottom:18px;line-height:1}
+.home-card.c6 .home-card-icon{color:#fff}
+.home-card-title{font-family:'Montserrat',sans-serif;font-size:14px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.07em;margin-bottom:14px;line-height:1.3}
+.home-card-desc{font-size:13px;color:#3d4453;line-height:1.55;margin-bottom:auto;font-weight:500}
+.home-card-count{display:inline-flex;align-items:center;justify-content:center;margin-top:20px;font-size:11px;font-weight:700;padding:10px 24px;border-radius:24px;background:var(--gold);color:#fff;text-transform:uppercase;letter-spacing:.1em;border:none;cursor:pointer;transition:all .2s;font-family:'Montserrat',sans-serif;box-shadow:0 2px 6px rgba(232,179,57,.35)}
+.home-card:hover .home-card-count{background:var(--gold-d);box-shadow:0 4px 10px rgba(232,179,57,.45)}
 /* CTRL */
-.ctrl{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px}
-.ctrl-left h2{font-size:19px;font-weight:700}.ctrl-left p{font-size:12px;color:var(--t3);margin-top:1px}
-.ctrl-right{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.ctrl{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px}
+.ctrl-left h2{font-family:'Montserrat',sans-serif;font-size:22px;font-weight:700;color:var(--navy)}
+.ctrl-left p{font-size:12px;color:var(--t3);margin-top:2px}
+.ctrl-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 /* PTABS */
-.ptab-bar{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
-.ptab{padding:6px 14px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--t2);transition:all .15s;font-family:inherit}
-.ptab:hover{border-color:var(--green);color:var(--green)}.ptab.active{background:var(--green);color:#fff;border-color:var(--green)}
-.ptab-count{margin-left:4px;background:rgba(255,255,255,.25);border-radius:8px;padding:0 5px;font-size:10px}
+.ptab-bar{display:flex;gap:5px;margin-bottom:12px;flex-wrap:wrap}
+.ptab{padding:7px 16px;border-radius:24px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--t2);transition:all .15s;font-family:inherit}
+.ptab:hover{border-color:var(--navy);color:var(--navy)}
+.ptab.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+.ptab-count{margin-left:5px;background:rgba(255,255,255,.25);border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700}
 /* CRITERIA */
-.criteria-box{background:var(--s2);border:1px solid var(--border);border-left:3px solid var(--green);border-radius:var(--radius);padding:9px 13px;margin-bottom:10px;font-size:11px;color:var(--t2);line-height:1.7}
+.criteria-box{background:var(--s2);border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:var(--radius);padding:10px 14px;margin-bottom:11px;font-size:11px;color:var(--t2);line-height:1.7}
 /* FILTER BAR */
-.filter-bar{display:flex;gap:7px;flex-wrap:wrap;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:9px 13px;margin-bottom:10px}
-.filter-bar input,.filter-bar select{font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text)}
-.filter-bar input:focus,.filter-bar select:focus{outline:none;border-color:var(--green)}
+.filter-bar{display:flex;gap:7px;flex-wrap:wrap;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:9px 13px;margin-bottom:11px}
+.filter-bar input,.filter-bar select{font-family:inherit;font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text)}
+.filter-bar input:focus,.filter-bar select:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(30,58,95,.10)}
 .filter-label{font-size:11px;color:var(--t3);font-weight:600;white-space:nowrap}
 .filter-clear{font-size:11px;color:var(--t3);cursor:pointer;text-decoration:underline}
 .filter-clear:hover{color:var(--red)}
 /* ADV SEARCH */
 .adv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:12px}
-.adv-field label{display:block;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
-.adv-field input,.adv-field select{width:100%;font-family:inherit;font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text)}
-.adv-field input:focus,.adv-field select:focus{outline:none;border-color:var(--green)}
+.adv-field label{display:block;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
+.adv-field input,.adv-field select{width:100%;font-family:inherit;font-size:12px;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text)}
+.adv-field input:focus,.adv-field select:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(30,58,95,.10)}
 /* SAVED SEARCHES */
-.saved-bar{display:flex;gap:7px;align-items:center;flex-wrap:wrap;background:var(--goldl);border:1px solid #e8d88a;border-radius:var(--radius);padding:8px 12px;margin-bottom:10px}
+.saved-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--gold-l);border:1px solid #f0d989;border-radius:var(--radius);padding:9px 13px;margin-bottom:11px}
 /* BUTTONS */
-.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:var(--radius);font-size:12px;font-weight:600;cursor:pointer;border:none;font-family:inherit;transition:all .15s}
-.btn-green{background:var(--green);color:#fff}.btn-green:hover{background:#145528}
-.btn-outline{background:var(--surface);color:var(--t2);border:1px solid var(--border)}.btn-outline:hover{border-color:var(--green);color:var(--green)}
-.btn-home{background:var(--s2);color:var(--t2);border:1px solid var(--border)}.btn-home:hover{border-color:var(--green);color:var(--green)}
-.btn-gold{background:var(--goldl);color:var(--gold);border:1px solid #d4c060}.btn-gold:hover{background:#fef3c7}
-.btn-sm{padding:4px 10px;font-size:11px}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:var(--radius);font-size:12px;font-weight:600;cursor:pointer;border:none;font-family:inherit;transition:all .15s}
+.btn-green,.btn-blue{background:var(--navy);color:#fff}
+.btn-green:hover,.btn-blue:hover{background:var(--navy-d)}
+.btn-outline{background:var(--surface);color:var(--t2);border:1px solid var(--border)}.btn-outline:hover{border-color:var(--navy);color:var(--navy)}
+.btn-home{background:var(--s2);color:var(--t2);border:1px solid var(--border)}.btn-home:hover{border-color:var(--navy);color:var(--navy)}
+.btn-gold{background:var(--gold);color:#fff;border:1px solid var(--gold-d)}.btn-gold:hover{background:var(--gold-d)}
+.btn-sm{padding:5px 11px;font-size:11px}
 /* STATS */
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:12px}
 .stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow)}
-.stat-label{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
-.stat-value{font-size:22px;font-weight:700;line-height:1}.stat-sub{font-size:11px;color:var(--t3);margin-top:2px}
+.stat-label{font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
+.stat-value{font-size:22px;font-weight:700;line-height:1;color:var(--navy)}.stat-sub{font-size:11px;color:var(--t3);margin-top:2px}
 /* SBAR */
 .sbar{display:flex;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:0 11px;gap:7px;flex:1;max-width:360px}
+.sbar:focus-within{border-color:var(--navy);box-shadow:0 0 0 3px rgba(30,58,95,.10)}
 .sbar input{border:none;outline:none;background:none;font-family:inherit;font-size:13px;color:var(--text);padding:8px 0;flex:1}
 .sbar input::placeholder{color:var(--t3)}
 /* TABLE */
 .tbl-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
 .tbl-scroll{overflow-x:auto}
 table{width:100%;border-collapse:collapse;table-layout:auto}
-thead th{background:var(--s2);padding:8px 11px;text-align:left;font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none}
-thead th:hover{color:var(--text)}.sort-asc::after{content:" ↑";color:var(--green)}.sort-desc::after{content:" ↓";color:var(--green)}
+thead th{background:var(--s2);padding:9px 12px;text-align:left;font-size:10px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;font-family:'Montserrat',sans-serif}
+thead th:hover{color:var(--navy-d)}
+.sort-asc::after{content:" ↑";color:var(--gold)}
+.sort-desc::after{content:" ↓";color:var(--gold)}
 tbody tr:nth-child(odd){background:var(--surface)}
 tbody tr:nth-child(even){background:var(--alt)}
-tbody tr.row-client{background:#c8f0d8 !important;border-left:3px solid var(--green)}
-tbody tr:hover{background:#edf7f0 !important}
-tbody tr.row-client:hover{background:#b8eac8 !important}
+tbody tr.row-client{background:#fff3d0 !important;border-left:3px solid var(--gold)}
+tbody tr:hover{background:var(--navy-pale) !important}
+tbody tr.row-client:hover{background:#fae9b0 !important}
 tbody tr{border-bottom:1px solid var(--border)}
 tbody tr:last-child{border-bottom:none}
-tbody td{padding:7px 11px;font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mono{font-family:'Consolas','SF Mono',monospace;font-size:11px}
+tbody td{padding:8px 12px;font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mono{font-family:'JetBrains Mono','Consolas','SF Mono',monospace;font-size:11px}
+/* CALL BUTTON - Yellow phone icon, blue box */
+.call-btn{background:var(--navy);border:1px solid var(--navy);color:var(--gold);border-radius:6px;cursor:pointer;padding:5px 10px;font-size:15px;transition:all .15s;display:inline-flex;align-items:center;justify-content:center;line-height:1;font-family:inherit}
+.call-btn:hover{background:var(--navy-d);transform:scale(1.08);box-shadow:0 3px 8px rgba(30,58,95,.30)}
+.call-btn.no-phone{background:var(--s2);border-color:var(--border);color:var(--t3)}
+.call-btn.no-phone:hover{background:var(--border);color:var(--t2);transform:none;box-shadow:none}
+
 /* TAGS */
-.tag{display:inline-block;padding:2px 6px;border-radius:10px;font-size:10px;font-weight:600;white-space:nowrap}
-.tag-green{background:var(--gl);color:var(--green)}.tag-red{background:var(--redl);color:var(--red)}
-.tag-gold{background:var(--goldl);color:var(--gold)}.tag-blue{background:var(--bluel);color:var(--blue)}
+.tag{display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600;white-space:nowrap}
+.tag-green{background:var(--navy-pale);color:var(--navy)}
+.tag-red{background:var(--redl);color:var(--red)}
+.tag-gold{background:var(--gold-l);color:var(--gold-text)}
+.tag-blue{background:var(--navy-pale);color:var(--navy)}
 .tag-orange{background:var(--orangel);color:var(--orange)}.tag-purple{background:var(--purplel);color:var(--purple)}
 .tag-gray{background:var(--s2);color:var(--t2)}
 /* CALLED BTN */
@@ -146,7 +198,7 @@ select:focus{outline:none;border-color:var(--green)}
 </head>
 <body>
 <header class="hdr">
-  <div class="hdr-brand"><div class="hdr-logo">PD</div><div><div class="hdr-title">Prospecting Dashboard</div><div class="hdr-sub">Charity Commission for England &amp; Wales · Live Data</div></div></div>
+  <div class="hdr-brand"><div class="hdr-logo"><img src="/static/9m-logo.png" alt="9 Mountains"></div><div><div class="hdr-title">Prospecting Dashboard</div><div class="hdr-sub">9 Mountains · Charity Commission Live Data</div></div></div>
   <div style="display:flex;align-items:center;gap:10px">
     <div style="display:flex;align-items:center;gap:7px">
       <span style="font-size:11px;color:rgba(255,255,255,.5)">Calling as:</span>
@@ -175,15 +227,47 @@ select:focus{outline:none;border-color:var(--green)}
 <!-- HOME -->
 <section id="tab-home" class="section active">
   <div class="home-hero">
+    <img src="/static/9m-logo.png" alt="9 Mountains" class="home-hero-logo">
     <h1>Prospecting Dashboard</h1>
-    <p>Live charity data from the Charity Commission · Calling as: <strong id="home-caller-name">— not selected —</strong></p>
+    <p>Live charity data from the Charity Commission for England &amp; Wales</p>
+    <div class="home-tag">Calling as: <strong id="home-caller-name" style="color:var(--navy)">— not selected —</strong></div>
     <div class="home-grid">
-      <div class="home-card" onclick="navTo('prospects')"><div class="home-card-icon">📋</div><div class="home-card-title">Prospect Lists</div><div class="home-card-desc">Rules-based screening across 4 lists. Full pagination, sorting and filters on all rows.</div><span class="home-card-count" id="home-prospect-count">Click to load</span></div>
-      <div class="home-card" onclick="navTo('search')"><div class="home-card-icon">🔍</div><div class="home-card-title">Charity Search</div><div class="home-card-desc">Simple or Advanced Search matching all Charity Commission criteria. Save searches for one-click retrieval.</div><span class="home-card-count" style="background:var(--bluel);color:var(--blue)">Simple + Advanced</span></div>
-      <div class="home-card" onclick="navTo('new')"><div class="home-card-icon">🆕</div><div class="home-card-title">Newly Registered Charities</div><div class="home-card-desc">Charities recently registered with the Charity Commission. Filter by last 30, 60 or 90 days.</div><span class="home-card-count" id="home-new-count">Click to load</span></div>
-      <div class="home-card" onclick="navTo('late')"><div class="home-card-icon">⏰</div><div class="home-card-title">Late Accounts</div><div class="home-card-desc">Charities that have not filed their annual return on time — severity bands from recent to severely overdue.</div><span class="home-card-count" id="home-late-count" style="background:var(--redl);color:var(--red)">Click to load</span></div>
-      <div class="home-card" onclick="navTo('old')"><div class="home-card-icon">🏛️</div><div class="home-card-title">40+ Years · Zero Statutory</div><div class="home-card-desc">Established charities with no recorded government grants or contracts — potential new prospects.</div><span class="home-card-count" id="home-old-count" style="background:var(--purplel);color:var(--purple)">Click to load</span></div>
-      <div class="home-card" onclick="navTo('milestones')"><div class="home-card-icon">🎂</div><div class="home-card-title">Anniversary Watch</div><div class="home-card-desc">Charities approaching a milestone anniversary (5, 10, 15… 50 yrs) with zero statutory income — ideal prospect timing.</div><span class="home-card-count" style="background:var(--goldl);color:var(--gold)">Click to load</span></div>
+      <div class="home-card c1" onclick="navTo('prospects')">
+        <div class="home-card-icon">📋</div>
+        <div class="home-card-title">Prospect List</div>
+        <div class="home-card-desc">Rules-based screening across 4 lists. Full pagination, sorting and filters on all rows.</div>
+        <span class="home-card-count" id="home-prospect-count">Click to Load</span>
+      </div>
+      <div class="home-card c2" onclick="navTo('search')">
+        <div class="home-card-icon">🔍</div>
+        <div class="home-card-title">Charity Search</div>
+        <div class="home-card-desc">Simple or Advanced Search matching all Charity Commission criteria. Save searches for one-click retrieval.</div>
+        <span class="home-card-count">Click to Load</span>
+      </div>
+      <div class="home-card c3" onclick="navTo('new')">
+        <div class="home-card-icon">🆕</div>
+        <div class="home-card-title">Newly Registered Charities</div>
+        <div class="home-card-desc">Charities recently registered with the Charity Commission. Filter by last 30, 60 or 90 days.</div>
+        <span class="home-card-count" id="home-new-count">Click to Load</span>
+      </div>
+      <div class="home-card c4" onclick="navTo('late')">
+        <div class="home-card-icon">⏰</div>
+        <div class="home-card-title">Late Accounts</div>
+        <div class="home-card-desc">Charities that have not filed their annual return on time — severity bands from recent to severely overdue.</div>
+        <span class="home-card-count" id="home-late-count">Click to Load</span>
+      </div>
+      <div class="home-card c5" onclick="navTo('old')">
+        <div class="home-card-icon">🏛️</div>
+        <div class="home-card-title">40+ Years · Zero Statutory</div>
+        <div class="home-card-desc">Established charities with no recorded government grants or contracts — potential new prospects.</div>
+        <span class="home-card-count" id="home-old-count">Click to Load</span>
+      </div>
+      <div class="home-card c6" onclick="navTo('milestones')">
+        <div class="home-card-icon">🎂</div>
+        <div class="home-card-title">Anniversary Watch</div>
+        <div class="home-card-desc">Charities approaching milestone anniversaries (5, 10, 15… 50 yrs) with zero statutory income — ideal prospect timing.</div>
+        <span class="home-card-count">Click to Load</span>
+      </div>
     </div>
   </div>
 </section>
@@ -703,8 +787,8 @@ fetch('/api/phones/bulk').then(r=>r.json()).then(d=>{phoneOverrides=d||{};}).cat
 function callBtn(pg,reg,name,ccPhone){
   const phone=phoneOverrides[reg]||ccPhone||'';
   const title=phone?`Call ${phone}`:'No phone — click to add';
-  const color=phone?'var(--green)':'var(--t3)';
-  return`<button onclick="openCallModal('${pg}','${esc(reg)}','${esc(name||'').replace(/'/g,"\\'")}','${esc(ccPhone||'')}')" title="${title}" style="background:none;border:1px solid ${phone?'var(--green)':'var(--bd)'};border-radius:4px;cursor:pointer;padding:3px 6px;font-size:13px;color:${color}">📞</button>`;
+  const cls=phone?'call-btn':'call-btn no-phone';
+  return`<button onclick="openCallModal('${pg}','${esc(reg)}','${esc(name||'').replace(/'/g,"\\'")}','${esc(ccPhone||'')}')" title="${title}" class="${cls}">📞</button>`;
 }
 
 function openCallModal(pg,reg,name,ccPhone){
