@@ -94,6 +94,8 @@ h1,h2,h3,h4,.brand-font{font-family:'Montserrat','Inter',sans-serif;letter-spaci
 .filter-bar input:focus,.filter-bar select:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(30,58,95,.10)}
 .filter-label{font-size:11px;color:var(--t3);font-weight:600;white-space:nowrap}
 .filter-clear{font-size:11px;color:var(--t3);cursor:pointer;text-decoration:underline}
+.filter-check{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--t2);font-weight:600;cursor:pointer;white-space:nowrap;padding:0 4px}
+.filter-check input{cursor:pointer;accent-color:var(--navy)}
 .filter-clear:hover{color:var(--red)}
 /* ADV SEARCH */
 .adv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:12px}
@@ -395,6 +397,7 @@ select:focus{outline:none;border-color:var(--green)}
       <input type="number" id="pf-inc-max" placeholder="Max £" oninput="applyPF()" style="width:80px">
       <input type="number" id="pf-pct-min" placeholder="Min %" oninput="applyPF()" style="width:70px">
       <input type="number" id="pf-pct-max" placeholder="Max %" oninput="applyPF()" style="width:70px">
+      <label class="filter-check"><input type="checkbox" id="pf-removed" onchange="applyPF()"> Show removed</label>
       <span class="filter-clear" onclick="clearPF()">✕ Clear</span>
     </div>
     <div class="rmeta" id="p-rmeta"></div>
@@ -585,6 +588,7 @@ select:focus{outline:none;border-color:var(--green)}
       <input type="number" id="lf-months" placeholder="Min months" oninput="applyLF()" style="width:90px">
       <select id="lf-status" onchange="applyLF()"><option value="">All statuses</option><option>Call back</option><option>Contacted</option><option>Interested</option><option>Meeting secured</option><option>Client</option><option>Not interested</option></select>
       <select id="lf-called" onchange="applyLF()"><option value="">All</option><option value="yes">Called</option><option value="no">Not called</option></select>
+      <label class="filter-check"><input type="checkbox" id="lf-removed" onchange="applyLF()"> Show removed</label>
       <span class="filter-clear" onclick="clearLF()">✕ Clear</span>
     </div>
     <div class="rmeta" id="late-rmeta"></div>
@@ -877,7 +881,7 @@ function callBtn(pg,reg,name,ccPhone){
 function openCallModal(pg,reg,name,ccPhone){
   const overridePhone=phoneOverrides[reg]||'';
   const currentPhone=overridePhone||ccPhone||'';
-  const caller=window.currentCaller||localStorage.getItem('caller')||'';
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
   const callerWarn=caller?'':'<div style="color:var(--red);font-size:11px;margin-bottom:8px">⚠ Select your name from "Calling as:" dropdown first.</div>';
   const html=`
     <div style="font-size:12px;color:var(--t3);margin-bottom:6px">Charity:</div>
@@ -947,7 +951,7 @@ function saveCall(pg,reg,ccPhone){
   const outcome=document.getElementById('call-outcome').value;
   const notes=document.getElementById('call-notes').value.trim();
   const durStr=document.getElementById('call-duration').value.trim();
-  const caller=window.currentCaller||localStorage.getItem('caller')||'';
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
   if(!caller){alert('Please select your name from "Calling as:" dropdown first.');return;}
   if(!outcome){alert('Please select an outcome.');return;}
   // Parse duration mm:ss → seconds
@@ -1072,7 +1076,7 @@ function saveComment(pg,reg,el){
   const cc=document.getElementById('cc-'+pg+'-'+reg);
   if(cc)cc.textContent=txt.length+'/400';
   clearTimeout(el._t);
-  const caller=(window.currentCaller||localStorage.getItem('caller')||'Unknown');
+  const caller=(currentCaller||localStorage.getItem(LS_CALLER)||'Unknown');
   el._t=setTimeout(()=>fetch('/api/comment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reg_number:reg,page:pg,comment:txt,caller:caller})}),600);
 }
 
@@ -1221,6 +1225,7 @@ function applyPF(){
   const p1=parseFloat(document.getElementById('pf-pct-min').value)||0;
   const p2=parseFloat(document.getElementById('pf-pct-max').value)||Infinity;
   let data=getPD();
+  if(!document.getElementById('pf-removed').checked) data=data.filter(c=>!c.removed);
   if(n) data=data.filter(c=>(c.name||'').toLowerCase().includes(n));
   if(r) data=data.filter(c=>String(c.reg_number||'').includes(r));
   if(sf) data=data.filter(c=>(statuses['prospects|'+c.reg_number]||'')==sf);
@@ -1231,7 +1236,7 @@ function applyPF(){
   if(srt.p.c) data=sa(data,srt.p.c,srt.p.d,'financials');
   pFil=data;pPg=1;renderPT(1);
 }
-function clearPF(){['pf-name','pf-reg','pf-inc-min','pf-inc-max','pf-pct-min','pf-pct-max'].forEach(id=>document.getElementById(id).value='');document.getElementById('pf-called').value='';document.getElementById('pf-status').value='';applyPF();}
+function clearPF(){['pf-name','pf-reg','pf-inc-min','pf-inc-max','pf-pct-min','pf-pct-max'].forEach(id=>document.getElementById(id).value='');document.getElementById('pf-called').value='';document.getElementById('pf-status').value='';document.getElementById('pf-removed').checked=false;applyPF();}
 function sortP(col){const s=srt.p;s.d=(s.c===col)?-s.d:1;s.c=col;applyPF();}
 function renderPT(pg){
   pPg=pg;const s=(pg-1)*PER,e=s+PER,rows=pFil.slice(s,e);
@@ -1248,10 +1253,10 @@ function renderPT(pg){
     const cc=otherPgs.map(p=>`<span class="tag tag-purple" style="font-size:9px" title="Called in ${pgL[p]}">★ ${pgL[p]}</span>`).join(' ');
     const ai=[ol,cc].filter(Boolean).join(' ');
     const st=statuses['prospects|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}">
+    return`<tr class="${(st==='Client'?'row-client ':'')+(c.removed?'removed-row':'')}">
       <td style="text-align:center">${callBtn('prospects',c.reg_number,c.name,c.phone)}</td>
       <td class="mono">${c.reg_number}</td>
-      <td title="${esc(c.name)}">${esc((c.name||'').substring(0,28))}${(c.name||'').length>28?'…':''}</td>
+      <td title="${esc(c.name)}">${esc((c.name||'').substring(0,28))}${(c.name||'').length>28?'…':''}${c.removed?'<span class="removed-tag">REMOVED</span>':''}</td>
       <td class="mono">${fmt(f.total_income)}</td>
       <td class="mono">${fmt(f.total_expenditure)}</td>
       <td class="mono">${fmt(f.gov_grants)}</td>
@@ -1462,6 +1467,7 @@ function applyLF(){
   const n=(v('lf-name')||'').toLowerCase(),r=(v('lf-reg')||'').toLowerCase();
   const sev=v('lf-sev'),mm=parseFloat(v('lf-months'))||0,sf=v('lf-status'),cf=v('lf-called');
   let data=lAll;
+  if(!document.getElementById('lf-removed').checked) data=data.filter(c=>!c.removed);
   if(n) data=data.filter(c=>(c.name||'').toLowerCase().includes(n));
   if(r) data=data.filter(c=>String(c.reg_number||'').includes(r));
   if(sev) data=data.filter(c=>sevStr(c.months_late)===sev);
@@ -1472,14 +1478,14 @@ function applyLF(){
   if(srt.l.c) data=sa(data,srt.l.c,srt.l.d,null);
   lFil=data;lPg=1;renderLT(1);
 }
-function clearLF(){['lf-name','lf-reg','lf-months'].forEach(id=>document.getElementById(id).value='');document.getElementById('lf-sev').value='';document.getElementById('lf-called').value='';document.getElementById('lf-status').value='';applyLF();}
+function clearLF(){['lf-name','lf-reg','lf-months'].forEach(id=>document.getElementById(id).value='');document.getElementById('lf-sev').value='';document.getElementById('lf-called').value='';document.getElementById('lf-status').value='';document.getElementById('lf-removed').checked=false;applyLF();}
 function sortL(col){const s=srt.l;s.d=(s.c===col)?-s.d:1;s.c=col;applyLF();}
 function renderLT(pg){
   lPg=pg;const s=(pg-1)*PER,e=s+PER;
   document.getElementById('late-rmeta').textContent=`Showing ${lFil.length} of ${lAll.length} charities`;
   document.getElementById('late-body').innerHTML=lFil.slice(s,e).map(c=>{
     const st=statuses['late|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center">${callBtn('late',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td><td>${callerCol('late',c.reg_number)}</td></tr>`;
+    return`<tr class="${(st==='Client'?'row-client ':'')+(c.removed?'removed-row':'')}"><td style="text-align:center">${callBtn('late',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}${c.removed?'<span class="removed-tag">REMOVED</span>':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td><td>${callerCol('late',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('late-pag-info','late-pag-btns',pg,lFil.length,renderLT);
 }

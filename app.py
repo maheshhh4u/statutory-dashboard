@@ -284,7 +284,8 @@ def compute_prospects():
                            "phone":row.get("charity_contact_phone",""),
                            "email":row.get("charity_contact_email",""),
                            "town":row.get("charity_contact_address3",""),
-                           "county":row.get("charity_contact_address4","")}
+                           "county":row.get("charity_contact_address4",""),
+                           "status":row.get("charity_registration_status","")}
 
     results={"best":[],"readiness":[],"contract":[],"retention":[]}
     for reg,row in latest.items():
@@ -305,6 +306,7 @@ def compute_prospects():
         obj={"reg_number":reg,"name":ct.get("name",""),"website":ct.get("website",""),
              "phone":ct.get("phone",""),"email":ct.get("email",""),
              "town":ct.get("town",""),"county":ct.get("county",""),
+             "removed":str(ct.get("status","")).upper().strip() in ("REMOVED","D"),
              "financials":fin,"lists":lists}
         if "Best Immediate" in lists: results["best"].append(obj)
         if "Readiness Package" in lists: results["readiness"].append(obj)
@@ -342,7 +344,7 @@ def compute_late():
         "total_gross_income","fin_period_end_date"}
     NC={"registered_charity_number","charity_name","charity_contact_phone",
         "charity_contact_email","charity_contact_address3","charity_contact_address4",
-        "charity_contact_web"}
+        "charity_contact_web","charity_registration_status"}
     latest={}
     for row in stream_zip_csv(PARTA_URL,PC):
         reg=row.get("registered_charity_number","").strip()
@@ -375,7 +377,8 @@ def compute_late():
                            "email":row.get("charity_contact_email",""),
                            "town":row.get("charity_contact_address3",""),
                            "county":row.get("charity_contact_address4",""),
-                           "website":row.get("charity_contact_web","")}
+                           "website":row.get("charity_contact_web",""),
+                           "status":row.get("charity_registration_status","")}
 
     results=[]
     for reg, d in late_data.items():
@@ -385,7 +388,8 @@ def compute_late():
                         "latest_income":d["latest_income"],
                         "phone":ct.get("phone",""),"email":ct.get("email",""),
                         "town":ct.get("town",""),"county":ct.get("county",""),
-                        "website":ct.get("website","")})
+                        "website":ct.get("website",""),
+                        "removed":str(ct.get("status","")).upper().strip() in ("REMOVED","D")})
     results.sort(key=lambda x:x.get("months_late",0),reverse=True)
     o12=len([r for r in results if r["months_late"]>12])
     b612=len([r for r in results if 6<=r["months_late"]<=12])
@@ -1151,6 +1155,7 @@ def _normalize_for_calling(c, source):
         "months_late": c.get("months_late",""),
         "months_to_anniversary": c.get("months_to_anniversary",""),
         "spend_over_income": spend_over,
+        "removed": bool(c.get("removed", False)),
         "source": source,
     }
 
@@ -1236,6 +1241,7 @@ def api_daily_calling():
         for c in rows:
             reg = c.get("reg_number","")
             if not reg or reg in seen: continue
+            if c.get("removed"): continue   # never call removed charities
             seen[reg] = _normalize_for_calling(c, source)
 
     scored = []
