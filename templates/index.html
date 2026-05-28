@@ -144,6 +144,33 @@ tbody td{padding:8px 12px;font-size:12px;max-width:200px;overflow:hidden;text-ov
 .call-btn.no-phone:hover{background:var(--border);color:var(--t2);transform:none;box-shadow:none}
 .call-btn svg{width:14px;height:14px;fill:currentColor;display:block}
 
+/* DAILY CALLING PAGE */
+.calling-bar{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;background:var(--alt);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:16px}
+.calling-cat{display:flex;align-items:center;gap:10px}
+.calling-cat label{font-size:13px;font-weight:600;color:var(--t2)}
+.calling-cat select{padding:8px 12px;border:1px solid var(--border);border-radius:7px;font-size:14px;font-family:inherit;background:#fff;color:var(--t1);cursor:pointer;min-width:230px}
+.calling-progress{flex:1;min-width:220px;max-width:360px}
+.calling-progress-label{font-size:12px;font-weight:600;color:var(--t2);margin-bottom:6px}
+.calling-progress-label span{color:var(--navy);font-weight:800}
+.calling-progress-track{height:8px;background:var(--s2);border-radius:99px;overflow:hidden}
+.calling-progress-fill{height:100%;background:linear-gradient(90deg,var(--gold),#d49b1f);border-radius:99px;transition:width .4s ease}
+.calling-note{background:#fff8e8;border:1px solid #f0d68a;color:#8a6d1f;border-radius:8px;padding:12px 16px;font-size:13px;margin-bottom:16px}
+.prio-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:800;letter-spacing:.02em}
+.prio-high{background:#fdecec;color:#c0392b}
+.prio-med{background:#fef3e2;color:#c8791a}
+.prio-low{background:var(--s2);color:var(--t3)}
+.prio-score{font-size:10px;font-weight:700;opacity:.7;margin-left:2px}
+tr.called-today-row{background:#f3faf4}
+tr.called-today-row td{color:var(--t3)}
+.called-chip{display:inline-block;margin-left:8px;font-size:10px;font-weight:800;color:#1d7a3a;background:#e3f5e8;padding:2px 7px;border-radius:99px;vertical-align:middle}
+.src-chip{display:inline-block;font-size:11px;font-weight:600;color:var(--navy);background:var(--s2);padding:3px 9px;border-radius:6px;white-space:nowrap}
+.cell-link{color:var(--navy);text-decoration:none;font-size:13px}
+.cell-link:hover{text-decoration:underline;color:var(--gold)}
+.cell-muted{color:var(--t3);font-size:13px}
+/* Removed-charity red font in search */
+tr.removed-row td,tr.removed-row td a{color:#c0392b !important}
+.removed-tag{display:inline-block;margin-left:8px;font-size:10px;font-weight:800;color:#fff;background:#c0392b;padding:2px 7px;border-radius:99px;vertical-align:middle}
+
 /* TAGS */
 .tag{display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600;white-space:nowrap}
 .tag-green{background:var(--navy-pale);color:var(--navy)}
@@ -211,6 +238,7 @@ select:focus{outline:none;border-color:var(--green)}
 </header>
 <nav class="nav">
   <button class="nav-btn active" onclick="switchTab('home',this)">🏠 Home</button>
+  <button class="nav-btn" onclick="switchTab('calling',this)">📞 Daily Calling</button>
   <button class="nav-btn" onclick="switchTab('prospects',this)">📋 Prospect Lists</button>
   <button class="nav-btn" onclick="switchTab('search',this)">🔍 Charity Search</button>
   <button class="nav-btn" onclick="switchTab('new',this)">🆕 Newly Registered</button>
@@ -270,6 +298,60 @@ select:focus{outline:none;border-color:var(--green)}
         <span class="home-card-count">Click to Load</span>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- DAILY CALLING -->
+<section id="tab-calling" class="section">
+  <div class="ctrl">
+    <div class="ctrl-left"><h2>📞 Daily Calling</h2><p>Top 100 priority-ranked contacts for today · intelligently scored by opportunity, urgency &amp; freshness</p></div>
+    <div class="ctrl-right">
+      <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
+      <button class="btn btn-outline btn-sm" onclick="loadCalling()">↺ Refresh</button>
+    </div>
+  </div>
+
+  <div class="calling-bar">
+    <div class="calling-cat">
+      <label for="callingCat">Source list:</label>
+      <select id="callingCat" onchange="loadCalling()">
+        <option value="all">⭐ All combined</option>
+        <option value="prospects">📋 Prospect Lists</option>
+        <option value="new">🆕 Newly Registered</option>
+        <option value="late">⏰ Late Accounts</option>
+        <option value="old">🏛️ 40+ Yrs · Zero Statutory</option>
+        <option value="milestones">🎂 Anniversary Watch</option>
+        <option value="search">🔍 Charity Search (saved)</option>
+      </select>
+    </div>
+    <div class="calling-progress">
+      <div class="calling-progress-label"><span id="callingDone">0</span> / <span id="callingTotal">0</span> called today</div>
+      <div class="calling-progress-track"><div class="calling-progress-fill" id="callingFill" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <div id="callingNote" class="calling-note" style="display:none"></div>
+
+  <div class="tbl-wrap tbl-scroll">
+    <table id="callingTable">
+      <thead>
+        <tr>
+          <th style="width:40px;text-align:center"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#e8b339;display:inline-block;vertical-align:middle"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg></th>
+          <th style="width:44px">#</th>
+          <th style="width:90px">Priority</th>
+          <th>Charity Name</th>
+          <th>Phone</th>
+          <th>Email</th>
+          <th>Website</th>
+          <th>Total Income</th>
+          <th>Statutory</th>
+          <th>Source</th>
+        </tr>
+      </thead>
+      <tbody id="callingBody">
+        <tr><td colspan="10" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>
+      </tbody>
+    </table>
   </div>
 </section>
 
@@ -895,6 +977,8 @@ function saveCall(pg,reg,ccPhone){
       // Mark called in UI
       called[pg+'|'+reg]=true;
       refreshCalled();
+      // If we're on the Daily Calling tab, refresh its ranking + progress
+      if(document.getElementById('tab-calling').classList.contains('active')) loadCalling();
       // Show toast
       const synced=d.synced_to_maximizer?'✓ Synced to Maximizer':'⊘ Saved locally (not in Maximizer)';
       const t=document.createElement('div');
@@ -911,10 +995,11 @@ document.getElementById('hdrDate').textContent=new Date().toLocaleDateString('en
 function switchTab(id,btn){
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
-  const tabs=['home','prospects','search','new','late','old','milestones'];
+  const tabs=['home','calling','prospects','search','new','late','old','milestones'];
   if(btn)btn.classList.add('active');
   else document.querySelectorAll('.nav-btn')[tabs.indexOf(id)].classList.add('active');
   document.getElementById('tab-'+id).classList.add('active');
+  if(id==='calling')loadCalling();
   if(id==='new'&&!nAll.length)loadNew();
   if(id==='late'&&!lAll.length)loadLate();
   if(id==='old'&&!oAll.length)loadOld();
@@ -1230,11 +1315,16 @@ function renderSR(data,pg){
     const flgs=(f.flags||[]).map(fl=>`<span class="tag tag-${fl.cls}">${fl.label}</span>`).join('');
     const inc=f.total_income||c.latest_income||0;
     const st=statuses['search|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}">
+    const isRemoved=/^(removed|d)$/i.test(String(c.status||'').trim());
+    const rowCls=(st==='Client'?'row-client ':'')+(isRemoved?'removed-row':'');
+    const statusTag=isRemoved
+      ?`<span class="tag" style="background:#c0392b;color:#fff">Removed</span>`
+      :`<span class="tag tag-green">Active</span>`;
+    return`<tr class="${rowCls.trim()}">
       <td style="text-align:center">${callBtn('search',c.reg_number,c.name,c.phone)}</td>
       <td class="mono">${c.reg_number}</td>
-      <td title="${esc(c.name)}">${esc((c.name||'').substring(0,24))}${(c.name||'').length>24?'…':''}</td>
-      <td><span class="tag tag-green">${c.status||'Active'}</span></td>
+      <td title="${esc(c.name)}">${esc((c.name||'').substring(0,24))}${(c.name||'').length>24?'…':''}${isRemoved?'<span class="removed-tag">REMOVED</span>':''}</td>
+      <td>${statusTag}</td>
       <td class="mono">${fmt(inc)}</td>
       <td class="mono">${fmt(f.gov_grants)}</td>
       <td class="mono">${fmt(f.gov_contracts)}</td>
@@ -1734,6 +1824,72 @@ function loadMilestones(){
     document.getElementById('ms-msg').innerHTML=`<div class="err-box">⚠ ${e.message}</div>`;
     document.getElementById('ms-loading').style.display='none';
   });
+}
+
+// ── Daily Calling ───────────────────────────────────────────────────────────────
+let callingData=[];
+function loadCalling(){
+  const cat=document.getElementById('callingCat').value;
+  const body=document.getElementById('callingBody');
+  const note=document.getElementById('callingNote');
+  note.style.display='none';
+  body.innerHTML='<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>';
+  fetch('/api/daily_calling?category='+encodeURIComponent(cat))
+    .then(r=>r.json())
+    .then(d=>{
+      callingData=d.charities||[];
+      if(d.note){
+        note.innerHTML='ℹ️ '+esc(d.note);
+        note.style.display='block';
+      }
+      renderCalling(d);
+    })
+    .catch(e=>{
+      body.innerHTML=`<tr><td colspan="10" style="text-align:center;padding:30px"><div class="err-box">⚠ ${esc(e.message)}</div></td></tr>`;
+    });
+}
+
+function prioBadge(band,score){
+  const cls=band==='high'?'prio-high':band==='med'?'prio-med':'prio-low';
+  const dot=band==='high'?'🔴':band==='med'?'🟠':'⚪';
+  return`<span class="prio-badge ${cls}">${dot} ${band==='high'?'High':band==='med'?'Med':'Low'}<span class="prio-score">${Math.round(score)}</span></span>`;
+}
+
+function renderCalling(d){
+  const body=document.getElementById('callingBody');
+  const done=d.called_today||0, total=d.count||0;
+  document.getElementById('callingDone').textContent=done;
+  document.getElementById('callingTotal').textContent=total;
+  document.getElementById('callingFill').style.width=(total?Math.round(done/total*100):0)+'%';
+
+  if(!callingData.length){
+    body.innerHTML='<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--t3)">No contacts to call for this category yet.</td></tr>';
+    return;
+  }
+  body.innerHTML=callingData.map((c,i)=>{
+    const rowCls=c.called_today?'called-today-row':'';
+    const nm=esc((c.name||'').substring(0,46))+((c.name||'').length>46?'…':'');
+    const calledChip=c.called_today?'<span class="called-chip">✓ called today</span>':'';
+    const phone=c.phone?`<a class="cell-link" href="tel:${esc(c.phone)}">${esc(c.phone)}</a>`:'<span class="cell-muted">—</span>';
+    const email=c.email?`<a class="cell-link" href="mailto:${esc(c.email)}">${esc(c.email.substring(0,28))}${c.email.length>28?'…':''}</a>`:'<span class="cell-muted">—</span>';
+    let web='<span class="cell-muted">—</span>';
+    if(c.website){
+      let u=c.website; if(!/^https?:\/\//i.test(u))u='https://'+u;
+      web=`<a class="cell-link" href="${esc(u)}" target="_blank" rel="noopener">${esc(c.website.replace(/^https?:\/\//,'').substring(0,24))}</a>`;
+    }
+    return`<tr class="${rowCls}">
+      <td style="text-align:center">${callBtn('calling',c.reg_number,c.name,c.phone)}</td>
+      <td class="mono" style="color:var(--t3)">${i+1}</td>
+      <td>${prioBadge(c.band,c.priority)}</td>
+      <td title="${esc(c.name)}"><span class="mono" style="font-size:10px;color:var(--t3)">${esc(c.reg_number)}</span><br>${nm}${calledChip}</td>
+      <td>${phone}</td>
+      <td>${email}</td>
+      <td>${web}</td>
+      <td class="mono" style="font-weight:600">${fmt(c.total_income)}</td>
+      <td class="mono">${fmt(c.statutory)}</td>
+      <td><span class="src-chip">${esc(c.source||'')}</span></td>
+    </tr>`;
+  }).join('');
 }
 function applyMF(){
   const n=(v('mf-name')||'').toLowerCase(),r=(v('mf-reg')||'').toLowerCase();

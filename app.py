@@ -1062,6 +1062,206 @@ def compute_milestones(milestone_years):
     return {"charities": results, "count": len(results),
             "milestone": milestone_years, "generated": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}
 
+# ── Daily Calling — top 100 priority-ranked contacts ────────────────────────────
+import math as _math
+
+def _called_today(reg):
+    """True if this charity was called today (UTC), per call_log timestamps."""
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    for v in _called_log.values():
+        if v.get("reg_number")==reg and str(v.get("timestamp","")).startswith(today):
+            return True
+    return False
+
+def _ever_called(reg):
+    return any(v.get("reg_number")==reg for v in _called_log.values())
+
+def priority_score(c):
+    """
+    Composite 0–100 score blending Opportunity (40), Urgency (30), Freshness (30).
+    Adapts to whatever fields a charity has — missing fields use neutral defaults
+    so no list type is unfairly penalised. Returns (score, breakdown).
+    """
+    ti   = flt(c.get("total_income"))
+    stat = flt(c.get("statutory"))
+    pstat= flt(c.get("prev_statutory"))
+    reg  = c.get("reg_number","")
+
+    # ── Opportunity (0–40): deal size via log-scaled income + statutory exposure ──
+    # £50k→~10pts, £500k→~25pts, £3m→~38pts (log curve). Statutory adds up to +12.
+    opp = 0.0
+    if ti > 0:
+        opp = min(28.0, (_math.log10(max(ti,1)) - 4.0) * 14.0)   # log10(10k)=4 → 0
+        opp = max(0.0, opp)
+    if stat > 0:
+        opp += min(12.0, (_math.log10(max(stat,1)) - 4.0) * 8.0)
+        opp = min(40.0, opp)
+    if ti <= 0 and stat <= 0:
+        opp = 14.0   # neutral default for lists without financials (e.g. Newly Registered)
+
+    # ── Urgency (0–30): declining trend, lateness, approaching anniversary ────────
+    urg = 0.0
+    if pstat > 0 and stat < pstat:                       # statutory funding declining
+        drop = (pstat - stat) / pstat
+        urg += min(16.0, drop * 16.0)
+    ml = flt(c.get("months_late"))
+    if ml > 0:                                           # late accounts
+        urg += min(16.0, ml * 1.2)
+    mta = c.get("months_to_anniversary")
+    if mta is not None and mta != "":
+        try:
+            m = float(mta)
+            if 0 <= m <= 12: urg += (12.0 - m) / 12.0 * 14.0   # closer = more urgent
+        except: pass
+    if c.get("spend_over_income"):
+        urg += 8.0
+    urg = min(30.0, urg)
+    if urg == 0.0:
+        urg = 6.0    # small neutral baseline
+
+    # ── Freshness (0–30): uncalled floats to top; called-today drops ─────────────
+    if _called_today(reg):
+        fresh = 0.0
+    elif _ever_called(reg):
+        fresh = 12.0
+    else:
+        fresh = 30.0
+
+    total = round(opp + urg + fresh, 1)
+    return total, {"opportunity": round(opp,1), "urgency": round(urg,1), "freshness": fresh}
+
+def _normalize_for_calling(c, source):
+    """Map any list's charity dict into the common shape the calling page uses."""
+    fin = c.get("financials",{}) or {}
+    ti   = c.get("total_income", fin.get("total_income", c.get("latest_income","")))
+    stat = fin.get("statutory","")
+    pstat= fin.get("prev_statutory","")
+    spend_over = any(f.get("label","").startswith("Spend") for f in fin.get("flags",[]))
+    return {
+        "reg_number": c.get("reg_number",""),
+        "name": c.get("name",""),
+        "phone": c.get("phone",""),
+        "email": c.get("email",""),
+        "website": c.get("website",""),
+        "town": c.get("town",""),
+        "county": c.get("county",""),
+        "total_income": ti,
+        "statutory": stat,
+        "prev_statutory": pstat,
+        "months_late": c.get("months_late",""),
+        "months_to_anniversary": c.get("months_to_anniversary",""),
+        "spend_over_income": spend_over,
+        "source": source,
+    }
+
+def _collect_from_cache():
+    """Gather charities from all cached lists, tagged by source. Returns dict source→list."""
+    pools = {}
+    # Prospects (nested lists)
+    p = cache_get("prospects", max_age=86400)
+    if p and p.get("lists"):
+        merged = {}
+        for sub in ("best","readiness","contract","retention"):
+            for c in p["lists"].get(sub,[]):
+                merged[c.get("reg_number")] = c   # dedupe across sublists
+        pools["Prospect Lists"] = list(merged.values())
+    # Newly Registered (default 30d window)
+    for k in ("new_30","new_60","new_90"):
+        n = cache_get(k, max_age=86400)
+        if n and n.get("charities"):
+            pools["Newly Registered"] = n["charities"]; break
+    # Late Accounts
+    l = cache_get("late", max_age=86400)
+    if l and l.get("charities"):
+        pools["Late Accounts"] = l["charities"]
+    # 40+ Zero Statutory
+    o = cache_get("old_charities", max_age=86400)
+    if o and o.get("charities"):
+        pools["40+ Yrs Zero Statutory"] = o["charities"]
+    # Anniversary Watch
+    for k in ("milestones_40","milestones_20","milestones_25","milestones_50"):
+        m = cache_get(k, max_age=86400)
+        if m and m.get("charities"):
+            pools["Anniversary Watch"] = m["charities"]; break
+    return pools
+
+CALLING_CATEGORIES = {
+    "all": "All combined",
+    "prospects": "Prospect Lists",
+    "new": "Newly Registered",
+    "late": "Late Accounts",
+    "old": "40+ Yrs Zero Statutory",
+    "milestones": "Anniversary Watch",
+    "search": "Charity Search (saved)",
+}
+
+@app.route("/api/daily_calling")
+def api_daily_calling():
+    category = request.args.get("category","all").strip().lower()
+    pools = _collect_from_cache()
+
+    # Charity Search source = combine all saved-search result sets (if any saved)
+    if category == "search":
+        rows = []
+        for crit in _saved_searches.values():
+            if isinstance(crit, dict) and crit.get("results"):
+                rows.extend(crit["results"])
+        if not rows:
+            return jsonify({"charities":[], "count":0, "category":category,
+                            "category_label": CALLING_CATEGORIES.get(category,category),
+                            "note":"No saved searches with results yet. Run a Charity Search and save it to feed this view."})
+        src_map = {"Charity Search": rows}
+    elif category == "all":
+        src_map = pools
+    else:
+        label = CALLING_CATEGORIES.get(category)
+        if label and label in pools:
+            src_map = {label: pools[label]}
+        else:
+            # That list isn't cached yet — tell the UI to warm it up
+            return jsonify({"charities":[], "count":0, "category":category,
+                            "category_label": CALLING_CATEGORIES.get(category,category),
+                            "status":"not_loaded",
+                            "note":f"Open the '{CALLING_CATEGORIES.get(category,category)}' tab once to load its data, then return here."}), 200
+
+    if not src_map:
+        return jsonify({"charities":[], "count":0, "category":category,
+                        "category_label": CALLING_CATEGORIES.get(category,category),
+                        "status":"not_loaded",
+                        "note":"No list data is loaded yet. Open the list tabs once to load them, then return here."}), 200
+
+    # Normalize + dedupe across sources (keep first/highest-priority source seen)
+    seen = {}
+    for source, rows in src_map.items():
+        for c in rows:
+            reg = c.get("reg_number","")
+            if not reg or reg in seen: continue
+            seen[reg] = _normalize_for_calling(c, source)
+
+    scored = []
+    for reg, c in seen.items():
+        sc, breakdown = priority_score(c)
+        c["priority"] = sc
+        c["priority_breakdown"] = breakdown
+        c["called_today"] = _called_today(reg)
+        c["ever_called"] = _ever_called(reg)
+        c["band"] = "high" if sc>=65 else ("med" if sc>=45 else "low")
+        scored.append(c)
+
+    scored.sort(key=lambda x: x["priority"], reverse=True)
+    top = scored[:100]
+    called_today_count = sum(1 for c in top if c["called_today"])
+
+    return jsonify({
+        "charities": top,
+        "count": len(top),
+        "total_pool": len(scored),
+        "called_today": called_today_count,
+        "category": category,
+        "category_label": CALLING_CATEGORIES.get(category, category),
+        "generated": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+    })
+
 @app.route("/api/milestones")
 def api_milestones():
     years = int(request.args.get("years","40"))
