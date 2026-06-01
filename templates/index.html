@@ -397,7 +397,7 @@ select:focus{outline:none;border-color:var(--green)}
       <input type="number" id="pf-inc-max" placeholder="Max £" oninput="applyPF()" style="width:80px">
       <input type="number" id="pf-pct-min" placeholder="Min %" oninput="applyPF()" style="width:70px">
       <input type="number" id="pf-pct-max" placeholder="Max %" oninput="applyPF()" style="width:70px">
-      <label class="filter-check"><input type="checkbox" id="pf-removed" onchange="applyPF()"> Show removed</label>
+      <label class="filter-check"><input type="checkbox" id="pf-removed" onchange="updateProspectTiles();applyPF()"> Show removed</label>
       <span class="filter-clear" onclick="clearPF()">✕ Clear</span>
     </div>
     <div class="rmeta" id="p-rmeta"></div>
@@ -588,7 +588,7 @@ select:focus{outline:none;border-color:var(--green)}
       <input type="number" id="lf-months" placeholder="Min months" oninput="applyLF()" style="width:90px">
       <select id="lf-status" onchange="applyLF()"><option value="">All statuses</option><option>Call back</option><option>Contacted</option><option>Interested</option><option>Meeting secured</option><option>Client</option><option>Not interested</option></select>
       <select id="lf-called" onchange="applyLF()"><option value="">All</option><option value="yes">Called</option><option value="no">Not called</option></select>
-      <label class="filter-check"><input type="checkbox" id="lf-removed" onchange="applyLF()"> Show removed</label>
+      <label class="filter-check"><input type="checkbox" id="lf-removed" onchange="updateLateTiles();applyLF()"> Show removed</label>
       <span class="filter-clear" onclick="clearLF()">✕ Clear</span>
     </div>
     <div class="rmeta" id="late-rmeta"></div>
@@ -1188,18 +1188,7 @@ function loadProspects(){
     if(d.error){document.getElementById('p-msg').innerHTML=`<div class="err-box">⚠ ${d.error}</div>`;document.getElementById('p-loading').style.display='none';return;}
     pLoaded=true;
     pAll={best:d.lists.best||[],readiness:d.lists.readiness||[],contract:d.lists.contract||[],retention:d.lists.retention||[]};
-    const cnt={p:d.total,best:d.counts.best||0,ready:d.counts.readiness||0,contract:d.counts.contract||0,retention:d.counts.retention||0};
-    document.getElementById('p-total').textContent=cnt.p;
-    document.getElementById('p-best').textContent=cnt.best;
-    document.getElementById('p-ready').textContent=cnt.ready;
-    document.getElementById('p-contract').textContent=cnt.contract;
-    document.getElementById('p-retention').textContent=cnt.retention;
-    document.getElementById('ptc-all').textContent=cnt.p;
-    document.getElementById('ptc-best').textContent=cnt.best;
-    document.getElementById('ptc-readiness').textContent=cnt.ready;
-    document.getElementById('ptc-contract').textContent=cnt.contract;
-    document.getElementById('ptc-retention').textContent=cnt.retention;
-    document.getElementById('home-prospect-count').textContent=cnt.p+' prospects';
+    updateProspectTiles();
     document.getElementById('p-dl-btn').style.display='inline-flex';
     document.getElementById('p-mx-btn').style.display='inline-flex';
     document.getElementById('p-loading').style.display='none';
@@ -1207,6 +1196,22 @@ function loadProspects(){
     switchPList('best',document.querySelector('.ptab.active'));
     refreshCalled();
   }).catch(e=>{document.getElementById('p-msg').innerHTML=`<div class="err-box">⚠ ${e.message}</div>`;document.getElementById('p-loading').style.display='none';});
+}
+function updateProspectTiles(){
+  const cb=document.getElementById('pf-removed');
+  const showRem=cb?cb.checked:false;
+  const f=arr=>showRem?arr:arr.filter(c=>!c.removed);
+  const best=f(pAll.best).length, ready=f(pAll.readiness).length,
+        contract=f(pAll.contract).length, retention=f(pAll.retention).length;
+  const seen={};
+  ['best','readiness','contract','retention'].forEach(k=>f(pAll[k]).forEach(c=>{seen[c.reg_number]=true;}));
+  const total=Object.keys(seen).length;
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
+  set('p-total',total); set('p-best',best); set('p-ready',ready);
+  set('p-contract',contract); set('p-retention',retention);
+  set('ptc-all',total); set('ptc-best',best); set('ptc-readiness',ready);
+  set('ptc-contract',contract); set('ptc-retention',retention);
+  set('home-prospect-count',total+' prospects');
 }
 function switchPList(list,btn){
   pList=list;pPg=1;
@@ -1236,7 +1241,7 @@ function applyPF(){
   if(srt.p.c) data=sa(data,srt.p.c,srt.p.d,'financials');
   pFil=data;pPg=1;renderPT(1);
 }
-function clearPF(){['pf-name','pf-reg','pf-inc-min','pf-inc-max','pf-pct-min','pf-pct-max'].forEach(id=>document.getElementById(id).value='');document.getElementById('pf-called').value='';document.getElementById('pf-status').value='';document.getElementById('pf-removed').checked=false;applyPF();}
+function clearPF(){['pf-name','pf-reg','pf-inc-min','pf-inc-max','pf-pct-min','pf-pct-max'].forEach(id=>document.getElementById(id).value='');document.getElementById('pf-called').value='';document.getElementById('pf-status').value='';document.getElementById('pf-removed').checked=false;updateProspectTiles();applyPF();}
 function sortP(col){const s=srt.p;s.d=(s.c===col)?-s.d:1;s.c=col;applyPF();}
 function renderPT(pg){
   pPg=pg;const s=(pg-1)*PER,e=s+PER,rows=pFil.slice(s,e);
@@ -1450,11 +1455,8 @@ function loadLate(){
   document.getElementById('late-dl-btn').style.display='none';
   fetchWithPolling('/api/late_accounts', function(d){
     lAll=d.charities||[];
-    document.getElementById('late-total').textContent=d.count||0;
-    document.getElementById('late-12').textContent=d.over_12||0;
-    document.getElementById('late-612').textContent=d.bet_6_12||0;
-    document.getElementById('late-u6').textContent=d.under_6||0;
-    document.getElementById('home-late-count').textContent=(d.count||0)+' charities';
+    updateLateTiles();
+    document.getElementById('home-late-count').textContent=document.getElementById('late-total').textContent+' charities';
     applyLF();
     document.getElementById('late-loading').style.display='none';
     document.getElementById('late-content').style.display='block';
@@ -1462,6 +1464,17 @@ function loadLate(){
     document.getElementById('late-mx-btn').style.display='inline-flex';
     refreshCalled();
   }).catch(e=>{document.getElementById('late-msg').innerHTML=`<div class="err-box">⚠ ${e.message}</div>`;document.getElementById('late-loading').style.display='none';});
+}
+function updateLateTiles(){
+  const cb=document.getElementById('lf-removed');
+  const showRem=cb?cb.checked:false;
+  const data=showRem?lAll:lAll.filter(c=>!c.removed);
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
+  set('late-total',data.length);
+  set('late-12',  data.filter(c=>c.months_late>=12).length);
+  set('late-612', data.filter(c=>c.months_late>=6 && c.months_late<12).length);
+  set('late-u6',  data.filter(c=>c.months_late<6).length);
+  set('home-late-count',data.length+' charities');
 }
 function applyLF(){
   const n=(v('lf-name')||'').toLowerCase(),r=(v('lf-reg')||'').toLowerCase();
@@ -1478,7 +1491,7 @@ function applyLF(){
   if(srt.l.c) data=sa(data,srt.l.c,srt.l.d,null);
   lFil=data;lPg=1;renderLT(1);
 }
-function clearLF(){['lf-name','lf-reg','lf-months'].forEach(id=>document.getElementById(id).value='');document.getElementById('lf-sev').value='';document.getElementById('lf-called').value='';document.getElementById('lf-status').value='';document.getElementById('lf-removed').checked=false;applyLF();}
+function clearLF(){['lf-name','lf-reg','lf-months'].forEach(id=>document.getElementById(id).value='');document.getElementById('lf-sev').value='';document.getElementById('lf-called').value='';document.getElementById('lf-status').value='';document.getElementById('lf-removed').checked=false;updateLateTiles();applyLF();}
 function sortL(col){const s=srt.l;s.d=(s.c===col)?-s.d:1;s.c=col;applyLF();}
 function renderLT(pg){
   lPg=pg;const s=(pg-1)*PER,e=s+PER;
