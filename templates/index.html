@@ -173,6 +173,24 @@ tr.called-today-row td{color:var(--t3)}
 tr.removed-row td,tr.removed-row td a{color:#c0392b !important}
 .removed-tag{display:inline-block;margin-left:8px;font-size:10px;font-weight:800;color:#fff;background:#c0392b;padding:2px 7px;border-radius:99px;vertical-align:middle}
 
+/* EDITABLE CONTACT CELLS (phone / email / website) */
+.ct-cell{position:relative;cursor:pointer;font-family:'JetBrains Mono','SF Mono',Consolas,monospace;font-size:11px;color:var(--text);padding:6px 22px 6px 8px !important;min-width:110px;max-width:200px;transition:background .12s}
+.ct-cell:hover{background:#fff8e8}
+.ct-cell .ct-ico{position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--t3);opacity:0;transition:opacity .12s}
+.ct-cell:hover .ct-ico{opacity:1}
+.ct-cell .ct-val{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+.ct-cell.ct-empty{color:var(--t3);font-style:italic}
+.ct-cell.ct-empty .ct-add{font-size:11px;color:var(--navy-l);font-weight:600;font-style:normal}
+.ct-cell.ct-empty:hover .ct-add{color:var(--navy)}
+.ct-cell.ct-edited{background:#fdf5e1}
+.ct-cell.ct-edited:hover{background:#fbeec3}
+.ct-cell.ct-edited::before{content:'★';position:absolute;left:1px;top:2px;font-size:8px;color:var(--gold);font-weight:900}
+.ct-cell.ct-editing{padding:3px !important;background:#fff !important;cursor:text}
+.ct-cell.ct-editing .ct-ico{display:none}
+.ct-input{width:100%;padding:5px 7px;border:1.5px solid var(--navy);border-radius:4px;font-size:12px;font-family:inherit;outline:none;color:var(--text);background:#fff}
+.ct-input:focus{border-color:var(--gold);box-shadow:0 0 0 2px rgba(232,179,57,.2)}
+.ct-saving{font-size:11px;color:var(--t3);font-style:italic;padding:0 4px}
+
 /* TAGS */
 .tag{display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600;white-space:nowrap}
 .tag-green{background:var(--navy-pale);color:var(--navy)}
@@ -417,6 +435,7 @@ select:focus{outline:none;border-color:var(--green)}
         <th onclick="sortP('fin_year')">Fin Year</th>
         <th style="min-width:100px">Phone</th>
         <th style="min-width:140px">Email</th>
+        <th style="min-width:120px">Website</th>
         <th>Flags</th>
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
@@ -495,7 +514,7 @@ select:focus{outline:none;border-color:var(--green)}
         <th>Trend</th><th>List</th>
         <th onclick="sortS('town')">Town</th>
         <th onclick="sortS('county')">County</th>
-        <th>Phone</th><th>Email</th><th>Flags</th>
+        <th>Phone</th><th>Email</th><th style="min-width:120px">Website</th><th>Flags</th>
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
         <th>Called</th>
@@ -603,6 +622,7 @@ select:focus{outline:none;border-color:var(--green)}
         <th>Severity</th>
         <th style="min-width:100px">Phone</th>
         <th style="min-width:140px">Email</th>
+        <th style="min-width:120px">Website</th>
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
         <th>Called</th>
@@ -860,14 +880,101 @@ let pList='best';
 let called={};  // "page|reg" → true
 let statuses={}; // "page|reg" → status
 let comments={}; // "page|reg" → comment
-let phoneOverrides={}; // reg → override phone
+let phoneOverrides={}; // reg → override phone (kept as derived view for legacy code paths)
+let contactOverrides={}; // reg → {phone,email,website} — unified manual overrides
 let pLoaded=false;
 let sMode='simple';
 let ss={}; // saved searches name→criteria
 let srt={p:{c:'',d:1},n:{c:'',d:1},l:{c:'months_late',d:-1},o:{c:'date_registered',d:1},s:{c:'',d:1}};
 
 // Load phone overrides on startup
-fetch('/api/phones/bulk').then(r=>r.json()).then(d=>{phoneOverrides=d||{};}).catch(()=>{});
+fetch('/api/contacts/bulk').then(r=>r.json()).then(d=>{
+  contactOverrides=d||{};
+  // Keep phoneOverrides as a derived flat dict for legacy code (callBtn, openCallModal)
+  Object.keys(contactOverrides).forEach(reg=>{
+    if(contactOverrides[reg]&&contactOverrides[reg].phone) phoneOverrides[reg]=contactOverrides[reg].phone;
+  });
+}).catch(()=>{ /* fall back to phones/bulk on schema mismatch */
+  fetch('/api/phones/bulk').then(r=>r.json()).then(d=>{
+    phoneOverrides=d||{};
+    Object.keys(phoneOverrides).forEach(reg=>{contactOverrides[reg]={phone:phoneOverrides[reg]};});
+  }).catch(()=>{});
+});
+
+// ── Editable contact cells (phone / email / website) ───────────────────────────
+// Renders an inline-editable cell. Click → input → Enter/blur to save, Esc to cancel.
+// Saves go to /api/contact which writes Turso + pushes to Maximizer (if entry exists).
+function ctCell(reg, field, ccVal){
+  const ov=(contactOverrides[reg]||{})[field]||'';
+  const val=ov||ccVal||'';
+  const edited=!!ov && ov!==(ccVal||'');
+  const cls='ct-cell'+(edited?' ct-edited':'')+(!val?' ct-empty':'');
+  const ph={phone:'+ Add phone',email:'+ Add email',website:'+ Add website'}[field]||'+ Add';
+  let disp='';
+  if(!val) disp=`<span class="ct-add">${ph}</span>`;
+  else if(field==='email') disp=`<span class="ct-val" title="${esc(val)}">${esc(val.length>26?val.substring(0,24)+'…':val)}</span>`;
+  else if(field==='website'){
+    const clean=val.replace(/^https?:\/\//i,'').replace(/^www\./i,'');
+    disp=`<span class="ct-val" title="${esc(val)}">${esc(clean.length>22?clean.substring(0,20)+'…':clean)}</span>`;
+  } else disp=`<span class="ct-val">${esc(val)}</span>`;
+  return`<td class="${cls}" data-reg="${esc(reg)}" data-field="${field}" data-cc="${esc(ccVal||'')}" onclick="ctEdit(this,event)">${disp}<span class="ct-ico">✎</span></td>`;
+}
+
+function ctEdit(td, ev){
+  if(td.classList.contains('ct-editing')) return;
+  if(ev&&ev.target&&(ev.target.tagName==='A'||ev.target.tagName==='INPUT'||ev.target.tagName==='BUTTON')) return;
+  const cur=(contactOverrides[td.dataset.reg]||{})[td.dataset.field]||td.dataset.cc||'';
+  const field=td.dataset.field;
+  const ph={phone:'07123 456789',email:'name@org.uk',website:'example.org'}[field]||'';
+  td.classList.add('ct-editing');
+  td._prevHTML=td.innerHTML;
+  td.innerHTML=`<input class="ct-input" type="${field==='email'?'email':field==='website'?'url':'tel'}" value="${esc(cur)}" placeholder="${ph}" onblur="ctSave(this)" onkeydown="ctKey(event,this)">`;
+  const inp=td.querySelector('input');
+  inp.focus(); inp.select();
+}
+function ctKey(ev, inp){
+  if(ev.key==='Enter'){ev.preventDefault(); inp.blur();}
+  else if(ev.key==='Escape'){ev.preventDefault(); ctCancel(inp);}
+}
+function ctCancel(inp){
+  const td=inp.closest('td');
+  td.classList.remove('ct-editing');
+  td.innerHTML=td._prevHTML||'';
+}
+function ctSave(inp){
+  const td=inp.closest('td');
+  if(!td||!td.classList.contains('ct-editing')) return;
+  const reg=td.dataset.reg, field=td.dataset.field, cc=td.dataset.cc||'';
+  const newVal=inp.value.trim();
+  const oldVal=(contactOverrides[reg]||{})[field]||'';
+  // No change → just revert UI, no API call
+  if(newVal===oldVal){ctCancel(inp); return;}
+  // Optimistic UI: show spinner
+  td.innerHTML='<span class="ct-saving">saving…</span>';
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
+  fetch('/api/contact',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({reg_number:reg,field:field,value:newVal,caller:caller})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){throw new Error(d.error||'Save failed');}
+      // Update local cache
+      if(!contactOverrides[reg]) contactOverrides[reg]={};
+      if(newVal) contactOverrides[reg][field]=newVal;
+      else delete contactOverrides[reg][field];
+      if(field==='phone'){if(newVal) phoneOverrides[reg]=newVal; else delete phoneOverrides[reg];}
+      // Re-render cell
+      td.outerHTML=ctCell(reg,field,cc);
+      // Toast
+      const ok=d.synced_to_maximizer?'Saved · ✓ Synced to Maximizer':'Saved locally (not in Maximizer)';
+      const t=document.createElement('div');
+      t.style.cssText='position:fixed;bottom:20px;right:20px;background:var(--navy);color:#fff;padding:9px 14px;border-radius:6px;font-size:12px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2)';
+      t.textContent=ok; document.body.appendChild(t); setTimeout(()=>t.remove(),3000);
+    })
+    .catch(e=>{
+      td.classList.remove('ct-editing');
+      td.innerHTML=td._prevHTML||'';
+      alert('Failed to save: '+e.message);
+    });
+}
 
 // ── Call button & modal ────────────────────────────────────────────────────────
 // Phone icon shown as first column in every list row
@@ -1271,8 +1378,9 @@ function renderPT(pg){
       <td class="mono">${fmt(prev)}</td>
       <td>${trend(stat,prev)}</td>
       <td class="mono">${f.fin_year||'—'}</td>
-      <td class="mono" style="font-size:10px">${esc(c.phone||'')}</td>
-      <td class="mono" style="font-size:10px">${esc(c.email||'')}</td>
+      ${ctCell(c.reg_number,'phone',c.phone)}
+      ${ctCell(c.reg_number,'email',c.email)}
+      ${ctCell(c.reg_number,'website',c.website)}
       <td>${flgs}</td>
       <td>${sSelect('prospects',c.reg_number)}</td>
       <td>${cmBox('prospects',c.reg_number)}</td>
@@ -1343,8 +1451,9 @@ function renderSR(data,pg){
       <td>${(c.lists||[]).map(ltag).join(' ')||'<span class="tag tag-gray">—</span>'}</td>
       <td>${esc(c.town||'')}</td>
       <td>${esc(c.county||'')}</td>
-      <td class="mono" style="font-size:10px">${esc(c.phone||'')}</td>
-      <td class="mono" style="font-size:10px">${esc(c.email||'')}</td>
+      ${ctCell(c.reg_number,'phone',c.phone)}
+      ${ctCell(c.reg_number,'email',c.email)}
+      ${ctCell(c.reg_number,'website',c.website)}
       <td>${flgs}</td>
       <td>${sSelect('search',c.reg_number)}</td>
       <td>${cmBox('search',c.reg_number)}</td>
@@ -1439,9 +1548,8 @@ function renderNT(pg){
   nPg=pg;const s=(pg-1)*PER,e=s+PER;
   document.getElementById('new-rmeta').textContent=`Showing ${nFil.length} of ${nAll.length} charities`;
   document.getElementById('new-body').innerHTML=nFil.slice(s,e).map(c=>{
-    const web=c.website?`<a href="${esc(c.website)}" target="_blank" style="color:var(--green)">${c.website.substring(0,22)}… ↗</a>`:'—';
     const st=statuses['new|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center">${callBtn('new',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.date_registered}</td><td>${web}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td><span class="tag tag-green">Active</span></td><td>${sSelect('new',c.reg_number)}</td><td>${cmBox('new',c.reg_number)}</td><td>${cBtn('new',c.reg_number,c.name||'')}</td><td>${callerCol('new',c.reg_number)}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center">${callBtn('new',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.date_registered}</td>${ctCell(c.reg_number,'website',c.website)}${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}<td><span class="tag tag-green">Active</span></td><td>${sSelect('new',c.reg_number)}</td><td>${cmBox('new',c.reg_number)}</td><td>${cBtn('new',c.reg_number,c.name||'')}</td><td>${callerCol('new',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('new-pag-info','new-pag-btns',pg,nFil.length,renderNT);
 }
@@ -1498,7 +1606,7 @@ function renderLT(pg){
   document.getElementById('late-rmeta').textContent=`Showing ${lFil.length} of ${lAll.length} charities`;
   document.getElementById('late-body').innerHTML=lFil.slice(s,e).map(c=>{
     const st=statuses['late|'+c.reg_number]||'';
-    return`<tr class="${(st==='Client'?'row-client ':'')+(c.removed?'removed-row':'')}"><td style="text-align:center">${callBtn('late',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}${c.removed?'<span class="removed-tag">REMOVED</span>':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td><td>${callerCol('late',c.reg_number)}</td></tr>`;
+    return`<tr class="${(st==='Client'?'row-client ':'')+(c.removed?'removed-row':'')}"><td style="text-align:center">${callBtn('late',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}${c.removed?'<span class="removed-tag">REMOVED</span>':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td>${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}${ctCell(c.reg_number,'website',c.website)}<td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td><td>${callerCol('late',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('late-pag-info','late-pag-btns',pg,lFil.length,renderLT);
 }
@@ -1546,9 +1654,8 @@ function renderOT(pg){
   oPg=pg;const s=(pg-1)*PER,e=s+PER;
   document.getElementById('old-rmeta').textContent=`Showing ${oFil.length} of ${oAll.length} charities`;
   document.getElementById('old-body').innerHTML=oFil.slice(s,e).map(c=>{
-    const web=c.website?`<a href="${esc(c.website)}" target="_blank" style="color:var(--green)">${c.website.substring(0,22)}… ↗</a>`:'—';
     const st=statuses['old|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center">${callBtn('old',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td><td class="mono">${c.date_registered}</td><td class="mono" style="font-weight:600">${c.age_years}</td><td class="mono">${fmt(c.total_income)}</td><td class="mono">${c.fin_year||'—'}</td><td>${web}</td><td class="mono" style="font-size:10px">${esc(c.phone||'')}</td><td class="mono" style="font-size:10px">${esc(c.email||'')}</td><td>${sSelect('old',c.reg_number)}</td><td>${cmBox('old',c.reg_number)}</td><td>${cBtn('old',c.reg_number,c.name||'')}</td><td>${callerCol('old',c.reg_number)}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center">${callBtn('old',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td><td class="mono">${c.date_registered}</td><td class="mono" style="font-weight:600">${c.age_years}</td><td class="mono">${fmt(c.total_income)}</td><td class="mono">${c.fin_year||'—'}</td>${ctCell(c.reg_number,'website',c.website)}${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}<td>${sSelect('old',c.reg_number)}</td><td>${cmBox('old',c.reg_number)}</td><td>${cBtn('old',c.reg_number,c.name||'')}</td><td>${callerCol('old',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('old-pag-info','old-pag-btns',pg,oFil.length,renderOT);
 }
@@ -1889,21 +1996,14 @@ function renderCalling(d){
     const rowCls=c.called_today?'called-today-row':'';
     const nm=esc((c.name||'').substring(0,46))+((c.name||'').length>46?'…':'');
     const calledChip=c.called_today?'<span class="called-chip">✓ called today</span>':'';
-    const phone=c.phone?`<a class="cell-link" href="tel:${esc(c.phone)}">${esc(c.phone)}</a>`:'<span class="cell-muted">—</span>';
-    const email=c.email?`<a class="cell-link" href="mailto:${esc(c.email)}">${esc(c.email.substring(0,28))}${c.email.length>28?'…':''}</a>`:'<span class="cell-muted">—</span>';
-    let web='<span class="cell-muted">—</span>';
-    if(c.website){
-      let u=c.website; if(!/^https?:\/\//i.test(u))u='https://'+u;
-      web=`<a class="cell-link" href="${esc(u)}" target="_blank" rel="noopener">${esc(c.website.replace(/^https?:\/\//,'').substring(0,24))}</a>`;
-    }
     return`<tr class="${rowCls}">
       <td style="text-align:center">${callBtn('calling',c.reg_number,c.name,c.phone)}</td>
       <td class="mono" style="color:var(--t3)">${i+1}</td>
       <td>${prioBadge(c.band,c.priority)}</td>
       <td title="${esc(c.name)}"><span class="mono" style="font-size:10px;color:var(--t3)">${esc(c.reg_number)}</span><br>${nm}${calledChip}</td>
-      <td>${phone}</td>
-      <td>${email}</td>
-      <td>${web}</td>
+      ${ctCell(c.reg_number,'phone',c.phone)}
+      ${ctCell(c.reg_number,'email',c.email)}
+      ${ctCell(c.reg_number,'website',c.website)}
       <td class="mono" style="font-weight:600">${fmt(c.total_income)}</td>
       <td class="mono">${fmt(c.statutory)}</td>
       <td><span class="src-chip">${esc(c.source||'')}</span></td>
@@ -1931,7 +2031,6 @@ function renderMsT(pg){
   document.getElementById('ms-rmeta').textContent=`Showing ${msFil.length} of ${msAll.length} charities`;
   const years=document.getElementById('milestone-years').value;
   document.getElementById('ms-body').innerHTML=msFil.slice(s,e).map(c=>{
-    const web=c.website?`<a href="${esc(c.website)}" target="_blank" style="color:var(--green)">${c.website.substring(0,20)}… ↗</a>`:'—';
     const mo=c.months_to_anniversary;
     const urgency=mo<=1?'var(--green)':mo<=3?'var(--gold)':'var(--text)';
     const st=statuses['milestones|'+c.reg_number]||'';
@@ -1944,9 +2043,9 @@ function renderMsT(pg){
       <td class="mono" style="color:${urgency};font-weight:600">${c.anniversary_date}</td>
       <td class="mono" style="color:${urgency};font-weight:600">${mo} mo</td>
       <td class="mono">${fmt(c.total_income)}</td>
-      <td>${web}</td>
-      <td class="mono" style="font-size:10px">${esc(c.phone||'')}</td>
-      <td class="mono" style="font-size:10px">${esc(c.email||'')}</td>
+      ${ctCell(c.reg_number,'website',c.website)}
+      ${ctCell(c.reg_number,'phone',c.phone)}
+      ${ctCell(c.reg_number,'email',c.email)}
       <td>${sSelect('milestones',c.reg_number)}</td>
       <td>${cmBox('milestones',c.reg_number)}</td>
       <td>${cBtn('milestones',c.reg_number,c.name||'')}</td>

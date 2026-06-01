@@ -65,12 +65,17 @@ def db_init():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )""")
         # Phone overrides — user-edited phone numbers per charity
+        # (Table also holds email + website overrides — kept this name for migration compat)
         client.execute("""CREATE TABLE IF NOT EXISTS phone_overrides (
             reg_number TEXT PRIMARY KEY,
             phone TEXT,
             updated_by TEXT,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )""")
+        # Idempotent column adds for email + website (no-op if already present)
+        for _col in ("email","website"):
+            try: client.execute(f"ALTER TABLE phone_overrides ADD COLUMN {_col} TEXT")
+            except Exception: pass
         # Call log — every call made through dashboard
         client.execute("""CREATE TABLE IF NOT EXISTS call_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -124,12 +129,13 @@ def db_query(sql, params=()):
 
 # ─── Cache and load in-memory state from Turso ────────────────────────────────
 _cache={}; _called_log={}; _comments={}; _statuses={}; _saved_searches={}
+_contact_overrides={}   # {reg_number: {phone,email,website}} user-edited contact details
 _bg_status={}; _bg_lock=threading.Lock()
 _users=["Muhanna"]  # admin-managed caller list
 
 def db_load_state():
     """Load all DB state into in-memory dicts. Clears existing state first."""
-    global _users, _called_log, _comments, _statuses, _saved_searches
+    global _users, _called_log, _comments, _statuses, _saved_searches, _contact_overrides
     if not TURSO_URL or not TURSO_TOKEN: return
 
     try:
@@ -164,6 +170,23 @@ def db_load_state():
             try: _saved_searches[r[0]] = json.loads(r[1])
             except: _saved_searches[r[0]] = {}
         print(f"[Turso] Loaded {len(_saved_searches)} saved searches")
+
+        _contact_overrides.clear()
+        try:
+            rows = db_query("SELECT reg_number, phone, email, website FROM phone_overrides")
+            for r in rows:
+                d = {}
+                if r[1]: d["phone"]   = r[1]
+                if r[2]: d["email"]   = r[2]
+                if r[3]: d["website"] = r[3]
+                if d: _contact_overrides[r[0]] = d
+            print(f"[Turso] Loaded {len(_contact_overrides)} contact overrides")
+        except Exception as e:
+            # Fallback if email/website columns aren't there yet (very first deploy)
+            rows = db_query("SELECT reg_number, phone FROM phone_overrides")
+            for r in rows:
+                if r[1]: _contact_overrides[r[0]] = {"phone": r[1]}
+            print(f"[Turso] Loaded {len(_contact_overrides)} phone-only overrides (legacy schema)")
     except Exception as e:
         print(f"[Turso] db_load_state error: {e}")
 
@@ -598,29 +621,81 @@ def save_comment():
 # ── Phone overrides ───────────────────────────────────────────────────────────
 @app.route("/api/phone", methods=["GET","POST"])
 def phone_override():
-    """GET ?reg=X → returns override; POST → saves override."""
+    """GET ?reg=X → returns override; POST → saves override. Preserves email/website."""
     if request.method == "GET":
         reg = str(request.args.get("reg","")).strip()
         if not reg: return jsonify({"phone": ""})
         rows = db_query("SELECT phone FROM phone_overrides WHERE reg_number=?", (reg,))
         return jsonify({"reg_number": reg, "phone": rows[0][0] if rows else ""})
+    # POST → route through the unified contact endpoint logic
     data = request.json or {}
-    reg = str(data.get("reg_number","")).strip()
-    phone = str(data.get("phone","")).strip()[:30]
-    caller = str(data.get("caller","")).strip() or "Unknown"
-    if not reg: return jsonify({"ok": False, "error": "Missing reg_number"}), 400
-    if phone:
-        db_exec("INSERT OR REPLACE INTO phone_overrides(reg_number,phone,updated_by,updated_at) VALUES(?,?,?,?)",
-                (reg, phone, caller, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
-    else:
+    return contact_override.__wrapped__() if False else _save_contact(
+        reg=str(data.get("reg_number","")).strip(),
+        field="phone",
+        val=str(data.get("phone","")).strip(),
+        caller=str(data.get("caller","")).strip() or "Unknown",
+    )
+
+def _save_contact(reg, field, val, caller):
+    """Internal helper used by /api/phone and /api/contact."""
+    if not reg:
+        return jsonify({"ok":False, "error":"Missing reg_number"}), 400
+    if field not in MX_CONTACT_FIELD:
+        return jsonify({"ok":False, "error":"Bad field"}), 400
+    val = val[:CONTACT_LIMITS[field]]
+    existing = db_query("SELECT phone,email,website FROM phone_overrides WHERE reg_number=?", (reg,))
+    cur = {"phone": (existing[0][0] if existing else "") or "",
+           "email": (existing[0][1] if existing else "") or "",
+           "website":(existing[0][2] if existing else "") or ""}
+    cur[field] = val
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    if not any(cur.values()):
         db_exec("DELETE FROM phone_overrides WHERE reg_number=?", (reg,))
-    return jsonify({"ok": True, "phone": phone})
+        _contact_overrides.pop(reg, None)
+    else:
+        db_exec("""INSERT OR REPLACE INTO phone_overrides
+                   (reg_number,phone,email,website,updated_by,updated_at)
+                   VALUES(?,?,?,?,?,?)""",
+                (reg, cur["phone"], cur["email"], cur["website"], caller, ts))
+        _contact_overrides[reg] = {k:v for k,v in cur.items() if v}
+    synced = False
+    try:
+        found = mx_find_by_org_number(reg)
+        if found and found.get("key"):
+            payload = {"Key": found["key"], MX_CONTACT_FIELD[field]: val}
+            r = mx_write_update(payload)
+            if r and r.get("Code") == 0: synced = True
+    except Exception as e:
+        print(f"  contact→mx update error: {e}")
+    # /api/phone callers expect this shape
+    return jsonify({"ok": True, "phone": val if field=="phone" else None,
+                    "field": field, "value": val, "synced_to_maximizer": synced})
 
 @app.route("/api/phones/bulk")
 def phones_bulk():
     """Return all phone overrides as a {reg_number: phone} dict for frontend caching."""
     rows = db_query("SELECT reg_number, phone FROM phone_overrides")
-    return jsonify({r[0]: r[1] for r in rows})
+    return jsonify({r[0]: r[1] for r in rows if r[1]})
+
+# ── Contact overrides (phone / email / website) — manual edits per charity ────
+MX_CONTACT_FIELD = {"phone": "Phone1", "email": "Email1", "website": "WebSite"}
+CONTACT_LIMITS   = {"phone": 30,       "email": 100,      "website": 200}
+
+@app.route("/api/contacts/bulk")
+def contacts_bulk():
+    """All contact overrides as {reg: {phone,email,website}} for frontend bootstrap."""
+    return jsonify(_contact_overrides)
+
+@app.route("/api/contact", methods=["POST"])
+def contact_override():
+    """Save a manual phone/email/website override → Turso + Maximizer (if entry exists)."""
+    data = request.json or {}
+    return _save_contact(
+        reg=str(data.get("reg_number","")).strip(),
+        field=str(data.get("field","")).strip().lower(),
+        val=str(data.get("value","")).strip(),
+        caller=str(data.get("caller","")).strip() or "Unknown",
+    )
 
 # ── Call log ──────────────────────────────────────────────────────────────────
 @app.route("/api/call", methods=["POST"])
