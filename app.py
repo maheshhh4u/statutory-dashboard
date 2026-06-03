@@ -3090,6 +3090,10 @@ RC_TEST_PAGE_HTML = """<!DOCTYPE html>
       <option value="direct">+44 121 818 4992 (her direct line)</option>
     </select>
   </div>
+  <div class="row" style="margin-bottom:8px">
+    <button id="micBtn" onclick="checkMic()" style="background:#7b8896;color:#fff;flex:1">🎤 Check microphone permission</button>
+    <button id="inspectBtn" onclick="inspectWP()" style="background:#7b8896;color:#fff;flex:1">🔍 Inspect WebPhone state</button>
+  </div>
   <div class="row">
     <input id="dest" type="tel" placeholder="Number to dial — e.g. +447700900123" value="">
     <button id="callBtn" class="btn-call" disabled onclick="placeCall()">📞 Call</button>
@@ -3236,6 +3240,21 @@ async function init(){
     webPhone = new WebPhone({ sipInfo: sipResp.sipInfo });
     await webPhone.start();
     log('WebPhone registered successfully','l-ok');
+
+    // Monkey-patch webPhone.emit to surface ALL events fired on the parent
+    try{
+      const _origEmit = webPhone.emit.bind(webPhone);
+      webPhone.emit = function(ev, ...args){
+        log('[webPhone] event: '+ev+(args.length?' · '+_briefArg(args[0]):''),'l-evt');
+        return _origEmit(ev, ...args);
+      };
+      log('webPhone.emit hooked — all parent events will be logged','l-info');
+    }catch(e){ log('Could not hook webPhone.emit: '+e.message,'l-warn'); }
+
+    // Also listen for outboundCall (RC docs say this fires before await resolves)
+    try{
+      webPhone.on('outboundCall', (cs) => log('[webPhone] outboundCall fired · session keys: '+Object.keys(cs||{}).slice(0,12).join(','), 'l-ok'));
+    }catch(e){}
     setStatus('Ready to make calls — enter a number above','ok');
     $('callBtn').disabled = false;
   }catch(e){
@@ -3265,45 +3284,105 @@ async function placeCall(){
   if(!dest){alert('Enter a phone number first'); return;}
   if(!webPhone){alert('WebPhone not ready'); return;}
 
+  // Pre-flight: confirm mic permission BEFORE attempting call (silent mic = silent failure)
+  log('Pre-flight: requesting microphone access…','l-info');
+  try{
+    const ms = await navigator.mediaDevices.getUserMedia({audio:true, video:false});
+    log('Mic stream OK · tracks='+ms.getAudioTracks().length+' · device='+(ms.getAudioTracks()[0]||{}).label,'l-ok');
+    ms.getTracks().forEach(t=>t.stop()); // release immediately; SDK will request again
+  }catch(e){
+    log('MIC ERROR: '+e.name+' — '+e.message,'l-err');
+    setStatus('Microphone unavailable','err');
+    return;
+  }
+
   const cidChoice = $('cidSelect').value;
   let callerId = '';
   if(cidChoice === 'freephone') callerId = '+448002084749';
   else if(cidChoice === 'direct') callerId = '+441218184992';
-  // 'default' → empty so RC uses extension default
 
   setStatus('Calling '+dest+' …','busy');
-  log('Placing call to '+dest+' · callerId='+(callerId||'[default — RC chooses]'),'l-evt');
+  log('Placing call to '+dest+' · callerId='+(callerId||'[default]'),'l-evt');
   $('callBtn').disabled = true;
 
   try{
     callSession = await webPhone.call(dest, callerId);
-    log('Call session created · id='+(callSession.callId||'?'),'l-info');
+    log('webPhone.call() returned · session.id='+(callSession.callId||'?'),'l-info');
+    log('Session keys: '+Object.keys(callSession).slice(0,20).join(','),'l-info');
 
+    // Monkey-patch session.emit so we see EVERY event the session fires
+    try{
+      const _origEmit = callSession.emit.bind(callSession);
+      callSession.emit = function(ev, ...args){
+        log('[session] event: '+ev+(args.length?' · '+_briefArg(args[0]):''),'l-evt');
+        return _origEmit(ev, ...args);
+      };
+      log('session.emit hooked — all events will be logged','l-info');
+    }catch(e){ log('Could not hook session.emit: '+e.message,'l-warn'); }
+
+    // Normal listeners (in case hook missed anything)
+    ['answered','ringing','disposed','inboundMessage','outboundMessage','accepted','rejected','failed','progress','bye','canceled','terminated'].forEach(ev=>{
+      try{ callSession.on(ev, (p) => log('  → on('+ev+') fired'+(p?' · '+_briefArg(p):''),'l-ok')); }catch(_){}
+    });
+
+    callSession.on('disposed', () => {
+      setStatus('Ready to make calls','ok');
+      $('callBtn').disabled = false; $('hangBtn').disabled = true;
+      // keep callSession reference for inspection
+      stopTimer();
+    });
     callSession.on('answered', () => {
-      log('CALL ANSWERED','l-ok');
       setStatus('In call with '+dest,'ok');
       $('hangBtn').disabled = false;
       startTimer();
     });
-    callSession.on('ringing', () => {
-      log('Far end is RINGING','l-ok');
-      setStatus('Ringing '+dest+' …','busy');
-    });
-    callSession.on('disposed', (payload) => {
-      let detail = '';
-      try{ if(payload){ detail = ' · ' + JSON.stringify(payload).substring(0,240); } }catch(_){}
-      log('Call ended (disposed)' + detail, 'l-warn');
-      setStatus('Ready to make calls','ok');
-      $('callBtn').disabled = false; $('hangBtn').disabled = true;
-      callSession = null; stopTimer();
-    });
-    // SIP message visibility — this is what tells us WHY the call fails
-    callSession.on('outboundMessage', (m) => log('→ SIP OUT: '+_sipBriefLine(m),'l-evt'));
-    callSession.on('inboundMessage',  (m) => log('← SIP IN:  '+_sipBriefLine(m),'l-evt'));
   }catch(e){
-    log('Call failed: '+(e.message||e),'l-err');
+    log('webPhone.call() threw: '+(e.message||e),'l-err');
     setStatus('Call failed — see log','err');
     $('callBtn').disabled = false; $('hangBtn').disabled = true;
+  }
+}
+
+function _briefArg(a){
+  try{
+    if(a==null) return 'null';
+    if(typeof a==='string') return a.length>180 ? a.substring(0,180)+'…' : a;
+    if(typeof a==='object'){
+      const keys = Object.keys(a).slice(0,8);
+      // If it looks like a SIP message
+      if(a.toString && a.toString.toString().indexOf('[native code]')<0){
+        const t = String(a);
+        if(t.startsWith('SIP') || /^[A-Z]+\s.*SIP/.test(t)) return t.split(/\r?\n/)[0].substring(0,160);
+      }
+      return '{' + keys.join(',') + '}';
+    }
+    return String(a).substring(0,180);
+  }catch(_){ return '?'; }
+}
+
+async function checkMic(){
+  log('Manual mic check…','l-info');
+  try{
+    const ms = await navigator.mediaDevices.getUserMedia({audio:true});
+    const t = ms.getAudioTracks()[0];
+    log('Mic OK · device="'+(t&&t.label)+'" · enabled='+(t&&t.enabled),'l-ok');
+    ms.getTracks().forEach(t=>t.stop());
+  }catch(e){
+    log('Mic FAIL · '+e.name+' · '+e.message,'l-err');
+  }
+}
+
+function inspectWP(){
+  if(!webPhone){log('webPhone not initialised','l-warn'); return;}
+  try{
+    log('webPhone keys: '+Object.keys(webPhone).slice(0,30).join(','),'l-info');
+    if(webPhone.eventNames) log('webPhone event names: '+webPhone.eventNames().join(','),'l-info');
+    if(webPhone.userAgent) log('userAgent state: '+(webPhone.userAgent.state||'?'),'l-info');
+  }catch(e){ log('inspect error: '+e.message,'l-err'); }
+  if(callSession){
+    log('callSession keys: '+Object.keys(callSession).slice(0,30).join(','),'l-info');
+    if(callSession.state !== undefined) log('callSession.state: '+callSession.state,'l-info');
+    if(callSession.status !== undefined) log('callSession.status: '+callSession.status,'l-info');
   }
 }
 
