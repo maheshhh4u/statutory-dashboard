@@ -3034,6 +3034,79 @@ def api_rc_sip():
         return jsonify({"ok": False, "error": str(e)[:400]}), 500
 
 
+@app.route("/api/rc/ringout", methods=["POST"])
+def api_rc_ringout():
+    """Place a call via RingOut REST API — bypasses WebRTC entirely.
+    Flow: RC rings Muhanna's phone first → she picks up → RC dials prospect."""
+    if not _rc_configured():
+        return jsonify({"ok": False, "error": "RingCentral not configured on server"}), 400
+    data   = request.json or {}
+    to_num = str(data.get("to","")).strip()
+    caller = str(data.get("caller","")).strip()
+    if not to_num: return jsonify({"ok": False, "error": "Missing destination number"}), 400
+    if not caller: return jsonify({"ok": False, "error": "Select 'Calling as:' first"}), 400
+    if not RC_FROM_NUMBER:
+        return jsonify({"ok": False, "error": "RC_FROM_NUMBER env var not set"}), 400
+
+    try:
+        tok = _rc_get_access_token()
+        payload = {
+            "from": {"phoneNumber": RC_FROM_NUMBER},
+            "to":   {"phoneNumber": to_num},
+            "callerId": {"phoneNumber": RC_CALLER_ID or RC_FROM_NUMBER},
+            "playPrompt": False,
+        }
+        r = requests.post(
+            f"{RC_SERVER_URL}/restapi/v1.0/account/~/extension/~/ring-out",
+            headers={"Authorization": f"Bearer {tok}",
+                     "Content-Type": "application/json",
+                     "Accept": "application/json"},
+            json=payload,
+            timeout=30,
+        )
+        if r.status_code >= 400:
+            body = ""
+            try: body = r.text[:600]
+            except: pass
+            return jsonify({"ok": False,
+                            "error": f"RC RingOut error HTTP {r.status_code}",
+                            "detail": body}), 500
+        d = r.json()
+        return jsonify({
+            "ok": True,
+            "call_id": d.get("id"),
+            "status":  (d.get("status") or {}).get("callStatus"),
+            "to":      to_num,
+            "from":    RC_FROM_NUMBER,
+            "caller_id_shown": RC_CALLER_ID or RC_FROM_NUMBER,
+            "uri":     d.get("uri"),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:400]}), 500
+
+
+@app.route("/api/rc/ringout/<call_id>")
+def api_rc_ringout_status(call_id):
+    """Poll RingOut call status — useful for showing live status in the UI."""
+    if not _rc_configured():
+        return jsonify({"ok": False, "error": "Not configured"}), 400
+    try:
+        tok = _rc_get_access_token()
+        r = requests.get(
+            f"{RC_SERVER_URL}/restapi/v1.0/account/~/extension/~/ring-out/{call_id}",
+            headers={"Authorization": f"Bearer {tok}", "Accept": "application/json"},
+            timeout=15,
+        )
+        if r.status_code >= 400:
+            return jsonify({"ok": False, "error": f"HTTP {r.status_code}", "detail": r.text[:300]}), 500
+        d = r.json()
+        return jsonify({"ok": True,
+                        "status": (d.get("status") or {}).get("callStatus"),
+                        "raw": d.get("status")})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:300]}), 500
+
+
 # ── Standalone WebPhone test page — verify WebRTC works before main integration ─
 RC_TEST_PAGE_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -3542,3 +3615,158 @@ def rc_test_page():
     """Standalone test page — verifies WebRTC + SIP end-to-end before main integration."""
     from flask import render_template_string
     return render_template_string(RC_TEST_PAGE_HTML)
+
+
+# ── RingOut (PSTN-only) test page — no WebRTC, works through any firewall ─────
+RC_RINGOUT_PAGE_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>9M · RingCentral RingOut Test</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,Segoe UI,Inter,sans-serif;background:#f3f5f8;color:#1e3a5f;margin:0;padding:30px;line-height:1.5}
+  .wrap{max-width:680px;margin:0 auto;background:#fff;border-radius:14px;padding:32px;box-shadow:0 4px 20px rgba(30,58,95,.10)}
+  h1{margin:0 0 4px;font-size:24px}
+  .sub{color:#7b8896;font-size:13px;margin-bottom:20px}
+  .info{background:#eef9f1;border:1px solid #9fd1ad;border-radius:8px;padding:12px 14px;margin-bottom:18px;font-size:13px;line-height:1.55}
+  .info strong{color:#1d7a3a}
+  .row{display:flex;gap:10px;margin-bottom:14px;align-items:center}
+  label{font-size:12px;font-weight:700;color:#7b8896;text-transform:uppercase;letter-spacing:.04em;min-width:130px}
+  input[type=tel]{flex:1;padding:12px 14px;border:1.5px solid #cfd6df;border-radius:8px;font-size:15px;font-family:inherit;color:#1e3a5f}
+  input[type=tel]:focus{outline:none;border-color:#1e3a5f;box-shadow:0 0 0 3px rgba(232,179,57,.2)}
+  button{padding:14px 28px;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s}
+  .btn-call{background:#1e3a5f;color:#fff;width:100%;font-size:16px;padding:16px}
+  .btn-call:hover:not(:disabled){background:#152a44;box-shadow:0 4px 12px rgba(30,58,95,.30)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .status{margin:18px 0;padding:14px 18px;border-radius:8px;border-left:4px solid #ccc;font-size:14px;background:#f7f9fc}
+  .status.ok{border-color:#1d7a3a;background:#eef9f1}
+  .status.err{border-color:#c0392b;background:#fdecec}
+  .status.busy{border-color:#e8b339;background:#fef8e8}
+  .pill{display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:99px;background:#e0e7ee;color:#1e3a5f;text-transform:uppercase;letter-spacing:.04em;margin-right:8px}
+  .ok .pill{background:#1d7a3a;color:#fff}
+  .err .pill{background:#c0392b;color:#fff}
+  .busy .pill{background:#e8b339;color:#fff}
+  .log{margin-top:18px;background:#0f1729;color:#a8c5e2;border-radius:8px;padding:14px;height:280px;overflow-y:auto;font-family:'JetBrains Mono',Consolas,monospace;font-size:12px;line-height:1.7}
+  .log .l-ok{color:#69d68b}
+  .log .l-warn{color:#e8b339}
+  .log .l-err{color:#ff8a80}
+  .log .l-evt{color:#7fb3ff}
+  .log .ts{color:#5a7090;margin-right:8px}
+  .meta{font-size:11px;color:#7b8896;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📞 RingCentral RingOut — PSTN Test</h1>
+  <div class="sub">Bypasses WebRTC entirely. Your phone rings first, then RC dials the prospect.</div>
+
+  <div class="info">
+    <strong>How this works:</strong> Click Call → RingCentral platform rings your phone (whichever device is registered to <code>RC_FROM_NUMBER</code>) → you pick up → RC dials the prospect → you're connected. Audio flows through RC's network, not your browser. Works through any firewall.
+  </div>
+
+  <div class="row">
+    <label for="caller">Calling as</label>
+    <input id="caller" type="text" value="Muhanna" style="flex:1">
+  </div>
+  <div class="row">
+    <label for="dest">Dial number</label>
+    <input id="dest" type="tel" placeholder="+447920116516 or +48579377406">
+  </div>
+  <button class="btn-call" id="callBtn" onclick="ringOut()">📞 Place RingOut call</button>
+
+  <div class="status" id="status"><span class="pill" id="pill">Ready</span><span id="status-text">Enter a number and click Call</span></div>
+
+  <div class="log" id="log"></div>
+
+  <div class="meta">Server endpoint: <code>POST /api/rc/ringout</code> · Poll: <code>GET /api/rc/ringout/{id}</code></div>
+</div>
+
+<script>
+function $(id){return document.getElementById(id);}
+function ts(){return new Date().toTimeString().slice(0,8);}
+function log(msg, cls){
+  const line = document.createElement('div');
+  line.innerHTML = '<span class="ts">'+ts()+'</span><span class="'+(cls||'')+'">'+msg+'</span>';
+  $('log').appendChild(line); $('log').scrollTop = $('log').scrollHeight;
+}
+function setStatus(txt, cls){
+  $('status').className = 'status ' + (cls||'');
+  $('pill').textContent = cls==='ok'?'Connected':cls==='busy'?'Calling':cls==='err'?'Error':'Ready';
+  $('status-text').textContent = txt;
+}
+
+async function ringOut(){
+  const dest = $('dest').value.trim();
+  const caller = $('caller').value.trim();
+  if(!dest){alert('Enter a phone number first'); return;}
+  if(!caller){alert('Enter your name first'); return;}
+
+  $('callBtn').disabled = true;
+  setStatus('Sending request to RingCentral platform…','busy');
+  log('POST /api/rc/ringout to='+dest+' caller='+caller, 'l-evt');
+
+  try{
+    const r = await fetch('/api/rc/ringout', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({to: dest, caller: caller})
+    });
+    const d = await r.json();
+    if(!d.ok){
+      log('Request failed: '+(d.error||'')+' '+(d.detail||''),'l-err');
+      setStatus('RingCentral rejected the call','err');
+      $('callBtn').disabled = false;
+      return;
+    }
+    log('Call created · id='+d.call_id+' · status='+d.status, 'l-ok');
+    log('  · Your phone ('+d.from+') will ring first', 'l-ok');
+    log('  · Once you answer, RC will dial '+d.to, 'l-ok');
+    log('  · Prospect sees caller ID: '+d.caller_id_shown, 'l-ok');
+    setStatus('Calling your phone now — pick up to connect','busy');
+
+    // Poll status every 4 seconds for up to 2 minutes
+    let polls = 0, last = '';
+    const interval = setInterval(async function(){
+      polls++;
+      if(polls > 30){ clearInterval(interval); $('callBtn').disabled = false; return; }
+      try{
+        const s = await fetch('/api/rc/ringout/'+d.call_id).then(r=>r.json());
+        if(s.ok && s.status && s.status !== last){
+          last = s.status;
+          log('Status: '+s.status, s.status==='Success'?'l-ok':s.status==='InProgress'?'l-evt':'l-warn');
+          if(s.status==='Success'){
+            setStatus('Connected — talk!','ok');
+          } else if(s.status==='Busy' || s.status==='NoAnswer' || s.status==='Rejected' || s.status==='GenericError'){
+            setStatus('Call ended: '+s.status,'err');
+            $('callBtn').disabled = false;
+            clearInterval(interval);
+          }
+        }
+      }catch(e){ log('Poll error: '+e.message,'l-warn'); }
+    }, 4000);
+  }catch(e){
+    log('Network error: '+e.message,'l-err');
+    setStatus('Could not reach server','err');
+    $('callBtn').disabled = false;
+  }
+}
+
+// On load, populate caller from query string if present
+window.addEventListener('load', function(){
+  const params = new URLSearchParams(window.location.search);
+  const c = params.get('caller');
+  if(c) $('caller').value = c;
+  log('Page ready · click Call to test','l-ok');
+});
+</script>
+</body>
+</html>
+"""
+
+@app.route("/rc-ringout")
+def rc_ringout_page():
+    """RingOut test page — works through any firewall, no browser audio."""
+    from flask import render_template_string
+    return render_template_string(RC_RINGOUT_PAGE_HTML)
