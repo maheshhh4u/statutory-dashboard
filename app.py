@@ -3252,7 +3252,7 @@ function _sipBriefLine(msg){
   // Extract first useful line of a SIP message for logging
   try{
     const txt = (typeof msg === 'string') ? msg : (msg && msg.toString ? msg.toString() : JSON.stringify(msg));
-    const lines = txt.split(/\r?\n/).filter(Boolean);
+    const lines = txt.split(/\\r?\\n/).filter(Boolean);
     for(const ln of lines){
       if(/^SIP\/2\.0\s+\d{3}/.test(ln) || /^(INVITE|ACK|BYE|CANCEL|REGISTER|SUBSCRIBE|NOTIFY|OPTIONS|REFER|UPDATE|INFO)\s/.test(ln)) return ln.substring(0,160);
     }
