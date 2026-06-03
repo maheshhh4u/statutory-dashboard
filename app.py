@@ -2914,3 +2914,335 @@ def mx_apply_to_latest():
 
     results["udf_results"] = mx_apply_udfs(working_key, c)
     return jsonify(results)
+
+# ════════════════════════════════════════════════════════════════════════════════
+# RINGCENTRAL WEBPHONE INTEGRATION (Phase 2 — WebRTC in-browser calls)
+# ════════════════════════════════════════════════════════════════════════════════
+# Flow: backend exchanges long-lived JWT → short-lived access_token → calls SIP
+# provisioning endpoint to get sipInfo (one-day SIP credentials). Frontend uses
+# sipInfo + the @ringcentral/web-phone SDK to register over WSS and place calls.
+# Audio flows via WebRTC peer connection — no RC desktop app needed.
+
+RC_SERVER_URL    = os.environ.get("RC_SERVER_URL", "https://platform.ringcentral.com").rstrip("/")
+RC_CLIENT_ID     = os.environ.get("RC_CLIENT_ID", "")
+RC_CLIENT_SECRET = os.environ.get("RC_CLIENT_SECRET", "")
+RC_JWT           = os.environ.get("RC_JWT", "")
+RC_FROM_EXT      = os.environ.get("RC_FROM_EXT", "")
+RC_FROM_NUMBER   = os.environ.get("RC_FROM_NUMBER", "")
+RC_CALLER_ID     = os.environ.get("RC_CALLER_ID", "")
+
+_rc_token_cache  = {"access_token": "", "expires_at": 0.0}
+_rc_token_lock   = threading.Lock()
+
+def _rc_configured():
+    return bool(RC_CLIENT_ID and RC_CLIENT_SECRET and RC_JWT)
+
+def _rc_get_access_token():
+    """Exchange the JWT credential for an OAuth access_token. Cached for ~50 min."""
+    import time, base64 as _b64
+    with _rc_token_lock:
+        now = time.time()
+        if _rc_token_cache["access_token"] and _rc_token_cache["expires_at"] > now + 60:
+            return _rc_token_cache["access_token"]
+        basic = _b64.b64encode(f"{RC_CLIENT_ID}:{RC_CLIENT_SECRET}".encode()).decode()
+        r = requests.post(
+            f"{RC_SERVER_URL}/restapi/oauth/token",
+            headers={"Authorization": f"Basic {basic}",
+                     "Content-Type": "application/x-www-form-urlencoded",
+                     "Accept": "application/json"},
+            data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                  "assertion": RC_JWT},
+            timeout=30,
+        )
+        r.raise_for_status()
+        d = r.json()
+        _rc_token_cache["access_token"] = d.get("access_token", "")
+        # Cache for up to 50 min (RC tokens last 3600s; refresh well before expiry)
+        _rc_token_cache["expires_at"] = now + min(int(d.get("expires_in", 3600)) - 120, 3000)
+        return _rc_token_cache["access_token"]
+
+def _rc_provision_sip():
+    """Provision a SIP device → returns sipInfo dict the WebPhone SDK consumes."""
+    tok = _rc_get_access_token()
+    r = requests.post(
+        f"{RC_SERVER_URL}/restapi/v1.0/client-info/sip-provision",
+        headers={"Authorization": f"Bearer {tok}",
+                 "Content-Type": "application/json",
+                 "Accept": "application/json"},
+        json={"sipInfo": [{"transport": "WSS"}]},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()
+
+@app.route("/api/rc/status")
+def api_rc_status():
+    """Diagnostic — returns config + auth status, never secrets."""
+    if not _rc_configured():
+        missing = [k for k,v in {"RC_CLIENT_ID":RC_CLIENT_ID,
+                                  "RC_CLIENT_SECRET":RC_CLIENT_SECRET,
+                                  "RC_JWT":RC_JWT}.items() if not v]
+        return jsonify({"configured": False, "missing_env_vars": missing})
+    try:
+        tok = _rc_get_access_token()
+        return jsonify({
+            "configured": True,
+            "auth_ok": bool(tok),
+            "server": RC_SERVER_URL,
+            "from_ext": RC_FROM_EXT,
+            "from_number": RC_FROM_NUMBER,
+            "caller_id": RC_CALLER_ID,
+        })
+    except requests.HTTPError as e:
+        body = ""
+        try: body = e.response.text[:300]
+        except: pass
+        return jsonify({"configured": True, "auth_ok": False,
+                        "error": f"HTTP {e.response.status_code}", "detail": body}), 200
+    except Exception as e:
+        return jsonify({"configured": True, "auth_ok": False, "error": str(e)[:300]}), 200
+
+@app.route("/api/rc/sip")
+def api_rc_sip():
+    """Return sipInfo so the browser's WebPhone SDK can register over WSS."""
+    if not _rc_configured():
+        return jsonify({"ok": False, "error": "RingCentral not configured on the server"}), 400
+    # Minimal identity guard — caller must have identified themselves in the dashboard.
+    caller = (request.args.get("caller","") or "").strip()
+    if not caller:
+        return jsonify({"ok": False,
+                        "error": "Select your name in the 'Calling as:' dropdown first."}), 400
+    try:
+        d = _rc_provision_sip()
+        sip_info = (d.get("sipInfo") or [{}])[0]
+        return jsonify({
+            "ok": True,
+            "sipInfo": sip_info,
+            "device_id": (d.get("device") or {}).get("id"),
+            "caller_id": RC_CALLER_ID,
+            "from_number": RC_FROM_NUMBER,
+            "from_ext": RC_FROM_EXT,
+        })
+    except requests.HTTPError as e:
+        body = ""
+        try: body = e.response.text[:400]
+        except: pass
+        return jsonify({"ok": False,
+                        "error": f"RC API error: HTTP {e.response.status_code}",
+                        "detail": body}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:400]}), 500
+
+
+# ── Standalone WebPhone test page — verify WebRTC works before main integration ─
+RC_TEST_PAGE_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>9M · RingCentral WebPhone Test</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,Segoe UI,Inter,sans-serif;background:#f3f5f8;color:#1e3a5f;margin:0;padding:30px;line-height:1.5}
+  .wrap{max-width:760px;margin:0 auto;background:#fff;border-radius:14px;padding:32px;box-shadow:0 4px 20px rgba(30,58,95,.10)}
+  h1{margin:0 0 4px;font-size:24px}
+  .sub{color:#7b8896;font-size:13px;margin-bottom:24px}
+  .status-row{display:flex;align-items:center;gap:10px;margin-bottom:18px;padding:12px 16px;background:#f7f9fc;border-radius:8px;border-left:4px solid #ccc;font-size:14px}
+  .status-row.ok{border-color:#2d7a3a;background:#eef9f1}
+  .status-row.err{border-color:#c0392b;background:#fdecec}
+  .status-row.busy{border-color:#e8b339;background:#fef8e8}
+  .pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:#e0e7ee;color:#1e3a5f;text-transform:uppercase;letter-spacing:.04em}
+  .ok .pill{background:#2d7a3a;color:#fff}
+  .err .pill{background:#c0392b;color:#fff}
+  .busy .pill{background:#e8b339;color:#fff}
+  .row{display:flex;gap:10px;margin-bottom:14px}
+  input[type=tel]{flex:1;padding:12px 14px;border:1.5px solid #cfd6df;border-radius:8px;font-size:15px;font-family:inherit;color:#1e3a5f}
+  input[type=tel]:focus{outline:none;border-color:#1e3a5f;box-shadow:0 0 0 3px rgba(232,179,57,.2)}
+  button{padding:12px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .12s}
+  .btn-call{background:#1e3a5f;color:#fff}
+  .btn-call:hover:not(:disabled){background:#152a44;transform:translateY(-1px);box-shadow:0 4px 10px rgba(30,58,95,.25)}
+  .btn-hang{background:#c0392b;color:#fff}
+  .btn-hang:hover:not(:disabled){background:#a02f23}
+  button:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none}
+  .timer{font-family:'JetBrains Mono',Consolas,monospace;font-size:32px;text-align:center;color:#1e3a5f;font-weight:700;margin:20px 0;letter-spacing:.04em}
+  .log{margin-top:24px;background:#0f1729;color:#a8c5e2;border-radius:8px;padding:14px 18px;height:260px;overflow-y:auto;font-family:'JetBrains Mono',Consolas,monospace;font-size:12px;line-height:1.7}
+  .log .l-info{color:#a8c5e2}
+  .log .l-warn{color:#e8b339}
+  .log .l-err{color:#ff8a80}
+  .log .l-ok{color:#69d68b}
+  .log .l-evt{color:#7fb3ff}
+  .log .ts{color:#5a7090;margin-right:8px}
+  .footer-note{margin-top:18px;padding:10px 14px;background:#fef8e8;border:1px solid #f0d68a;border-radius:6px;font-size:12px;color:#8a6d1f}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📞 RingCentral WebPhone — Connection Test</h1>
+  <div class="sub">Proves WebRTC + SIP works end-to-end before integration into the main dashboard.</div>
+
+  <div id="status" class="status-row"><span class="pill" id="pill">Loading</span><span id="status-text">Initialising…</span></div>
+
+  <div class="row">
+    <input id="dest" type="tel" placeholder="Number to dial — e.g. +447700900123" value="">
+    <button id="callBtn" class="btn-call" disabled onclick="placeCall()">📞 Call</button>
+    <button id="hangBtn" class="btn-hang" disabled onclick="hangUp()">✕ Hang Up</button>
+  </div>
+
+  <div class="timer" id="timer">00:00</div>
+
+  <div class="log" id="log"></div>
+
+  <div class="footer-note">
+    <strong>Tip:</strong> First time you click Call, the browser will ask for microphone permission — click Allow.
+    Try calling your own mobile first to verify audio works both ways.
+  </div>
+</div>
+
+<audio id="remoteAudio" autoplay></audio>
+
+<script src="https://cdn.jsdelivr.net/npm/ringcentral-web-phone@2.1.5/dist/index.iife.js"></script>
+<script>
+let webPhone = null, callSession = null, callerName = '', timerInterval = null, callStart = 0;
+
+function $(id){return document.getElementById(id);}
+function ts(){return new Date().toTimeString().slice(0,8);}
+function log(msg, cls){
+  const line = document.createElement('div');
+  line.innerHTML = `<span class="ts">${ts()}</span><span class="${cls||'l-info'}">${msg}</span>`;
+  $('log').appendChild(line);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function setStatus(txt, cls){
+  $('status').className = 'status-row ' + (cls||'');
+  $('pill').textContent = cls==='ok'?'Ready':cls==='busy'?'Busy':cls==='err'?'Error':'Loading';
+  $('status-text').textContent = txt;
+}
+function tick(){
+  if(!callStart) return;
+  const s = Math.floor((Date.now()-callStart)/1000);
+  $('timer').textContent = String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+}
+function startTimer(){callStart = Date.now(); timerInterval = setInterval(tick, 500);}
+function stopTimer(){clearInterval(timerInterval); timerInterval=null; callStart=0; $('timer').textContent='00:00';}
+
+async function init(){
+  // 1) Read caller name from URL (?caller=Muhanna) or prompt
+  const params = new URLSearchParams(window.location.search);
+  callerName = (params.get('caller')||'').trim();
+  if(!callerName) callerName = prompt('Your name (matches the "Calling as:" dropdown in the dashboard):','Muhanna') || '';
+  if(!callerName){
+    setStatus('No caller name — refresh and provide one.','err');
+    log('Aborted: no caller name provided','l-err'); return;
+  }
+  log(`Caller identified as: ${callerName}`,'l-info');
+
+  // 2) Verify server config
+  setStatus('Checking server configuration…','busy');
+  log('Fetching /api/rc/status …','l-info');
+  try{
+    const s = await fetch('/api/rc/status').then(r=>r.json());
+    if(!s.configured){
+      setStatus('Server missing RC env vars: '+(s.missing_env_vars||[]).join(', '),'err');
+      log('Server not configured: '+JSON.stringify(s),'l-err'); return;
+    }
+    if(!s.auth_ok){
+      setStatus('Server can\\'t authenticate to RingCentral.','err');
+      log('Auth failure: '+(s.error||'unknown')+' — '+(s.detail||''),'l-err'); return;
+    }
+    log(`Server auth OK · from_ext=${s.from_ext} · caller_id=${s.caller_id}`,'l-ok');
+  }catch(e){
+    setStatus('Failed to reach /api/rc/status','err');
+    log('Network error: '+e.message,'l-err'); return;
+  }
+
+  // 3) Fetch sipInfo
+  setStatus('Provisioning SIP credentials…','busy');
+  log('Fetching sipInfo from /api/rc/sip …','l-info');
+  let sipResp;
+  try{
+    sipResp = await fetch('/api/rc/sip?caller='+encodeURIComponent(callerName)).then(r=>r.json());
+  }catch(e){
+    setStatus('Failed to fetch sipInfo','err'); log('Network: '+e.message,'l-err'); return;
+  }
+  if(!sipResp.ok){
+    setStatus('SIP provisioning failed','err');
+    log('Provisioning error: '+(sipResp.error||'')+' '+(sipResp.detail||''),'l-err'); return;
+  }
+  log('sipInfo received: domain='+(sipResp.sipInfo.domain||'?')+', transport='+(sipResp.sipInfo.transport||'?'),'l-ok');
+
+  // 4) Boot the WebPhone SDK
+  setStatus('Registering with RingCentral SIP server…','busy');
+  log('Initialising WebPhone SDK …','l-info');
+  if(typeof WebPhone === 'undefined'){
+    setStatus('SDK not loaded','err'); log('window.WebPhone undefined — CDN load failed','l-err'); return;
+  }
+  try{
+    webPhone = new WebPhone({ sipInfo: sipResp.sipInfo });
+    await webPhone.start();
+    log('WebPhone registered successfully','l-ok');
+    setStatus('Ready to make calls — enter a number above','ok');
+    $('callBtn').disabled = false;
+  }catch(e){
+    setStatus('SIP registration failed','err');
+    log('WebPhone error: '+(e.message||e),'l-err'); return;
+  }
+
+  // Save caller_id for outbound calls
+  window._callerId = sipResp.caller_id || sipResp.from_number || '';
+  log('Outbound caller_id will be: '+window._callerId,'l-info');
+}
+
+async function placeCall(){
+  const dest = $('dest').value.trim();
+  if(!dest){alert('Enter a phone number first'); return;}
+  if(!webPhone){alert('WebPhone not ready'); return;}
+
+  setStatus('Calling '+dest+' …','busy');
+  log('Placing call to '+dest+' …','l-evt');
+  $('callBtn').disabled = true;
+
+  try{
+    callSession = await webPhone.call(dest, window._callerId || '');
+    log('Call session created · id='+(callSession.callId||'?'),'l-info');
+
+    // Wire up session events
+    callSession.on('answered', () => {
+      log('CALL ANSWERED','l-ok');
+      setStatus('In call with '+dest,'ok');
+      $('hangBtn').disabled = false;
+      startTimer();
+    });
+    callSession.on('disposed', () => {
+      log('Call ended','l-warn');
+      setStatus('Ready to make calls','ok');
+      $('callBtn').disabled = false; $('hangBtn').disabled = true;
+      callSession = null; stopTimer();
+    });
+    // Catch a wider set of events for debug visibility
+    ['ringing','progress','failed','rejected','canceled','accepted','bye'].forEach(ev=>{
+      try{ callSession.on(ev, ()=>log('event: '+ev,'l-evt')); }catch(_){}
+    });
+  }catch(e){
+    log('Call failed: '+(e.message||e),'l-err');
+    setStatus('Call failed — see log','err');
+    $('callBtn').disabled = false; $('hangBtn').disabled = true;
+  }
+}
+
+async function hangUp(){
+  if(!callSession) return;
+  log('Hanging up…','l-evt');
+  try{ await callSession.dispose(); }catch(e){ log('Hangup error: '+e.message,'l-err'); }
+}
+
+window.addEventListener('load', init);
+</script>
+</body>
+</html>
+"""
+
+@app.route("/rc-test")
+def rc_test_page():
+    """Standalone test page — verifies WebRTC + SIP end-to-end before main integration."""
+    from flask import render_template_string
+    return render_template_string(RC_TEST_PAGE_HTML)
