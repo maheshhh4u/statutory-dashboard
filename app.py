@@ -3355,8 +3355,58 @@ async function placeCall(){
           }else log('ICE gathering DONE — total '+cands+' candidates','l-ok');
         });
         pc.addEventListener('icecandidateerror', function(e){
-          log('ICE candidate ERROR: '+(e.errorText||e.url||'?')+' code='+(e.errorCode||'?'),'l-err');
+          log('ICE candidate ERROR: url='+(e.url||'?')+' code='+(e.errorCode||'?')+' text='+(e.errorText||'?'),'l-err');
         });
+
+        // Log the configured ICE servers (TURN/STUN) — if empty, that's the bug
+        try{
+          const cfg = pc.getConfiguration();
+          const servers = cfg.iceServers||[];
+          log('RTCPeerConnection has '+servers.length+' ICE servers configured','l-info');
+          servers.forEach(function(srv, idx){
+            const urls = Array.isArray(srv.urls)?srv.urls:[srv.urls];
+            urls.forEach(function(u){ log('  ICE server #'+idx+': '+u,'l-info'); });
+          });
+          if(servers.length===0) log('WARNING: No ICE servers — WebRTC cannot traverse NAT','l-err');
+        }catch(e){ log('Could not read RTC config: '+e.message,'l-warn'); }
+
+        // Examine the local SDP — count ICE candidates by type (host/srflx/relay)
+        setTimeout(function(){
+          try{
+            const sdp = pc.localDescription && pc.localDescription.sdp;
+            if(sdp){
+              const lines = sdp.split(String.fromCharCode(10));
+              const candLines = lines.filter(function(l){return l.indexOf('a=candidate:')===0;});
+              log('Local SDP has '+candLines.length+' ICE candidates','l-info');
+              const counts = {host:0, srflx:0, prflx:0, relay:0, other:0};
+              candLines.forEach(function(l){
+                const m = l.match(/typ\s+(\w+)/);
+                if(m) counts[m[1]] = (counts[m[1]]||0) + 1; else counts.other++;
+              });
+              log('  Candidate types: host='+counts.host+'  srflx='+counts.srflx+'  prflx='+counts.prflx+'  relay='+counts.relay+'  other='+counts.other,'l-info');
+              if(counts.relay===0 && counts.srflx===0) log('  → No public-reachable candidates (only local host). Media WILL fail through NAT.','l-err');
+            }
+          }catch(e){ log('Local SDP inspect failed: '+e.message,'l-warn'); }
+        }, 500);
+
+        // Poll RTP stats every 5s for 30s — detect whether any audio is flowing
+        let statsPolls = 0;
+        const statsInterval = setInterval(function(){
+          statsPolls++;
+          if(statsPolls > 6 || (callSession && callSession.state === 'disposed')){ clearInterval(statsInterval); return; }
+          try{
+            pc.getStats().then(function(report){
+              let sent = 0, recv = 0, selectedPair = null;
+              report.forEach(function(s){
+                if(s.type==='outbound-rtp' && s.kind==='audio') sent = s.packetsSent || 0;
+                if(s.type==='inbound-rtp'  && s.kind==='audio') recv = s.packetsReceived || 0;
+                if(s.type==='candidate-pair' && s.nominated && s.state==='succeeded') selectedPair = s;
+              });
+              const pairInfo = selectedPair ? (' · pair=succeeded') : ' · NO SUCCEEDED CANDIDATE PAIR';
+              log('Stats T+'+(statsPolls*5)+'s · RTP sent='+sent+' recv='+recv+pairInfo, sent>0&&recv>0?'l-ok':'l-warn');
+            });
+          }catch(_){}
+        }, 5000);
       }else{
         log('No rtcPeerConnection on session — WebRTC not engaged','l-warn');
       }
