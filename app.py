@@ -3255,6 +3255,22 @@ async function init(){
     try{
       webPhone.on('outboundCall', (cs) => log('[webPhone] outboundCall fired · session keys: '+Object.keys(cs||{}).slice(0,12).join(','), 'l-ok'));
     }catch(e){}
+
+    // Monkey-patch sipClient.emit (one level below webPhone) — this is where raw SIP signaling events live
+    try{
+      if(webPhone.sipClient && webPhone.sipClient.emit){
+        const _origSip = webPhone.sipClient.emit.bind(webPhone.sipClient);
+        webPhone.sipClient.emit = function(ev){
+          const args = Array.prototype.slice.call(arguments, 1);
+          log('[sipClient] '+ev+(args.length?' · '+_briefArg(args[0]):''),'l-evt');
+          return _origSip.apply(webPhone.sipClient, arguments);
+        };
+        log('sipClient.emit hooked — raw SIP events will be logged','l-info');
+        if(webPhone.sipClient.eventNames) log('sipClient event names registered: '+webPhone.sipClient.eventNames().join(',')||'(none)','l-info');
+      }else{
+        log('webPhone has no sipClient.emit to hook','l-warn');
+      }
+    }catch(e){ log('Could not hook sipClient: '+e.message,'l-warn'); }
     setStatus('Ready to make calls — enter a number above','ok');
     $('callBtn').disabled = false;
   }catch(e){
@@ -3319,6 +3335,47 @@ async function placeCall(){
       };
       log('session.emit hooked — all events will be logged','l-info');
     }catch(e){ log('Could not hook session.emit: '+e.message,'l-warn'); }
+
+    // Monitor the WebRTC peer connection — if ICE fails, calls die silently like this
+    try{
+      const pc = callSession.rtcPeerConnection;
+      if(pc){
+        log('RTC initial · conn='+pc.connectionState+' ice='+pc.iceConnectionState+' gather='+pc.iceGatheringState+' sig='+pc.signalingState,'l-info');
+        pc.addEventListener('connectionstatechange', function(){ log('RTC connection → '+pc.connectionState, pc.connectionState==='failed'?'l-err':'l-evt'); });
+        pc.addEventListener('iceconnectionstatechange', function(){ log('RTC ICE → '+pc.iceConnectionState, pc.iceConnectionState==='failed'?'l-err':'l-evt'); });
+        pc.addEventListener('icegatheringstatechange', function(){ log('RTC gather → '+pc.iceGatheringState,'l-evt'); });
+        pc.addEventListener('signalingstatechange', function(){ log('RTC signaling → '+pc.signalingState,'l-evt'); });
+        let cands=0;
+        pc.addEventListener('icecandidate', function(e){
+          if(e.candidate){ cands++;
+            const c = e.candidate.candidate || '';
+            // Log only first few full candidates; then summarize
+            if(cands<=4) log('ICE candidate #'+cands+': '+c.substring(0,140),'l-evt');
+            else if(cands===5) log('ICE candidate #5+ (further candidates suppressed in log)','l-evt');
+          }else log('ICE gathering DONE — total '+cands+' candidates','l-ok');
+        });
+        pc.addEventListener('icecandidateerror', function(e){
+          log('ICE candidate ERROR: '+(e.errorText||e.url||'?')+' code='+(e.errorCode||'?'),'l-err');
+        });
+      }else{
+        log('No rtcPeerConnection on session — WebRTC not engaged','l-warn');
+      }
+    }catch(e){ log('RTC hook error: '+e.message,'l-err'); }
+
+    // Print the outgoing SIP INVITE (the message the SDK built for this call)
+    try{
+      if(callSession.sipMessage){
+        let txt = '';
+        try{ txt = String(callSession.sipMessage); }catch(_){}
+        if(txt){
+          log('Outgoing SIP INVITE — first 14 lines:','l-info');
+          const NL = String.fromCharCode(10);
+          txt.split(NL).slice(0,14).forEach(function(ln){
+            log('  ' + ln.substring(0, 200), 'l-info');
+          });
+        }else log('sipMessage present but could not stringify','l-warn');
+      }else log('No sipMessage on session — INVITE may not have been constructed','l-warn');
+    }catch(e){ log('SIP dump error: '+e.message,'l-warn'); }
 
     // Normal listeners (in case hook missed anything)
     ['answered','ringing','disposed','inboundMessage','outboundMessage','accepted','rejected','failed','progress','bye','canceled','terminated'].forEach(ev=>{
