@@ -3236,6 +3236,38 @@ async function init(){
 
   setStatus('Registering with RingCentral SIP server…','busy');
   log('Initialising WebPhone instance …','l-info');
+
+  // ── PATCH: inject STUN + TURN servers so WebRTC media can traverse NAT ───────
+  // The v2 SDK only configures STUN, doesn't pick up RC's TURN credentials from
+  // p-rc-ice-servers header. We wrap RTCPeerConnection so every PC the SDK creates
+  // gets a full ICE config with public-TURN fallback (openrelay.metered.ca, free).
+  (function(){
+    const OriginalPC = window.RTCPeerConnection;
+    if(!OriginalPC){ log('Browser has no RTCPeerConnection — cannot proceed','l-err'); return; }
+    if(OriginalPC._9mPatched){ log('RTCPeerConnection already patched (skipping)','l-info'); return; }
+    const InjectedServers = [
+      {urls: 'stun:stun.l.google.com:19302'},
+      {urls: 'stun:stun.cloudflare.com:3478'},
+      {urls: ['turn:openrelay.metered.ca:80'],            username: 'openrelayproject', credential: 'openrelayproject'},
+      {urls: ['turn:openrelay.metered.ca:443'],           username: 'openrelayproject', credential: 'openrelayproject'},
+      {urls: ['turn:openrelay.metered.ca:443?transport=tcp'], username: 'openrelayproject', credential: 'openrelayproject'}
+    ];
+    function PatchedPC(config){
+      config = config || {};
+      const existing = Array.isArray(config.iceServers) ? config.iceServers : [];
+      // Merge existing (SDK-provided) with our injected servers
+      config.iceServers = existing.concat(InjectedServers);
+      config.iceTransportPolicy = 'all';
+      log('PC created · '+config.iceServers.length+' ICE servers · policy=all','l-info');
+      return new OriginalPC(config);
+    }
+    PatchedPC.prototype = OriginalPC.prototype;
+    Object.setPrototypeOf(PatchedPC, OriginalPC);
+    PatchedPC._9mPatched = true;
+    window.RTCPeerConnection = PatchedPC;
+    log('RTCPeerConnection monkey-patched · TURN relay injected','l-ok');
+  })();
+
   try{
     webPhone = new WebPhone({ sipInfo: sipResp.sipInfo });
     await webPhone.start();
