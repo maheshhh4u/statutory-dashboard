@@ -3352,7 +3352,7 @@ function _briefArg(a){
       // If it looks like a SIP message
       if(a.toString && a.toString.toString().indexOf('[native code]')<0){
         const t = String(a);
-        if(t.startsWith('SIP') || /^[A-Z]+\s.*SIP/.test(t)) return t.split(/\r?\n/)[0].substring(0,160);
+        if(t.startsWith('SIP') || /^[A-Z]+\s.*SIP/.test(t)) return t.split(/\\r?\\n/)[0].substring(0,160);
       }
       return '{' + keys.join(',') + '}';
     }
