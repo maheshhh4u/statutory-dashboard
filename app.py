@@ -3100,8 +3100,51 @@ RC_TEST_PAGE_HTML = """<!DOCTYPE html>
 
 <audio id="remoteAudio" autoplay></audio>
 
-<script src="https://cdn.jsdelivr.net/npm/ringcentral-web-phone@2.1.5/dist/index.iife.js"></script>
 <script>
+// ── Robust SDK loader — tries multiple CDN paths, logs what works ───────────
+function loadSDK(){
+  return new Promise((resolve, reject) => {
+    if(typeof WebPhone !== 'undefined'){ log('WebPhone already present','l-ok'); return resolve(); }
+    const urls = [
+      'https://cdn.jsdelivr.net/npm/ringcentral-web-phone/dist/index.iife.js',
+      'https://unpkg.com/ringcentral-web-phone/dist/index.iife.js',
+      'https://cdn.jsdelivr.net/npm/ringcentral-web-phone@latest/dist/index.iife.js',
+      'https://cdn.jsdelivr.net/npm/ringcentral-web-phone/dist/index.umd.js',
+      'https://cdn.jsdelivr.net/npm/ringcentral-web-phone/dist/esm/index.umd.js'
+    ];
+    let i = 0;
+    function tryNext(){
+      if(i >= urls.length){ reject(new Error('all CDN URLs exhausted')); return; }
+      const url = urls[i++];
+      log('Trying: '+url,'l-info');
+      const tag = document.createElement('script');
+      tag.src = url;
+      tag.onload = () => {
+        // Locate the class — could be at any of several globals depending on bundle format
+        const candidates = [
+          window.WebPhone,
+          window.RingCentralWebPhone,
+          window.ringcentralWebPhone,
+          (window['ringcentral-web-phone'] && window['ringcentral-web-phone'].default),
+          (window.WebPhone && window.WebPhone.default),
+          (window.WebPhone && window.WebPhone.WebPhone)
+        ].filter(Boolean);
+        if(candidates.length){
+          window.WebPhone = candidates[0];
+          log('SDK loaded · class found at global · '+url,'l-ok');
+          resolve();
+        }else{
+          log('Script loaded but no WebPhone class found in window globals','l-warn');
+          tryNext();
+        }
+      };
+      tag.onerror = () => { log('Network failure for: '+url,'l-warn'); tryNext(); };
+      document.head.appendChild(tag);
+    }
+    tryNext();
+  });
+}
+
 let webPhone = null, callSession = null, callerName = '', timerInterval = null, callStart = 0;
 
 function $(id){return document.getElementById(id);}
@@ -3170,12 +3213,17 @@ async function init(){
   }
   log('sipInfo received: domain='+(sipResp.sipInfo.domain||'?')+', transport='+(sipResp.sipInfo.transport||'?'),'l-ok');
 
-  // 4) Boot the WebPhone SDK
-  setStatus('Registering with RingCentral SIP server…','busy');
-  log('Initialising WebPhone SDK …','l-info');
-  if(typeof WebPhone === 'undefined'){
-    setStatus('SDK not loaded','err'); log('window.WebPhone undefined — CDN load failed','l-err'); return;
+  // 4) Load the WebPhone SDK from a CDN (try several known-good URLs)
+  setStatus('Loading WebPhone SDK from CDN…','busy');
+  try{
+    await loadSDK();
+  }catch(e){
+    setStatus('Could not load WebPhone SDK from any CDN','err');
+    log('All CDN sources failed: '+e.message,'l-err'); return;
   }
+
+  setStatus('Registering with RingCentral SIP server…','busy');
+  log('Initialising WebPhone instance …','l-info');
   try{
     webPhone = new WebPhone({ sipInfo: sipResp.sipInfo });
     await webPhone.start();
