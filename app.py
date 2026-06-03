@@ -3082,6 +3082,14 @@ RC_TEST_PAGE_HTML = """<!DOCTYPE html>
 
   <div id="status" class="status-row"><span class="pill" id="pill">Loading</span><span id="status-text">Initialising…</span></div>
 
+  <div class="row" style="margin-bottom:8px">
+    <label for="cidSelect" style="display:flex;align-items:center;font-size:12px;color:#7b8896;font-weight:600;padding-right:10px">Outbound caller ID:</label>
+    <select id="cidSelect" style="flex:1;padding:10px;border:1.5px solid #cfd6df;border-radius:8px;font-size:13px;font-family:inherit;color:#1e3a5f">
+      <option value="default">[Default — let RingCentral pick]</option>
+      <option value="freephone">+44 800 208 4749 (company freephone)</option>
+      <option value="direct">+44 121 818 4992 (her direct line)</option>
+    </select>
+  </div>
   <div class="row">
     <input id="dest" type="tel" placeholder="Number to dial — e.g. +447700900123" value="">
     <button id="callBtn" class="btn-call" disabled onclick="placeCall()">📞 Call</button>
@@ -3240,36 +3248,58 @@ async function init(){
   log('Outbound caller_id will be: '+window._callerId,'l-info');
 }
 
+function _sipBriefLine(msg){
+  // Extract first useful line of a SIP message for logging
+  try{
+    const txt = (typeof msg === 'string') ? msg : (msg && msg.toString ? msg.toString() : JSON.stringify(msg));
+    const lines = txt.split(/\r?\n/).filter(Boolean);
+    for(const ln of lines){
+      if(/^SIP\/2\.0\s+\d{3}/.test(ln) || /^(INVITE|ACK|BYE|CANCEL|REGISTER|SUBSCRIBE|NOTIFY|OPTIONS|REFER|UPDATE|INFO)\s/.test(ln)) return ln.substring(0,160);
+    }
+    return (lines[0]||txt).substring(0,160);
+  }catch(_){ return '?'; }
+}
+
 async function placeCall(){
   const dest = $('dest').value.trim();
   if(!dest){alert('Enter a phone number first'); return;}
   if(!webPhone){alert('WebPhone not ready'); return;}
 
+  const cidChoice = $('cidSelect').value;
+  let callerId = '';
+  if(cidChoice === 'freephone') callerId = '+448002084749';
+  else if(cidChoice === 'direct') callerId = '+441218184992';
+  // 'default' → empty so RC uses extension default
+
   setStatus('Calling '+dest+' …','busy');
-  log('Placing call to '+dest+' …','l-evt');
+  log('Placing call to '+dest+' · callerId='+(callerId||'[default — RC chooses]'),'l-evt');
   $('callBtn').disabled = true;
 
   try{
-    callSession = await webPhone.call(dest, window._callerId || '');
+    callSession = await webPhone.call(dest, callerId);
     log('Call session created · id='+(callSession.callId||'?'),'l-info');
 
-    // Wire up session events
     callSession.on('answered', () => {
       log('CALL ANSWERED','l-ok');
       setStatus('In call with '+dest,'ok');
       $('hangBtn').disabled = false;
       startTimer();
     });
-    callSession.on('disposed', () => {
-      log('Call ended','l-warn');
+    callSession.on('ringing', () => {
+      log('Far end is RINGING','l-ok');
+      setStatus('Ringing '+dest+' …','busy');
+    });
+    callSession.on('disposed', (payload) => {
+      let detail = '';
+      try{ if(payload){ detail = ' · ' + JSON.stringify(payload).substring(0,240); } }catch(_){}
+      log('Call ended (disposed)' + detail, 'l-warn');
       setStatus('Ready to make calls','ok');
       $('callBtn').disabled = false; $('hangBtn').disabled = true;
       callSession = null; stopTimer();
     });
-    // Catch a wider set of events for debug visibility
-    ['ringing','progress','failed','rejected','canceled','accepted','bye'].forEach(ev=>{
-      try{ callSession.on(ev, ()=>log('event: '+ev,'l-evt')); }catch(_){}
-    });
+    // SIP message visibility — this is what tells us WHY the call fails
+    callSession.on('outboundMessage', (m) => log('→ SIP OUT: '+_sipBriefLine(m),'l-evt'));
+    callSession.on('inboundMessage',  (m) => log('← SIP IN:  '+_sipBriefLine(m),'l-evt'));
   }catch(e){
     log('Call failed: '+(e.message||e),'l-err');
     setStatus('Call failed — see log','err');
