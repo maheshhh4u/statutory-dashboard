@@ -3100,9 +3100,16 @@ def api_rc_ringout_status(call_id):
         if r.status_code >= 400:
             return jsonify({"ok": False, "error": f"HTTP {r.status_code}", "detail": r.text[:300]}), 500
         d = r.json()
-        return jsonify({"ok": True,
-                        "status": (d.get("status") or {}).get("callStatus"),
-                        "raw": d.get("status")})
+        st = d.get("status") or {}
+        return jsonify({
+            "ok": True,
+            "status":         st.get("callStatus"),
+            "callerStatus":   (st.get("callerStatus") or {}).get("status"),
+            "callerReason":   (st.get("callerStatus") or {}).get("reason") or (st.get("callerStatus") or {}).get("description"),
+            "calleeStatus":   (st.get("calleeStatus") or {}).get("status"),
+            "calleeReason":   (st.get("calleeStatus") or {}).get("reason") or (st.get("calleeStatus") or {}).get("description"),
+            "raw":            st,
+        })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)[:300]}), 500
 
@@ -3730,19 +3737,36 @@ async function ringOut(){
     let polls = 0, last = '';
     const interval = setInterval(async function(){
       polls++;
-      if(polls > 30){ clearInterval(interval); $('callBtn').disabled = false; return; }
+      if(polls > 30){
+        log('Status polling timed out after 2 minutes','l-warn');
+        setStatus('Polling stopped (call may still be active)','err');
+        clearInterval(interval); $('callBtn').disabled = false; return;
+      }
       try{
         const s = await fetch('/api/rc/ringout/'+d.call_id).then(r=>r.json());
-        if(s.ok && s.status && s.status !== last){
-          last = s.status;
-          log('Status: '+s.status, s.status==='Success'?'l-ok':s.status==='InProgress'?'l-evt':'l-warn');
-          if(s.status==='Success'){
-            setStatus('Connected — talk!','ok');
-          } else if(s.status==='Busy' || s.status==='NoAnswer' || s.status==='Rejected' || s.status==='GenericError'){
-            setStatus('Call ended: '+s.status,'err');
-            $('callBtn').disabled = false;
-            clearInterval(interval);
+        if(s.ok){
+          // Build a rich status line
+          let line = 'Status: '+(s.status||'?');
+          if(s.callerStatus) line += '  ·  caller='+s.callerStatus + (s.callerReason?' ['+s.callerReason+']':'');
+          if(s.calleeStatus) line += '  ·  callee='+s.calleeStatus + (s.calleeReason?' ['+s.calleeReason+']':'');
+          if(line !== last){
+            last = line;
+            const cls = s.status==='Success' ? 'l-ok' : s.status==='InProgress' ? 'l-evt' : 'l-err';
+            log(line, cls);
+            if(s.status==='Success'){
+              setStatus('Connected — talk!','ok');
+            } else if(s.status && s.status !== 'InProgress'){
+              // Terminal state of any kind — re-enable button
+              setStatus('Call ended: '+s.status,'err');
+              if(s.raw){
+                try{ log('Raw status: '+JSON.stringify(s.raw).substring(0,400),'l-warn'); }catch(_){}
+              }
+              $('callBtn').disabled = false;
+              clearInterval(interval);
+            }
           }
+        }else{
+          log('Poll error: '+(s.error||'?'),'l-err');
         }
       }catch(e){ log('Poll error: '+e.message,'l-warn'); }
     }, 4000);
