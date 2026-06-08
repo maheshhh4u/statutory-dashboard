@@ -3043,15 +3043,17 @@ def api_rc_ringout():
     data   = request.json or {}
     to_num = str(data.get("to","")).strip()
     caller = str(data.get("caller","")).strip()
+    from_override = str(data.get("from","")).strip()
+    from_num = from_override or RC_FROM_NUMBER
     if not to_num: return jsonify({"ok": False, "error": "Missing destination number"}), 400
     if not caller: return jsonify({"ok": False, "error": "Select 'Calling as:' first"}), 400
-    if not RC_FROM_NUMBER:
-        return jsonify({"ok": False, "error": "RC_FROM_NUMBER env var not set"}), 400
+    if not from_num:
+        return jsonify({"ok": False, "error": "No 'from' number — set RC_FROM_NUMBER or pass one"}), 400
 
     try:
         tok = _rc_get_access_token()
         payload = {
-            "from": {"phoneNumber": RC_FROM_NUMBER},
+            "from": {"phoneNumber": from_num},
             "to":   {"phoneNumber": to_num},
             "callerId": {"phoneNumber": RC_CALLER_ID or RC_FROM_NUMBER},
             "playPrompt": False,
@@ -3077,8 +3079,8 @@ def api_rc_ringout():
             "call_id": d.get("id"),
             "status":  (d.get("status") or {}).get("callStatus"),
             "to":      to_num,
-            "from":    RC_FROM_NUMBER,
-            "caller_id_shown": RC_CALLER_ID or RC_FROM_NUMBER,
+            "from":    from_num,
+            "caller_id_shown": RC_CALLER_ID or from_num,
             "uri":     d.get("uri"),
         })
     except Exception as e:
@@ -3682,8 +3684,12 @@ RC_RINGOUT_PAGE_HTML = """<!DOCTYPE html>
     <input id="caller" type="text" value="Muhanna" style="flex:1">
   </div>
   <div class="row">
-    <label for="dest">Dial number</label>
-    <input id="dest" type="tel" placeholder="+447920116516 or +48579377406">
+    <label for="fromNum">Ring my phone</label>
+    <input id="fromNum" type="tel" placeholder="Your MOBILE, e.g. +48xxxxxxxxx (NOT a RingCentral number)">
+  </div>
+  <div class="row">
+    <label for="dest">Then dial</label>
+    <input id="dest" type="tel" placeholder="+447920116516 (the prospect)">
   </div>
   <button class="btn-call" id="callBtn" onclick="ringOut()">📞 Place RingOut call</button>
 
@@ -3711,18 +3717,20 @@ function setStatus(txt, cls){
 async function ringOut(){
   const dest = $('dest').value.trim();
   const caller = $('caller').value.trim();
-  if(!dest){alert('Enter a phone number first'); return;}
+  const fromNum = $('fromNum').value.trim();
+  if(!dest){alert('Enter the prospect number to dial'); return;}
+  if(!fromNum){alert('Enter YOUR phone number (the one that should ring first)'); return;}
   if(!caller){alert('Enter your name first'); return;}
 
   $('callBtn').disabled = true;
   setStatus('Sending request to RingCentral platform…','busy');
-  log('POST /api/rc/ringout to='+dest+' caller='+caller, 'l-evt');
+  log('POST /api/rc/ringout from='+fromNum+' to='+dest+' caller='+caller, 'l-evt');
 
   try{
     const r = await fetch('/api/rc/ringout', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({to: dest, caller: caller})
+      body: JSON.stringify({to: dest, from: fromNum, caller: caller})
     });
     const d = await r.json();
     if(!d.ok){
