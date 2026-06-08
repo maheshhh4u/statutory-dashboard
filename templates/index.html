@@ -999,9 +999,10 @@ function openCallModal(pg,reg,name,ccPhone){
         <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Phone Number</label>
         <input id="call-phone" value="${esc(currentPhone)}" placeholder="+44..." style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;font-family:monospace">
       </div>
-      <a id="call-dial" href="tel:${esc(currentPhone)}" onclick="startCallTimer()" style="background:var(--green);color:white;padding:7px 14px;border-radius:4px;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:currentColor;display:inline-block;vertical-align:middle;margin-right:4px"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg> Dial</a>
+      <button id="call-dial" type="button" onclick="placeRingOut('${esc(reg)}')" style="background:var(--green);color:white;padding:7px 14px;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:currentColor;display:inline-block;vertical-align:middle;margin-right:4px"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg> Call</button>
     </div>
-    <div style="font-size:10px;color:var(--t3);margin-bottom:14px">CC default: ${esc(ccPhone||'—')} ${overridePhone?'· <span style="color:var(--gold)">edited</span>':''}</div>
+    <div style="font-size:10px;color:var(--t3);margin-bottom:8px">CC default: ${esc(ccPhone||'—')} ${overridePhone?'· <span style="color:var(--gold)">edited</span>':''}</div>
+    <div id="call-status" style="font-size:12px;margin-bottom:14px;display:none;padding:8px 10px;border-radius:4px;line-height:1.4"></div>
 
     <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Call Outcome</label>
     <select id="call-outcome" style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;margin-bottom:10px">
@@ -1051,6 +1052,63 @@ function resetCallTimer(){
   _callTimerStart=null;
   const td=document.getElementById('call-timer-display');if(td)td.textContent='';
   const dur=document.getElementById('call-duration');if(dur)dur.value='';
+}
+
+function placeRingOut(reg){
+  const phone=document.getElementById('call-phone').value.trim();
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
+  if(!phone){alert('Enter a phone number first.');return;}
+  if(!caller){alert('Please select your name from "Calling as:" dropdown first.');return;}
+  const btn=document.getElementById('call-dial');
+  const status=document.getElementById('call-status');
+  btn.disabled=true; btn.style.opacity='0.5';
+  status.style.display='block';
+  status.style.background='#fef8e8'; status.style.color='#8a6d1f';
+  status.innerHTML='📞 Calling your RingCentral app… <strong>answer it</strong> to connect to '+esc(phone);
+
+  fetch('/api/rc/ringout',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({to:phone,caller:caller})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){
+        status.style.background='#fdecec'; status.style.color='#c0392b';
+        status.innerHTML='✗ '+esc(d.error||'Call failed')+(d.detail?'<br><span style="font-size:10px">'+esc(d.detail)+'</span>':'');
+        btn.disabled=false; btn.style.opacity='1';
+        return;
+      }
+      status.innerHTML='📞 Ringing your phone — <strong>answer the RingCentral app</strong>, then it dials '+esc(phone);
+      let polls=0, last='';
+      const iv=setInterval(()=>{
+        polls++;
+        if(polls>40){clearInterval(iv); btn.disabled=false; btn.style.opacity='1'; return;}
+        fetch('/api/rc/ringout/'+d.call_id).then(r=>r.json()).then(s=>{
+          if(!s.ok) return;
+          if(s.status && s.status!==last){
+            last=s.status;
+            if(s.status==='Success'){
+              status.style.background='#eef9f1'; status.style.color='#1d7a3a';
+              status.innerHTML='✓ <strong>Connected</strong> — talk now. Call timer started.';
+              startCallTimer();
+              clearInterval(iv);
+            } else if(s.status==='InProgress'){
+              let extra='';
+              if(s.callerStatus) extra+=' · you: '+esc(s.callerStatus);
+              if(s.calleeStatus) extra+=' · prospect: '+esc(s.calleeStatus);
+              status.innerHTML='📞 In progress'+extra;
+            } else {
+              status.style.background='#fdecec'; status.style.color='#c0392b';
+              status.innerHTML='Call ended: <strong>'+esc(s.status)+'</strong>'+(s.callerStatus==='NoAnswer'?' — you didn\\'t answer your phone in time':'');
+              btn.disabled=false; btn.style.opacity='1';
+              clearInterval(iv);
+            }
+          }
+        }).catch(()=>{});
+      },3000);
+    })
+    .catch(e=>{
+      status.style.background='#fdecec'; status.style.color='#c0392b';
+      status.textContent='✗ Network error: '+e.message;
+      btn.disabled=false; btn.style.opacity='1';
+    });
 }
 
 function saveCall(pg,reg,ccPhone){

@@ -3100,15 +3100,19 @@ def api_rc_ringout_status(call_id):
         if r.status_code >= 400:
             return jsonify({"ok": False, "error": f"HTTP {r.status_code}", "detail": r.text[:300]}), 500
         d = r.json()
-        st = d.get("status") or {}
+        st = d.get("status")
+        if not isinstance(st, dict): st = {}
+        def _leg(v):
+            # callerStatus / calleeStatus can be a plain string OR an object
+            if isinstance(v, dict):
+                return v.get("status") or v.get("reason") or v.get("description")
+            return v  # already a string (e.g. "Success", "InProgress", "NoAnswer")
         return jsonify({
             "ok": True,
-            "status":         st.get("callStatus"),
-            "callerStatus":   (st.get("callerStatus") or {}).get("status"),
-            "callerReason":   (st.get("callerStatus") or {}).get("reason") or (st.get("callerStatus") or {}).get("description"),
-            "calleeStatus":   (st.get("calleeStatus") or {}).get("status"),
-            "calleeReason":   (st.get("calleeStatus") or {}).get("reason") or (st.get("calleeStatus") or {}).get("description"),
-            "raw":            st,
+            "status":       st.get("callStatus"),
+            "callerStatus": _leg(st.get("callerStatus")),
+            "calleeStatus": _leg(st.get("calleeStatus")),
+            "raw":          st,
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)[:300]}), 500
@@ -3747,8 +3751,8 @@ async function ringOut(){
         if(s.ok){
           // Build a rich status line
           let line = 'Status: '+(s.status||'?');
-          if(s.callerStatus) line += '  ·  caller='+s.callerStatus + (s.callerReason?' ['+s.callerReason+']':'');
-          if(s.calleeStatus) line += '  ·  callee='+s.calleeStatus + (s.calleeReason?' ['+s.calleeReason+']':'');
+          if(s.callerStatus) line += '  ·  your-phone='+s.callerStatus;
+          if(s.calleeStatus) line += '  ·  prospect='+s.calleeStatus;
           if(line !== last){
             last = line;
             const cls = s.status==='Success' ? 'l-ok' : s.status==='InProgress' ? 'l-evt' : 'l-err';
