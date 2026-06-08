@@ -1096,7 +1096,7 @@ function placeRingOut(reg){
               status.innerHTML='📞 In progress'+extra;
             } else {
               status.style.background='#fdecec'; status.style.color='#c0392b';
-              status.innerHTML='Call ended: <strong>'+esc(s.status)+'</strong>'+(s.callerStatus==='NoAnswer'?' — you didn\\'t answer your phone in time':'');
+              status.innerHTML='Call ended: <strong>'+esc(s.status)+'</strong>'+(s.callerStatus==='NoAnswer'?' — you did not answer your phone in time':'');
               btn.disabled=false; btn.style.opacity='1';
               clearInterval(iv);
             }
