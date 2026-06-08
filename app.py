@@ -2135,11 +2135,16 @@ def _mx_get_all_keys():
         print(f"  _mx_get_all_keys: {e}")
         return {}
 
-def mx_create_note(entry_key, note_text, caller_name=""):
-    """Create a Note on a Maximizer Address Book entry."""
+def mx_create_note(entry_key, note_text, caller_name="", timestamp=None):
+    """Create a Note on a Maximizer Address Book entry.
+    timestamp: optional ISO string or 'YYYY-MM-DD HH:MM:SS' — uses current UTC if omitted.
+    """
     if not entry_key or not note_text: return None
     from datetime import datetime as _dt
-    now_iso = _dt.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    if timestamp:
+        now_iso = str(timestamp).replace(" ", "T")[:19]
+    else:
+        now_iso = _dt.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
     html = f"<p>{note_text.replace(chr(10),'<br/>')}</p>"
     if caller_name:
         html = f"<p><strong>{caller_name}</strong> — {now_iso[:10]}</p>" + html
@@ -2285,7 +2290,7 @@ def mx_create_entry(c, caller=""):
         mx_apply_udfs(key, c)
     else:
         print(f"  No key found — entry created but UDFs not applied separately")
-    return result
+    return key  # return the Maximizer key so callers can push Notes etc.
 
 def mx_update_entry(key, c, caller=""):
     """Update existing Company entry with all fields."""
@@ -2347,10 +2352,47 @@ def _mx_find_company_key(name):
         print(f"  _find_co strategy3: {e}")
     return ""
 
+
+def _push_unsynced_comments_to_mx(reg_str, mx_key):
+    """Push any unsynced dashboard comments to Maximizer as individual Notes.
+    Each comment becomes its own Note with the original timestamp.
+    """
+    try:
+        rows = db_query(
+            "SELECT id, text, caller, timestamp FROM comment_history "
+            "WHERE reg_number=? AND synced_to_maximizer=0 ORDER BY id ASC",
+            (reg_str,)
+        )
+        if not rows:
+            return 0
+        pushed = 0
+        for row_id, text, cname, ts in rows:
+            try:
+                resp = mx_create_note(mx_key, text, cname or "Dashboard", timestamp=ts)
+                if resp and resp.get("Code") == 0:
+                    db_exec("UPDATE comment_history SET synced_to_maximizer=1 WHERE id=?", (row_id,))
+                    pushed += 1
+            except Exception as e:
+                print(f"  Note push error id={row_id}: {e}")
+        if pushed:
+            print(f"  Pushed {pushed} unsynced comments to Maximizer for {reg_str}")
+        return pushed
+    except Exception as e:
+        print(f"  _push_unsynced_comments error: {e}")
+        return 0
+
 def do_sync_one(reg, c, caller, page):
     """Sync one charity — fetch full CC data then create/update in Maximizer."""
     # Enrich with full CC API data (what/who/how, address, etc.)
     c = enrich_charity_from_cc(c)
+
+    # ── Merge dashboard contact overrides (user-edited phone/email/website) ──
+    reg_str = str(c.get("reg_number","")).strip()
+    if reg_str:
+        co = _contact_overrides.get(reg_str, {})
+        if co.get("phone"):   c["phone"]   = co["phone"]
+        if co.get("email"):   c["email"]   = co["email"]
+        if co.get("website"): c["website"] = co["website"]
 
     # Fallback classification from bulk file
     fin = c.get("financials") or {}
@@ -2361,7 +2403,6 @@ def do_sync_one(reg, c, caller, page):
     # Set caller and status from dashboard for Maximizer UDFs
     if caller: c["caller"] = caller
     # Get status from _statuses (per-page reg) - use the most recent across pages
-    reg_str = str(c.get("reg_number","")).strip()
     if reg_str:
         for key, status in _statuses.items():
             if key.endswith(f"|{reg_str}") and status:
@@ -2376,16 +2417,26 @@ def do_sync_one(reg, c, caller, page):
     charity_name = title_case(c.get("name","") or "")
     existing = mx_find_by_org_number(reg_str) if reg_str else None
     existing_key = existing.get("key","") if existing else ""
-    print(f"  {reg_str}: existing={'yes' if existing_key else 'no'} caller={c.get('caller','')} status={c.get('status','')}")
+    print(f"  {reg_str}: existing={'yes' if existing_key else 'no'} "
+          f"phone={'yes' if c.get('phone') else 'no'} "
+          f"caller={c.get('caller','')} status={c.get('status','')}")
 
+    mx_key = ""
     if existing_key:
         print(f"  Updating: {charity_name[:30]}")
         mx_update_entry(existing_key, c, caller)
-        return "updated", None
+        mx_key = existing_key
+        action = "updated"
     else:
         print(f"  Creating: {charity_name[:30]}")
-        mx_create_entry(c, caller)
-        return "created", None
+        mx_key = mx_create_entry(c, caller) or ""
+        action = "created"
+
+    # ── Push any unsynced dashboard comments → Maximizer Notes ──────────────
+    if mx_key and reg_str:
+        _push_unsynced_comments_to_mx(reg_str, mx_key)
+
+    return action, None
 
 # ── API Routes ────────────────────────────────────────────────────────────────
 
