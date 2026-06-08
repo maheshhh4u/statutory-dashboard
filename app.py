@@ -1703,22 +1703,22 @@ def enrich_charity_from_cc(c):
     if not c.get("email")   and cc.get("email"):   c["email"]   = cc["email"]
     if not c.get("website") and cc.get("web"):     c["website"] = cc["web"]
     # Address lines
-    c["address1"]  = cc.get("address_line_one","")
-    c["address2"]  = cc.get("address_line_two","")
-    c["address3"]  = cc.get("address_line_three","")
-    c["city"]      = cc.get("address_line_five","") or cc.get("address_line_four","")
-    c["county"]    = cc.get("address_line_four","")
-    c["postcode"]  = cc.get("address_post_code","")
+    c["address1"]  = cc.get("address_line_one") or ""
+    c["address2"]  = cc.get("address_line_two") or ""
+    c["address3"]  = cc.get("address_line_three") or ""
+    c["city"]      = (cc.get("address_line_five") or "") or (cc.get("address_line_four") or "")
+    c["county"]    = cc.get("address_line_four") or ""
+    c["postcode"]  = cc.get("address_post_code") or ""
     # Registration details
-    dor = cc.get("date_of_registration","")
+    dor = cc.get("date_of_registration") or ""
     if dor: c["date_of_registration"] = dor[:10]
-    c["organisation_number"] = str(cc.get("organisation_number",""))
-    c["linked_charity"] = "Yes" if cc.get("group_subsid_suffix",0) != 0 else "No"
+    c["organisation_number"] = str(cc.get("organisation_number") or "")
+    c["linked_charity"] = "Yes" if (cc.get("group_subsid_suffix") or 0) != 0 else "No"
     # Financials
-    c["latest_income"]      = cc.get("latest_income","")
-    c["latest_expenditure"] = cc.get("latest_expenditure","")
-    c["fin_year_start"]     = (cc.get("latest_acc_fin_year_start_date","") or "")[:10]
-    c["fin_year_end"]       = (cc.get("latest_acc_fin_year_end_date","") or "")[:10]
+    c["latest_income"]      = cc.get("latest_income") or ""
+    c["latest_expenditure"] = cc.get("latest_expenditure") or ""
+    c["fin_year_start"]     = (cc.get("latest_acc_fin_year_start_date") or "")[:10]
+    c["fin_year_end"]       = (cc.get("latest_acc_fin_year_end_date") or "")[:10]
     # What / Who / How from who_what_where array
     wwh = cc.get("who_what_where") or []
     if not isinstance(wwh, list): wwh = []
@@ -1737,8 +1737,8 @@ def enrich_charity_from_cc(c):
     la_list = cc.get("CharityAoOLocalAuthority") or []
     if isinstance(la_list, list) and la_list and isinstance(la_list[0], dict):
         c["local_authority"] = la_list[0].get("local_authority","")
-    print(f"  CC enriched: what={c.get('what','')[:30]} who={c.get('who','')[:20]} "
-          f"la={c.get('local_authority','')} addr={c.get('address1','')[:20]}")
+    print(f"  CC enriched: what={(c.get('what') or '')[:30]} who={(c.get('who') or '')[:20]} "
+          f"la={c.get('local_authority') or ''} addr={(c.get('address1') or '')[:20]}")
     return c
 
 # ── CC classification cache (what/who/how) ────────────────────────────────────
