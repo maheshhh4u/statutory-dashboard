@@ -2433,18 +2433,15 @@ def do_sync_one(reg, c, caller, page):
     if not c.get("how")  and fin.get("how"):  c["how"]  = fin["how"]
 
     # ── Caller & Caller Status UDFs are driven by the dashboard "Called" state ──
-    # They are populated in Maximizer ONLY when this charity has been marked
-    # "Called" on the page being synced (i.e. a call was logged for it).
+    # The dashboard sends the ACTUAL on-screen called state in each charity
+    # (_called / _caller). We use that — NOT the server-side _called_log, which
+    # can hold stale entries that no longer match what the user sees.
     # Not called → both left blank in Maximizer.
     c["caller"] = ""
     c["status"] = ""
-    if reg_str and page:
-        called_entry = _called_log.get(f"{page}|{reg_str}")
-        if called_entry:
-            # Caller = who actually called (recorded at call time), else current selection
-            c["caller"] = called_entry.get("called_by") or caller or ""
-            # Caller Status becomes "Contacted" once a call has been logged
-            c["status"] = "Contacted"
+    if c.get("_called"):
+        c["caller"] = c.get("_caller") or caller or ""
+        c["status"] = "Contacted"
 
     charity_name = title_case(c.get("name","") or "")
     existing = mx_find_by_org_number(reg_str) if reg_str else None

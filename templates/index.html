@@ -2259,6 +2259,15 @@ function openMxModal(page){
   else if(page==='milestones')    charities=msFil.length?msFil:msAll;
   else if(page==='search')        charities=sAll;
   mxCurrentCharities=charities;
+  // Attach the dashboard's ACTUAL called state + caller to each charity so the
+  // Maximizer sync matches exactly what's shown on screen (not stale server data).
+  const _dashPage={prospects:'prospects',new:'new',late:'late',
+    old_charities:'old',milestones:'milestones',search:'search'}[page]||page;
+  charities.forEach(ch=>{
+    const cl=called[_dashPage+'|'+ch.reg_number];
+    ch._called = !!cl;
+    ch._caller = cl ? (cl.caller||currentCaller||'') : '';
+  });
   const names={prospects:'Prospect Lists',new:'Newly Registered',
     late:'Late Accounts',old_charities:'40+ Years',
     milestones:'Anniversary Watch',search:'Search Results'};
