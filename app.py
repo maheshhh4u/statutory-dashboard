@@ -575,6 +575,7 @@ def advanced_search():
 def mark_called():
     data=request.json or {}; reg=str(data.get("reg_number","")).strip(); page=str(data.get("page","")).strip()
     name=str(data.get("name","")).strip()
+    caller=str(data.get("caller","")).strip() or "Unknown"
     if not reg or not page: return jsonify({"ok":False}),400
     key=f"{page}|{reg}"
     if key in _called_log:
@@ -582,9 +583,9 @@ def mark_called():
         db_exec("DELETE FROM called_log WHERE key=?", (key,))
         return jsonify({"ok":True,"marked":False})
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    _called_log[key]={"reg_number":reg,"name":name,"page":page,"called_by":"Muhanna","timestamp":ts}
+    _called_log[key]={"reg_number":reg,"name":name,"page":page,"called_by":caller,"timestamp":ts}
     db_exec("INSERT OR REPLACE INTO called_log(key,reg_number,page,name,called_by,timestamp,data) VALUES(?,?,?,?,?,?,?)",
-            (key, reg, page, name, "Muhanna", ts, "{}"))
+            (key, reg, page, name, caller, ts, "{}"))
     return jsonify({"ok":True,"marked":True})
 
 @app.route("/api/comment",methods=["POST"])
@@ -826,6 +827,7 @@ def comment_history():
 def save_status():
     data=request.json or {}; reg=str(data.get("reg_number","")).strip(); page=str(data.get("page","")).strip()
     status=str(data.get("status","")).strip()
+    caller=str(data.get("caller","")).strip() or "Unknown"
     if not reg or not page: return jsonify({"ok":False}),400
     key=f"{page}|{reg}"
     if status:
@@ -833,9 +835,9 @@ def save_status():
         db_exec("INSERT OR REPLACE INTO statuses(key,status) VALUES(?,?)", (key, status))
         if key not in _called_log:
             ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-            _called_log[key]={"reg_number":reg,"page":page,"called_by":"Muhanna","timestamp":ts}
+            _called_log[key]={"reg_number":reg,"page":page,"called_by":caller,"timestamp":ts}
             db_exec("INSERT OR REPLACE INTO called_log(key,reg_number,page,name,called_by,timestamp,data) VALUES(?,?,?,?,?,?,?)",
-                    (key, reg, page, "", "Muhanna", ts, "{}"))
+                    (key, reg, page, "", caller, ts, "{}"))
     else:
         _statuses.pop(key,None)
         db_exec("DELETE FROM statuses WHERE key=?", (key,))
@@ -2430,19 +2432,16 @@ def do_sync_one(reg, c, caller, page):
     if not c.get("who")  and fin.get("who"):  c["who"]  = fin["who"]
     if not c.get("how")  and fin.get("how"):  c["how"]  = fin["how"]
 
-    # Set caller and status from dashboard for Maximizer UDFs
-    if caller: c["caller"] = caller
-    # Get status from _statuses (per-page reg) - use the most recent across pages
-    if reg_str:
-        for key, status in _statuses.items():
-            if key.endswith(f"|{reg_str}") and status:
-                c["status"] = status
-                break
-        # Get caller name from _called_log if set
-        for key, log in _called_log.items():
-            if key.endswith(f"|{reg_str}") and log.get("called_by"):
-                c["caller"] = log["called_by"]
-                break
+    # Caller = the dashboard "Calling as" selection (authoritative). No override.
+    if caller:
+        c["caller"] = caller
+    # Status = ONLY an explicit status set for this charity on THIS page.
+    # (Do not inherit a stray/stale status from other pages or the payload.)
+    c["status"] = ""
+    if reg_str and page:
+        st = _statuses.get(f"{page}|{reg_str}", "")
+        if st:
+            c["status"] = st
 
     charity_name = title_case(c.get("name","") or "")
     existing = mx_find_by_org_number(reg_str) if reg_str else None

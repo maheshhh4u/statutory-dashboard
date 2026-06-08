@@ -1230,10 +1230,11 @@ function sSelect(pg,reg){
 }
 function setStatus(pg,reg,el){
   const s=el.value,k=pg+'|'+reg;
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
   statuses[k]=s;
   el.className='ssel '+sCls(s);
   if(s&&!called[k]){called[k]={pg,reg,ts:new Date().toLocaleString('en-GB')};refreshCalled();}
-  fetch('/api/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reg_number:reg,page:pg,status:s})});
+  fetch('/api/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reg_number:reg,page:pg,status:s,caller:caller})});
   const row=el.closest('tr');
   if(row)row.classList.toggle('row-client',s==='Client');
 }
