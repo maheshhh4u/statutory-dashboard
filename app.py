@@ -1696,7 +1696,7 @@ def enrich_charity_from_cc(c):
     if not reg_no:
         return c
     cc = fetch_cc_charity(reg_no)
-    if not cc:
+    if not cc or not isinstance(cc, dict):
         return c
     # Basic contact fields
     if not c.get("phone")   and cc.get("phone"):   c["phone"]   = cc["phone"]
@@ -1720,19 +1720,23 @@ def enrich_charity_from_cc(c):
     c["fin_year_start"]     = (cc.get("latest_acc_fin_year_start_date","") or "")[:10]
     c["fin_year_end"]       = (cc.get("latest_acc_fin_year_end_date","") or "")[:10]
     # What / Who / How from who_what_where array
-    wwh = cc.get("who_what_where", [])
-    whats = [x["classification_desc"] for x in wwh
-             if x.get("classification_type","").lower()=="what"]
-    whos  = [x["classification_desc"] for x in wwh
-             if x.get("classification_type","").lower()=="who"]
-    hows  = [x["classification_desc"] for x in wwh
-             if x.get("classification_type","").lower()=="how"]
+    wwh = cc.get("who_what_where") or []
+    if not isinstance(wwh, list): wwh = []
+    def _wwh(kind):
+        out=[]
+        for x in wwh:
+            if isinstance(x, dict) and str(x.get("classification_type","")).lower()==kind:
+                d=x.get("classification_desc")
+                if d: out.append(str(d))
+        return out
+    whats, whos, hows = _wwh("what"), _wwh("who"), _wwh("how")
     if whats: c["what"] = ",".join(whats)
     if whos:  c["who"]  = ",".join(whos)
     if hows:  c["how"]  = ",".join(hows)
     # Local Authority
-    la_list = cc.get("CharityAoOLocalAuthority", [])
-    if la_list: c["local_authority"] = la_list[0].get("local_authority","")
+    la_list = cc.get("CharityAoOLocalAuthority") or []
+    if isinstance(la_list, list) and la_list and isinstance(la_list[0], dict):
+        c["local_authority"] = la_list[0].get("local_authority","")
     print(f"  CC enriched: what={c.get('what','')[:30]} who={c.get('who','')[:20]} "
           f"la={c.get('local_authority','')} addr={c.get('address1','')[:20]}")
     return c
@@ -2429,8 +2433,9 @@ def mx_sync():
                     if action=="created": res["created"]+=1
                     else: res["updated"]+=1
                 except Exception as e:
+                    import traceback
                     err_msg = f"{reg}: {str(e)[:120]}"
-                    print(f"  sync_err: {err_msg}")
+                    print(f"  sync_err: {err_msg}\n{traceback.format_exc()}")
                     res["errors"]+=1
                     res["error_details"].append(err_msg)
         except Exception as e:
