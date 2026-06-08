@@ -2264,7 +2264,8 @@ def mx_create_entry(c, caller=""):
         existing = mx_find_by_org_number(reg)
         if existing:
             print(f"  Entry already exists — updating instead of creating")
-            return mx_update_entry(existing.get("key",""), c, caller)
+            r = mx_update_entry(existing.get("key",""), c, caller)
+            return existing.get("key",""), r
         print(f"  No existing entry found for reg {reg} — creating new")
 
     # Create with ALL UDFs in one call (Table types save correctly)
@@ -2272,12 +2273,12 @@ def mx_create_entry(c, caller=""):
     data = build_charity_data_full(c)
     print(f"  mx_create: {data.get('CompanyName','?')}")
     result = mx_write_create(data)
-    print(f"  Code={result.get('Code')} Msg={str(result.get('Msg',''))[:60]}")
+    print(f"  Code={result.get('Code')} Msg={str(result.get('Msg',''))[:120]}")
     if result.get("Code") != 0:
-        return result
+        return "", result   # failed — caller will surface the error
 
     # Get key from response (per CCToMaximizerCRM.exe: resp.AbEntry.Data.Key)
-    key = result.get("_extracted_key","")
+    key = result.get("_extracted_key","") or _extract_key_from_create_resp(result)
     if not key:
         # Fallback: search by TYPEID(114) = reg number
         time.sleep(1)
@@ -2289,8 +2290,8 @@ def mx_create_entry(c, caller=""):
         # Apply UDFs that couldn't go in create (one at a time)
         mx_apply_udfs(key, c)
     else:
-        print(f"  No key found — entry created but UDFs not applied separately")
-    return key  # return the Maximizer key so callers can push Notes etc.
+        print(f"  No key found — entry may NOT have been created")
+    return key, result
 
 def mx_update_entry(key, c, caller=""):
     """Update existing Company entry with all fields."""
@@ -2424,12 +2425,21 @@ def do_sync_one(reg, c, caller, page):
     mx_key = ""
     if existing_key:
         print(f"  Updating: {charity_name[:30]}")
-        mx_update_entry(existing_key, c, caller)
+        result = mx_update_entry(existing_key, c, caller)
+        code = result.get("Code") if isinstance(result, dict) else 0
+        if code not in (0, None):
+            raise Exception(f"Maximizer UPDATE failed (Code={code}): {str(result.get('Msg',''))[:100]}")
         mx_key = existing_key
         action = "updated"
     else:
         print(f"  Creating: {charity_name[:30]}")
-        mx_key = mx_create_entry(c, caller) or ""
+        key, result = mx_create_entry(c, caller)
+        code = result.get("Code") if isinstance(result, dict) else 0
+        if code not in (0, None):
+            raise Exception(f"Maximizer CREATE failed (Code={code}): {str(result.get('Msg',''))[:100]}")
+        if not key:
+            raise Exception(f"CREATE reported Code={code} but NO entry was saved (no Key returned). Resp: {str(result)[:140]}")
+        mx_key = key
         action = "created"
 
     # ── Push any unsynced dashboard comments → Maximizer Notes ──────────────
