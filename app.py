@@ -1917,13 +1917,42 @@ def mx_find_by_org_number(reg_no):
         print(f"  mx_find error: {e}")
     return None
 
+def _clean_email_for_mx(e):
+    """Return a single valid email or '' (Maximizer rejects malformed emails)."""
+    import re
+    e = str(e or "").strip()
+    if not e: return ""
+    # take first if multiple separated by , ; / space
+    first = re.split(r"[,;/\s]+", e)[0].strip()
+    if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", first):
+        return first[:100]
+    return ""
+
+def _clean_phone_for_mx(p):
+    """Return a cleaned single phone number or '' for Maximizer Phone field."""
+    import re
+    p = str(p or "").strip()
+    if not p: return ""
+    # If multiple numbers mashed together, take the first chunk before a double-space/comma/semicolon
+    first = re.split(r"[,;]|\s{2,}|\s(?=\d{6,})", p)[0].strip()
+    # keep only valid phone chars
+    cleaned = re.sub(r"[^0-9+()\- ]", "", first).strip()
+    return cleaned[:30]
+
+def _clean_website_for_mx(w):
+    w = str(w or "").strip()
+    return w[:200]
+
 def build_charity_data_full(c):
     """Build complete Company entry data with ALL UDFs for single create/update call."""
     name = title_case(c.get("name","") or "Unknown Charity")[:79]
     data = {"Type": "Company", "CompanyName": name}
-    if c.get("phone"):   data["Phone1"]  = str(c["phone"])[:30]
-    if c.get("email"):   data["Email1"]  = str(c["email"])[:100]
-    if c.get("website"): data["WebSite"] = str(c["website"])[:200]
+    _ph = _clean_phone_for_mx(c.get("phone"))
+    if _ph: data["Phone1"] = _ph
+    _em = _clean_email_for_mx(c.get("email"))
+    if _em: data["Email1"] = _em
+    _web = _clean_website_for_mx(c.get("website"))
+    if _web: data["WebSite"] = _web
 
     # Address fields — all capped at 79 chars per Maximizer limit
     # From CCToMaximizerCRM.exe: AddressLine1 = lines 1+2+3 joined, City=line4, State=line5
@@ -2428,7 +2457,7 @@ def do_sync_one(reg, c, caller, page):
         result = mx_update_entry(existing_key, c, caller)
         code = result.get("Code") if isinstance(result, dict) else 0
         if code not in (0, None):
-            raise Exception(f"Maximizer UPDATE failed (Code={code}): {str(result.get('Msg',''))[:100]}")
+            raise Exception(f"Maximizer UPDATE failed (Code={code}): {str(result.get('Msg',''))[:400]}")
         mx_key = existing_key
         action = "updated"
     else:
@@ -2436,7 +2465,7 @@ def do_sync_one(reg, c, caller, page):
         key, result = mx_create_entry(c, caller)
         code = result.get("Code") if isinstance(result, dict) else 0
         if code not in (0, None):
-            raise Exception(f"Maximizer CREATE failed (Code={code}): {str(result.get('Msg',''))[:100]}")
+            raise Exception(f"Maximizer CREATE failed (Code={code}): {str(result.get('Msg',''))[:400]}")
         if not key:
             raise Exception(f"CREATE reported Code={code} but NO entry was saved (no Key returned). Resp: {str(result)[:140]}")
         mx_key = key
@@ -2495,7 +2524,7 @@ def mx_sync():
                     else: res["updated"]+=1
                 except Exception as e:
                     import traceback
-                    err_msg = f"{reg}: {str(e)[:120]}"
+                    err_msg = f"{reg}: {str(e)[:450]}"
                     print(f"  sync_err: {err_msg}\n{traceback.format_exc()}")
                     res["errors"]+=1
                     res["error_details"].append(err_msg)
