@@ -1096,7 +1096,11 @@ function placeRingOut(reg){
               status.innerHTML='📞 In progress'+extra;
             } else {
               status.style.background='#fdecec'; status.style.color='#c0392b';
-              status.innerHTML='Call ended: <strong>'+esc(s.status)+'</strong>'+(s.callerStatus==='NoAnswer'?' — you did not answer your phone in time':'');
+              let detail='Call ended: <strong>'+esc(s.status)+'</strong>';
+              if(s.callerStatus) detail+='<br><span style="font-size:11px">Your-phone leg: '+esc(s.callerStatus)+'</span>';
+              if(s.calleeStatus) detail+='<br><span style="font-size:11px">Prospect leg: '+esc(s.calleeStatus)+'</span>';
+              if(s.callerStatus==='NoAnswer') detail+='<br><span style="font-size:11px">→ Your RingCentral app did not ring/answer in time</span>';
+              status.innerHTML=detail;
               btn.disabled=false; btn.style.opacity='1';
               clearInterval(iv);
             }
