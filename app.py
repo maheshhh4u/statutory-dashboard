@@ -687,6 +687,15 @@ def contacts_bulk():
     """All contact overrides as {reg: {phone,email,website}} for frontend bootstrap."""
     return jsonify(_contact_overrides)
 
+@app.route("/api/state/bulk")
+def state_bulk():
+    """Saved statuses + called state for frontend bootstrap (persist across reloads)."""
+    called_out = {}
+    for k, log in _called_log.items():
+        called_out[k] = {"caller": (log.get("called_by") or ""),
+                         "ts": log.get("timestamp", "")}
+    return jsonify({"statuses": _statuses, "called": called_out})
+
 @app.route("/api/contact", methods=["POST"])
 def contact_override():
     """Save a manual phone/email/website override → Turso + Maximizer (if entry exists)."""
@@ -2441,7 +2450,12 @@ def do_sync_one(reg, c, caller, page):
     c["status"] = ""
     if c.get("_called"):
         c["caller"] = c.get("_caller") or caller or ""
-        c["status"] = "Contacted"
+        # Caller Status = the Status dropdown value the user selected (e.g. "Interested").
+        # Prefer the value sent from the dashboard; fall back to the stored status in
+        # Turso (survives page reloads); default to "Contacted" if none set.
+        _dash_page = {"old_charities": "old"}.get(page, page)
+        server_status = _statuses.get(f"{_dash_page}|{reg_str}", "") if reg_str else ""
+        c["status"] = (c.get("_status") or server_status or "Contacted")
 
     charity_name = title_case(c.get("name","") or "")
     existing = mx_find_by_org_number(reg_str) if reg_str else None

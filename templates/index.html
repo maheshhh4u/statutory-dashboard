@@ -901,6 +901,18 @@ fetch('/api/contacts/bulk').then(r=>r.json()).then(d=>{
   }).catch(()=>{});
 });
 
+// Load saved statuses + called state so dashboard selections persist across reloads
+fetch('/api/state/bulk').then(r=>r.json()).then(d=>{
+  if(d&&d.statuses) Object.assign(statuses, d.statuses);
+  if(d&&d.called){
+    Object.keys(d.called).forEach(k=>{
+      const c=d.called[k]||{}; const i=k.indexOf('|');
+      called[k]={pg:k.slice(0,i),reg:k.slice(i+1),caller:c.caller||'',ts:c.ts||''};
+    });
+  }
+  if(typeof refreshCalled==='function') refreshCalled();
+}).catch(()=>{});
+
 // ── Editable contact cells (phone / email / website) ───────────────────────────
 // Renders an inline-editable cell. Click → input → Enter/blur to save, Esc to cancel.
 // Saves go to /api/contact which writes Turso + pushes to Maximizer (if entry exists).
@@ -2267,6 +2279,7 @@ function openMxModal(page){
     const cl=called[_dashPage+'|'+ch.reg_number];
     ch._called = !!cl;
     ch._caller = cl ? (cl.caller||currentCaller||'') : '';
+    ch._status = statuses[_dashPage+'|'+ch.reg_number] || '';  // dashboard Status dropdown
   });
   const names={prospects:'Prospect Lists',new:'Newly Registered',
     late:'Late Accounts',old_charities:'40+ Years',
