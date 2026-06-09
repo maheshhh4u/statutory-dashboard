@@ -15,6 +15,16 @@ AREA_URL   = f"{BULK_BASE}/publicextract.charity_area_of_operation.zip"
 # ─── Turso DB ─────────────────────────────────────────────────────────────────
 TURSO_URL   = os.environ.get("TURSO_DATABASE_URL", "")
 TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "")
+
+# ─── OpenAI (AI pre-call insights) ────────────────────────────────────────────
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_MODEL   = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+# What 9 Mountains offers — editable here or overridden via the NINEM_PITCH env var.
+NINEM_PITCH = os.environ.get("NINEM_PITCH",
+    "9 Mountains helps UK charities strengthen and diversify their income — "
+    "particularly around statutory and government funding, grants, and financial "
+    "sustainability. The caller is reaching out to start a conversation about how "
+    "9 Mountains could support this charity's funding and growth.")
 _db_lock = threading.Lock()
 _db = None
 
@@ -695,6 +705,129 @@ def state_bulk():
         called_out[k] = {"caller": (log.get("called_by") or ""),
                          "ts": log.get("timestamp", "")}
     return jsonify({"statuses": _statuses, "called": called_out})
+
+def _fmt_money(v):
+    try:
+        n = float(str(v).replace(",", "").replace("£", "").strip())
+        if n >= 1_000_000: return f"£{n/1_000_000:.1f}m"
+        if n >= 1_000:     return f"£{n/1_000:.0f}k"
+        return f"£{n:.0f}"
+    except: return str(v or "")
+
+def _build_charity_profile_text(c, comments, calls):
+    """Assemble everything we know about a charity into a readable profile for the AI."""
+    L = []
+    L.append(f"Name: {c.get('name','')}")
+    L.append(f"Charity Commission reg number: {c.get('reg_number','')}")
+    if c.get("what"):  L.append(f"What they do (purposes): {c.get('what')}")
+    if c.get("who"):   L.append(f"Who they help: {c.get('who')}")
+    if c.get("how"):   L.append(f"How they work: {c.get('how')}")
+    if c.get("region"): L.append(f"Region: {c.get('region')}")
+    if c.get("local_authority"): L.append(f"Local authority: {c.get('local_authority')}")
+    city = c.get("city") or c.get("county") or ""
+    if city: L.append(f"Location: {city} {c.get('postcode','')}".strip())
+    # Financials
+    fin = []
+    if c.get("latest_income"):      fin.append(f"total income {_fmt_money(c.get('latest_income'))}")
+    elif c.get("income"):           fin.append(f"total income {_fmt_money(c.get('income'))}")
+    if c.get("latest_expenditure"): fin.append(f"expenditure {_fmt_money(c.get('latest_expenditure'))}")
+    if c.get("statutory_income") or c.get("statutory"):
+        fin.append(f"statutory income {_fmt_money(c.get('statutory_income') or c.get('statutory'))}")
+    if c.get("govt_grants") or c.get("government_grants"):
+        fin.append(f"government grants {_fmt_money(c.get('govt_grants') or c.get('government_grants'))}")
+    if c.get("govt_contracts") or c.get("government_contracts"):
+        fin.append(f"government contracts {_fmt_money(c.get('govt_contracts') or c.get('government_contracts'))}")
+    if c.get("statutory_pct") or c.get("stat_pct"):
+        fin.append(f"statutory income is {c.get('statutory_pct') or c.get('stat_pct')}% of total")
+    if fin: L.append("Financials: " + ", ".join(fin))
+    if c.get("fin_year_end") or c.get("fin_year"):
+        L.append(f"Latest financial year: {c.get('fin_year_end') or c.get('fin_year')}")
+    if c.get("income_trend") or c.get("trend"):
+        L.append(f"Income trend vs prior year: {c.get('income_trend') or c.get('trend')}")
+    if c.get("website"): L.append(f"Website: {c.get('website')}")
+    if c.get("email"):   L.append(f"Email on file: {c.get('email')}")
+    if c.get("phone"):   L.append(f"Phone on file: {c.get('phone')}")
+    if comments:
+        L.append("\nPrevious dashboard notes/comments:")
+        for cm in comments[-8:]: L.append(f"  - {cm}")
+    if calls:
+        L.append("\nPrevious call history:")
+        for cl in calls[-8:]: L.append(f"  - {cl}")
+    return "\n".join(L)
+
+@app.route("/api/ai/analyze", methods=["POST"])
+def ai_analyze():
+    """Generate a pre-call sales briefing for a charity using OpenAI."""
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False,
+            "error": "AI is not configured. Add the OPENAI_API_KEY environment variable in Render."}), 400
+    data = request.json or {}
+    c = dict(data.get("charity") or {})
+    reg = str(c.get("reg_number", "")).strip()
+    if not reg:
+        return jsonify({"ok": False, "error": "Missing charity reg_number"}), 400
+
+    # Enrich with full Charity Commission data (purposes, address, financials, etc.)
+    try:
+        c = enrich_charity_from_cc(c)
+    except Exception as e:
+        print(f"  ai enrich error: {e}")
+
+    # Gather dashboard comments + call history
+    comments, calls = [], []
+    try:
+        for text, cname, ts in db_query(
+            "SELECT text, caller, timestamp FROM comment_history WHERE reg_number=? ORDER BY id ASC", (reg,)):
+            comments.append(f"[{ts}] {cname or 'Unknown'}: {text}")
+    except Exception: pass
+    try:
+        for outcome, dur, cname, ts in db_query(
+            "SELECT outcome, duration_sec, caller, timestamp FROM call_log WHERE reg_number=? ORDER BY id ASC", (reg,)):
+            d = f" ({int(dur or 0)//60}m {int(dur or 0)%60}s)" if dur else ""
+            calls.append(f"[{ts}] {cname or 'Unknown'}: {outcome}{d}")
+    except Exception: pass
+
+    profile = _build_charity_profile_text(c, comments, calls)
+
+    system_prompt = (
+        "You are a sharp, concise sales-intelligence analyst preparing a caller from 9 Mountains "
+        "for a phone call to a UK charity. " + NINEM_PITCH + " "
+        "Give the caller a focused pre-call briefing so they sound informed and can quickly establish "
+        "relevance and rapport. Be specific and practical. Use ONLY the charity data provided — do not "
+        "invent facts, figures, names, or programmes. Where useful data is missing, briefly note it rather "
+        "than guessing. Keep the whole briefing tight and scannable (UK English)."
+    )
+    user_prompt = (
+        "Prepare a pre-call briefing from the data below.\n\n"
+        f"{profile}\n\n"
+        "Structure it with these short sections (use the exact headings):\n"
+        "**Snapshot** — 1-2 sentences on what they do, who they serve, and their size.\n"
+        "**Financial picture** — income, funding mix, and any notable trend or risk.\n"
+        "**Why they're a fit for 9 Mountains** — likely needs or pain points, grounded in the data.\n"
+        "**Talking points** — 3-4 specific, concrete things to mention or ask on the call.\n"
+        "**Watch-outs** — anything to be tactful about, or gaps in what we know.\n"
+    )
+
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={"model": OPENAI_MODEL,
+                  "messages": [{"role": "system", "content": system_prompt},
+                               {"role": "user", "content": user_prompt}],
+                  "temperature": 0.6, "max_tokens": 900},
+            timeout=60)
+        if resp.status_code != 200:
+            return jsonify({"ok": False,
+                "error": f"OpenAI error {resp.status_code}: {resp.text[:200]}"}), 502
+        out = resp.json()
+        analysis = (out.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        if not analysis:
+            return jsonify({"ok": False, "error": "Empty response from OpenAI"}), 502
+        return jsonify({"ok": True, "analysis": analysis,
+                        "model": OPENAI_MODEL, "name": c.get("name", "")})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"AI request failed: {str(e)[:200]}"}), 500
 
 @app.route("/api/contact", methods=["POST"])
 def contact_override():

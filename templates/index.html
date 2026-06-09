@@ -997,6 +997,61 @@ function callBtn(pg,reg,name,ccPhone){
   return`<button onclick="openCallModal('${pg}','${esc(reg)}','${esc(name||'').replace(/'/g,"\\'")}','${esc(ccPhone||'')}')" title="${title}" class="${cls}"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="width:14px;height:14px;fill:currentColor;display:block"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg></button>`;
 }
 
+// ── AI pre-call insights ───────────────────────────────────────────────────────
+let aiCache = {};  // reg → analysis html (cache so re-opening doesn't re-bill the API)
+function findCharityData(pg, reg){
+  const pools = {
+    prospects: (typeof pFil!=='undefined'&&pFil.length)?pFil:(typeof getPD==='function'?getPD():[]),
+    search:    (typeof sAll!=='undefined')?sAll:[],
+    new:       (typeof nAll!=='undefined')?nAll:[],
+    late:      (typeof lAll!=='undefined')?lAll:[],
+    old:       (typeof oAll!=='undefined')?oAll:[],
+    milestones:(typeof msAll!=='undefined')?msAll:[],
+    calling:   (typeof callingData!=='undefined')?callingData:[]
+  };
+  for(const k in pools){
+    const found=(pools[k]||[]).find(c=>String(c.reg_number)===String(reg));
+    if(found) return found;
+  }
+  return {reg_number:reg};
+}
+function aiMarkdown(t){
+  // minimal, safe markdown → html (escape first, then format)
+  let h=esc(t);
+  h=h.replace(/\*\*(.+?)\*\*/g,'<strong style="color:var(--navy)">$1</strong>');
+  h=h.replace(/^\s*[-•]\s+(.*)$/gm,'<li>$1</li>');
+  h=h.replace(/(<li>[\s\S]*?<\/li>)/g,'<ul style="margin:4px 0 8px;padding-left:18px">$1</ul>');
+  h=h.replace(/\n{2,}/g,'<br><br>').replace(/\n/g,'<br>');
+  h=h.replace(/<\/ul><br>/g,'</ul>').replace(/<br>\s*<ul/g,'<ul');
+  return h;
+}
+function runAiAnalysis(pg, reg){
+  const box=document.getElementById('ai-result');
+  const btn=document.getElementById('ai-btn');
+  if(!box) return;
+  box.style.display='block';
+  if(aiCache[reg]){ box.innerHTML=aiCache[reg]; return; }
+  btn.disabled=true; btn.style.opacity='0.6';
+  box.innerHTML='<div style="color:var(--t3)">🤖 Analysing charity data… this takes a few seconds.</div>';
+  const charity=findCharityData(pg,reg);
+  fetch('/api/ai/analyze',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({charity})})
+    .then(r=>r.json()).then(d=>{
+      btn.disabled=false; btn.style.opacity='1';
+      if(!d.ok){
+        box.innerHTML='<div style="color:var(--red)">⚠ '+esc(d.error||'AI analysis failed')+'</div>';
+        return;
+      }
+      const html='<div style="font-weight:700;color:var(--navy);margin-bottom:6px;display:flex;justify-content:space-between"><span>🤖 Pre-Call Briefing</span><span style="font-size:10px;color:var(--t3);font-weight:400">'+esc(d.model||'')+'</span></div>'+aiMarkdown(d.analysis);
+      aiCache[reg]=html;
+      box.innerHTML=html;
+    })
+    .catch(e=>{
+      btn.disabled=false; btn.style.opacity='1';
+      box.innerHTML='<div style="color:var(--red)">⚠ Network error: '+esc(e.message)+'</div>';
+    });
+}
+
 function openCallModal(pg,reg,name,ccPhone){
   const overridePhone=phoneOverrides[reg]||'';
   const currentPhone=overridePhone||ccPhone||'';
@@ -1004,7 +1059,11 @@ function openCallModal(pg,reg,name,ccPhone){
   const callerWarn=caller?'':'<div style="color:var(--red);font-size:11px;margin-bottom:8px">⚠ Select your name from "Calling as:" dropdown first.</div>';
   const html=`
     <div style="font-size:12px;color:var(--t3);margin-bottom:6px">Charity:</div>
-    <div style="font-weight:600;margin-bottom:14px">${esc(name||'')} <span style="color:var(--t3);font-weight:400;font-size:12px">· Reg ${esc(reg)}</span></div>
+    <div style="font-weight:600;margin-bottom:10px">${esc(name||'')} <span style="color:var(--t3);font-weight:400;font-size:12px">· Reg ${esc(reg)}</span></div>
+    <button type="button" onclick="runAiAnalysis('${pg}','${esc(reg)}')" id="ai-btn" style="width:100%;background:linear-gradient(135deg,#1e3a5f,#2d5a8f);color:#fff;border:none;border-radius:6px;padding:9px;cursor:pointer;font-size:13px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;justify-content:center;gap:6px">
+      <span style="font-size:15px">🤖</span> AI Pre-Call Insights
+    </button>
+    <div id="ai-result" style="display:none;background:#f6f9fc;border:1px solid #d8e3ef;border-radius:6px;padding:12px;margin-bottom:14px;font-size:12.5px;line-height:1.55;max-height:300px;overflow-y:auto"></div>
     ${callerWarn}
     <div style="display:grid;grid-template-columns:1fr auto;gap:6px;margin-bottom:6px;align-items:end">
       <div>
