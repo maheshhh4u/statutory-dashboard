@@ -96,6 +96,16 @@ def db_init():
             synced_to_maximizer INTEGER DEFAULT 0
         )""")
         client.execute("CREATE INDEX IF NOT EXISTS idx_call_reg ON call_log(reg_number)")
+        # Follow-up calls scheduled during a call
+        client.execute("""CREATE TABLE IF NOT EXISTS follow_ups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reg_number TEXT, name TEXT, page TEXT,
+            follow_up_at TEXT,
+            caller TEXT, notes TEXT,
+            created_at TEXT,
+            done INTEGER DEFAULT 0
+        )""")
+        client.execute("CREATE INDEX IF NOT EXISTS idx_fu_at ON follow_ups(follow_up_at)")
         # Seed default user if empty
         try:
             rs = client.execute("SELECT COUNT(*) FROM users")
@@ -858,7 +868,8 @@ def contact_override():
 # ── Call log ──────────────────────────────────────────────────────────────────
 @app.route("/api/call", methods=["POST"])
 def save_call():
-    """Save a completed call. Pushes to Maximizer Notes if entry exists."""
+    """Save a completed call, log notes as a comment, store any follow-up,
+    then run a full Maximizer sync (create/update + push notes & call)."""
     data = request.json or {}
     reg     = str(data.get("reg_number","")).strip()
     page    = str(data.get("page","")).strip()
@@ -866,40 +877,84 @@ def save_call():
     outcome = str(data.get("outcome","")).strip()[:40]
     notes   = str(data.get("notes","")).strip()[:800]
     caller  = str(data.get("caller","")).strip() or "Unknown"
+    status  = str(data.get("status","")).strip()
+    fu_at   = str(data.get("follow_up_at","")).strip()   # "YYYY-MM-DD HH:MM"
+    name    = str(data.get("name","")).strip()
     try: duration = max(0, int(data.get("duration_sec", 0) or 0))
     except: duration = 0
     if not reg or not outcome:
         return jsonify({"ok": False, "error": "Missing reg_number or outcome"}), 400
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Push to Maximizer as a Note
-    synced = 0
-    try:
-        found = mx_find_by_org_number(reg)
-        if found and found.get("key"):
-            note_text = f"📞 Call: {outcome}"
-            if duration: note_text += f" ({duration//60}m {duration%60}s)"
-            if phone: note_text += f"\nPhone: {phone}"
-            if notes: note_text += f"\n\n{notes}"
-            resp = mx_create_note(found["key"], note_text, caller)
-            if resp and resp.get("Code") == 0:
-                synced = 1
-    except Exception as e:
-        print(f"  call→mx note error: {e}")
-
+    # 1) Log the call (synced=0 — the sync below will push it)
     db_exec("""INSERT INTO call_log
         (reg_number,page,phone_used,outcome,notes,duration_sec,caller,timestamp,synced_to_maximizer)
-        VALUES(?,?,?,?,?,?,?,?,?)""",
-        (reg, page, phone, outcome, notes, duration, caller, ts, synced))
+        VALUES(?,?,?,?,?,?,?,?,0)""",
+        (reg, page, phone, outcome, notes, duration, caller, ts))
 
-    # Also mark called in called_log
+    # 2) Capture the call notes as a dashboard comment (so it shows in comment history
+    #    AND gets pushed to Maximizer as a Note by the sync below)
+    if notes:
+        db_exec("INSERT INTO comment_history(reg_number,page,text,caller,timestamp,synced_to_maximizer) VALUES(?,?,?,?,?,0)",
+                (reg, page, notes, caller, ts))
+
+    # 3) Store a follow-up if one was scheduled
+    if fu_at:
+        db_exec("""INSERT INTO follow_ups(reg_number,name,page,follow_up_at,caller,notes,created_at,done)
+                   VALUES(?,?,?,?,?,?,?,0)""",
+                (reg, name, page, fu_at, caller, notes, ts))
+
+    # 4) Mark called
     key = f"{page}|{reg}"
-    _called_log[key] = {"reg_number": reg, "page": page,
+    _called_log[key] = {"reg_number": reg, "page": page, "name": name,
                         "called_by": caller, "timestamp": ts}
     db_exec("INSERT OR REPLACE INTO called_log(key,reg_number,page,name,called_by,timestamp,data) VALUES(?,?,?,?,?,?,?)",
-            (key, reg, page, "", caller, ts, "{}"))
+            (key, reg, page, name, caller, ts, "{}"))
 
-    return jsonify({"ok": True, "synced_to_maximizer": synced})
+    # 5) Full Maximizer sync — create/update entry + push the comment & call note
+    synced = 0; sync_error = ""
+    try:
+        charity = dict(data.get("charity") or {})
+        charity["reg_number"] = reg
+        charity["_called"] = True
+        charity["_caller"] = caller
+        charity["_status"] = status
+        do_sync_one(reg, charity, caller, page)
+        synced = 1
+    except Exception as e:
+        sync_error = str(e)[:200]
+        print(f"  call→full sync error: {e}")
+
+    return jsonify({"ok": True, "synced_to_maximizer": synced, "sync_error": sync_error})
+
+@app.route("/api/followups")
+def followups_list():
+    """Upcoming follow-ups. ?scope=today (default) or ?scope=all (today + future, not done)."""
+    scope = str(request.args.get("scope","today")).strip()
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    try:
+        if scope == "all":
+            rows = db_query("""SELECT id,reg_number,name,page,follow_up_at,caller,notes
+                               FROM follow_ups WHERE done=0 AND substr(follow_up_at,1,10)>=?
+                               ORDER BY follow_up_at ASC""", (today,))
+        else:
+            rows = db_query("""SELECT id,reg_number,name,page,follow_up_at,caller,notes
+                               FROM follow_ups WHERE done=0 AND substr(follow_up_at,1,10)=?
+                               ORDER BY follow_up_at ASC""", (today,))
+        return jsonify({"followups": [
+            {"id": r[0], "reg_number": r[1], "name": r[2], "page": r[3],
+             "follow_up_at": r[4], "caller": r[5], "notes": r[6]} for r in rows]})
+    except Exception as e:
+        return jsonify({"followups": [], "error": str(e)[:120]})
+
+@app.route("/api/followup/done", methods=["POST"])
+def followup_done():
+    """Mark a follow-up as completed (so it drops off the scheduled list)."""
+    data = request.json or {}
+    fid = data.get("id")
+    if not fid: return jsonify({"ok": False}), 400
+    db_exec("UPDATE follow_ups SET done=1 WHERE id=?", (fid,))
+    return jsonify({"ok": True})
 
 @app.route("/api/call/history")
 def call_history():
@@ -2563,7 +2618,7 @@ def _push_unsynced_calls_to_mx(reg_str, mx_key):
                 if dur: note_text += f" ({dur//60}m {dur%60}s)"
                 if phone: note_text += f"\nPhone: {phone}"
                 if cname: note_text += f"\nCalled by: {cname}"
-                if notes: note_text += f"\n\n{notes}"
+                # (free-text notes are captured separately as a comment Note)
                 resp = mx_create_note(mx_key, note_text, cname or "Dashboard", timestamp=ts)
                 if resp and resp.get("Code") == 0:
                     db_exec("UPDATE call_log SET synced_to_maximizer=1 WHERE id=?", (row_id,))

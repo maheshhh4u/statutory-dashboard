@@ -352,6 +352,11 @@ select:focus{outline:none;border-color:var(--green)}
 
   <div id="callingNote" class="calling-note" style="display:none"></div>
 
+  <div id="scheduledCalls" style="display:none;margin-bottom:14px;border:1.5px solid #e8b339;border-radius:8px;padding:12px 14px;background:#fffdf5">
+    <div style="font-weight:700;color:#1e3a5f;margin-bottom:8px;font-size:14px">📅 Scheduled follow-up calls — today</div>
+    <div id="scheduledCallsBody"></div>
+  </div>
+
   <div class="tbl-wrap tbl-scroll">
     <table id="callingTable">
       <thead>
@@ -1129,9 +1134,18 @@ function openCallModal(pg,reg,name,ccPhone){
     <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Notes</label>
     <textarea id="call-notes" placeholder="Call summary, key points, follow-up actions..." maxlength="800" style="width:100%;min-height:80px;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;resize:vertical"></textarea>
 
+    <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase;margin-top:10px;display:block">📅 Follow-up call (if they asked to be called back)</label>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+      <input type="date" id="call-fu-date" style="padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px">
+      <input type="time" id="call-fu-time" style="padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px">
+      <button type="button" onclick="document.getElementById('call-fu-date').value='';document.getElementById('call-fu-time').value='';" style="background:none;border:1px solid var(--bd);border-radius:4px;cursor:pointer;padding:6px 10px;font-size:11px">Clear</button>
+    </div>
+    <div style="font-size:10px;color:var(--t3);margin-bottom:10px">Scheduled follow-ups appear at the top of the Daily Calling page on the day.</div>
+
+    <div id="call-save-status" style="font-size:12px;margin-top:8px;display:none"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
       <button onclick="closeGenericModal()" class="btn btn-outline btn-sm">Cancel</button>
-      <button onclick="saveCall('${pg}','${esc(reg)}','${esc(ccPhone||'')}')" class="btn btn-green btn-sm">💾 Save Call</button>
+      <button id="call-save-btn" onclick="saveCall('${pg}','${esc(reg)}','${esc(ccPhone||'')}')" class="btn btn-green btn-sm">💾 Save &amp; Maximizer Sync</button>
     </div>
   `;
   showModal('<span style="color:var(--gold)">☎</span> New Call · '+esc(name||reg), html);
@@ -1240,6 +1254,11 @@ function saveCall(pg,reg,ccPhone){
   const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
   if(!caller){alert('Please select your name from "Calling as:" dropdown first.');return;}
   if(!outcome){alert('Please select an outcome.');return;}
+  // Follow-up date/time → "YYYY-MM-DD HH:MM"
+  const fuDate=document.getElementById('call-fu-date').value;
+  const fuTime=document.getElementById('call-fu-time').value;
+  let fuAt='';
+  if(fuDate){ fuAt=fuDate+' '+(fuTime||'09:00'); }
   // Parse duration mm:ss → seconds
   let durSec=0;
   if(durStr){
@@ -1257,25 +1276,38 @@ function saveCall(pg,reg,ccPhone){
     fetch('/api/phone',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({reg_number:reg,phone:'',caller:caller})});
   }
-  // Save call
+  // Mark called in JS state immediately so the sync reflects it
+  const charity=findCharityData(pg,reg);
+  const nm=(charity&&charity.name)||'';
+  called[pg+'|'+reg]={pg,reg,name:nm,caller:caller,ts:new Date().toLocaleString('en-GB')};
+  const status=statuses[pg+'|'+reg]||'';
+
+  const btn=document.getElementById('call-save-btn');
+  const st=document.getElementById('call-save-status');
+  if(btn){btn.disabled=true;btn.style.opacity='0.6';btn.textContent='⏳ Saving & syncing…';}
+  if(st){st.style.display='block';st.style.color='var(--t3)';st.textContent='Saving call and syncing to Maximizer…';}
+
   fetch('/api/call',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({reg_number:reg,page:pg,phone:phone,outcome:outcome,notes:notes,
-                          duration_sec:durSec,caller:caller})})
+                          duration_sec:durSec,caller:caller,status:status,
+                          follow_up_at:fuAt,name:nm,charity:charity})})
     .then(r=>r.json()).then(d=>{
       resetCallTimer();
-      closeGenericModal();
-      // Mark called in UI
-      called[pg+'|'+reg]=true;
       refreshCalled();
-      // If we're on the Daily Calling tab, refresh its ranking + progress
       if(document.getElementById('tab-calling').classList.contains('active')) loadCalling();
-      // Show toast
-      const synced=d.synced_to_maximizer?'✓ Synced to Maximizer':'⊘ Saved locally (not in Maximizer)';
+      const ok=d.synced_to_maximizer;
+      const msg = ok ? '✓ Call saved & synced to Maximizer'
+                     : '✓ Call saved · ⚠ Maximizer sync issue'+(d.sync_error?': '+d.sync_error:'');
+      closeGenericModal(true);
       const t=document.createElement('div');
-      t.style.cssText='position:fixed;bottom:20px;right:20px;background:var(--green);color:white;padding:10px 16px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2)';
-      t.textContent='✓ Call saved. '+synced;
+      t.style.cssText='position:fixed;bottom:20px;right:20px;background:'+(ok?'var(--green)':'#b8860b')+';color:white;padding:10px 16px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2);max-width:340px';
+      t.textContent=msg+(fuAt?' · Follow-up set for '+fuAt:'');
       document.body.appendChild(t);
-      setTimeout(()=>t.remove(),3500);
+      setTimeout(()=>t.remove(),4500);
+    })
+    .catch(e=>{
+      if(btn){btn.disabled=false;btn.style.opacity='1';btn.innerHTML='💾 Save &amp; Maximizer Sync';}
+      if(st){st.style.color='var(--red)';st.textContent='✗ Error: '+e.message;}
     });
 }
 
@@ -1433,16 +1465,28 @@ function showModal(title, html){
       <div style="text-align:right;margin-top:14px"><button class="btn btn-outline btn-sm" onclick="closeGenericModal()">Close</button></div>
     </div>`;
     document.body.appendChild(m);
-    // Click outside content to close
+    // Close on backdrop click — but only if the mousedown ALSO started on the
+    // backdrop (so drag-selecting text inside an input never closes the modal).
+    m.addEventListener('mousedown', function(e){ m._mdownBg=(e.target===m); });
     m.addEventListener('click', function(e){
-      if(e.target===m) closeGenericModal();
+      if(e.target===m && m._mdownBg) closeGenericModal();
     });
   }
   document.getElementById('gm-title').innerHTML=title;
   document.getElementById('gm-body').innerHTML=html;
   m.classList.add('open');
 }
-function closeGenericModal(){
+function closeGenericModal(force){
+  // If the call modal is open with unsaved data, confirm before closing.
+  const notes=document.getElementById('call-notes');
+  if(force!==true && notes){
+    const outcome=document.getElementById('call-outcome');
+    const dur=document.getElementById('call-duration');
+    let durSec=0;
+    if(dur&&dur.value.trim()){const p=dur.value.split(':').map(x=>parseInt(x)||0);durSec=p.length===2?p[0]*60+p[1]:(p[0]||0);}
+    const dirty=(notes.value.trim()!=='')||(outcome&&outcome.value!=='')||durSec>0;
+    if(dirty && !confirm('You have unsaved call details (notes, outcome or duration). Close without saving?')) return;
+  }
   const m=document.getElementById('generic-modal');
   if(m) m.classList.remove('open');
 }
@@ -2135,7 +2179,36 @@ function loadMilestones(){
 
 // ── Daily Calling ───────────────────────────────────────────────────────────────
 let callingData=[];
+function loadScheduledCalls(){
+  const wrap=document.getElementById('scheduledCalls');
+  const body=document.getElementById('scheduledCallsBody');
+  if(!wrap||!body) return;
+  fetch('/api/followups?scope=today').then(r=>r.json()).then(d=>{
+    const list=(d&&d.followups)||[];
+    if(!list.length){ wrap.style.display='none'; return; }
+    wrap.style.display='block';
+    body.innerHTML=list.map(f=>{
+      const time=(f.follow_up_at||'').slice(11,16)||'—';
+      return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f0e6c8">
+        <span style="font-family:monospace;font-weight:700;color:#1e3a5f;min-width:46px">${esc(time)}</span>
+        <span style="flex:1">
+          <strong>${esc(f.name||('Reg '+f.reg_number))}</strong>
+          <span style="color:var(--t3);font-size:11px"> · Reg ${esc(f.reg_number)}${f.caller?' · '+esc(f.caller):''}</span>
+          ${f.notes?`<div style="font-size:11px;color:var(--t3);margin-top:2px">${esc(f.notes).slice(0,140)}</div>`:''}
+        </span>
+        <button class="btn btn-green btn-sm" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','')">📞 Call</button>
+        <button class="btn btn-outline btn-sm" onclick="markFollowupDone(${f.id},this)">✓ Done</button>
+      </div>`;
+    }).join('');
+  }).catch(()=>{ wrap.style.display='none'; });
+}
+function markFollowupDone(id,btn){
+  fetch('/api/followup/done',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id})}).then(()=>{ loadScheduledCalls(); });
+}
+
 function loadCalling(){
+  loadScheduledCalls();
   const cat=document.getElementById('callingCat').value;
   const body=document.getElementById('callingBody');
   const note=document.getElementById('callingNote');
