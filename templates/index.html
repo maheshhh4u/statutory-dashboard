@@ -1196,6 +1196,7 @@ function placeRingOut(reg){
         return;
       }
       status.innerHTML='📞 Your phone is ringing — <strong>answer it</strong>, then it dials '+esc(phone);
+      window._lastRingOut={callId:d.call_id, to:phone, reg:reg};
       let polls=0, last='', connected=false;
       const iv=setInterval(()=>{
         polls++;
@@ -1294,6 +1295,18 @@ function saveCall(pg,reg,ccPhone){
     .then(r=>r.json()).then(d=>{
       resetCallTimer();
       refreshCalled();
+      // Kick off call transcription (recording → Whisper → comment + Maximizer) for calls
+      // where a conversation happened. Runs in the background; transcript appears in History.
+      const talked=['Connected','Interested','Not Interested'].includes(outcome);
+      const ro=window._lastRingOut;
+      let transcribing=false;
+      if(talked && ro && String(ro.reg)===String(reg) && ro.callId){
+        transcribing=true;
+        fetch('/api/rc/transcribe',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({call_id:ro.callId,reg:reg,to:ro.to||phone,caller:caller,page:pg})})
+          .catch(()=>{});
+        window._lastRingOut=null;
+      }
       if(document.getElementById('tab-calling').classList.contains('active')) loadCalling();
       const ok=d.synced_to_maximizer;
       const msg = ok ? '✓ Call saved & synced to Maximizer'
@@ -1301,9 +1314,9 @@ function saveCall(pg,reg,ccPhone){
       closeGenericModal(true);
       const t=document.createElement('div');
       t.style.cssText='position:fixed;bottom:20px;right:20px;background:'+(ok?'var(--green)':'#b8860b')+';color:white;padding:10px 16px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2);max-width:340px';
-      t.textContent=msg+(fuAt?' · Follow-up set for '+fuAt:'');
+      t.textContent=msg+(fuAt?' · Follow-up set for '+fuAt:'')+(transcribing?' · 📝 Transcript will be added shortly':'');
       document.body.appendChild(t);
-      setTimeout(()=>t.remove(),4500);
+      setTimeout(()=>t.remove(),5000);
     })
     .catch(e=>{
       if(btn){btn.disabled=false;btn.style.opacity='1';btn.innerHTML='💾 Save &amp; Maximizer Sync';}

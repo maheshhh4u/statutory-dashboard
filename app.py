@@ -3467,7 +3467,115 @@ def api_rc_ringout_status(call_id):
         return jsonify({"ok": False, "error": str(e)[:300]}), 500
 
 
-# ── Standalone WebPhone test page — verify WebRTC works before main integration ─
+def _rc_find_recording(session_id, to_number):
+    """Find a recorded call matching our RingOut session / prospect number.
+    Returns (content_uri, rec_id, err)."""
+    tok = _rc_get_access_token()
+    from datetime import datetime as _dt, timedelta as _td
+    date_from = (_dt.utcnow() - _td(hours=3)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    r = requests.get(
+        f"{RC_SERVER_URL}/restapi/v1.0/account/~/extension/~/call-log",
+        headers={"Authorization": f"Bearer {tok}", "Accept": "application/json"},
+        params={"type": "Voice", "withRecording": "true", "dateFrom": date_from,
+                "perPage": 100, "view": "Detailed"},
+        timeout=30)
+    if r.status_code >= 400:
+        return None, None, f"call-log HTTP {r.status_code}: {r.text[:200]}"
+    records = r.json().get("records", []) or []
+    norm = lambda s: "".join(ch for ch in str(s or "") if ch.isdigit())[-9:]
+    want = norm(to_number)
+    best = None
+    for rec in records:
+        if not rec.get("recording"):
+            continue
+        sid = rec.get("telephonySessionId") or rec.get("sessionId") or ""
+        if session_id and sid and (session_id == sid or session_id.lstrip("s-") == str(sid).lstrip("s-")):
+            best = rec; break
+        to = rec.get("to", {}) or {}
+        if want and norm(to.get("phoneNumber")) == want:
+            best = rec; break   # records are newest-first
+    if not best:
+        return None, None, "no recording available yet"
+    recd = best.get("recording", {}) or {}
+    return (recd.get("contentUri") or recd.get("uri")), recd.get("id"), ""
+
+def _rc_download_recording(content_uri):
+    tok = _rc_get_access_token()
+    url = content_uri if str(content_uri).startswith("http") else f"{RC_SERVER_URL}{content_uri}"
+    r = requests.get(url, headers={"Authorization": f"Bearer {tok}"}, timeout=90)
+    r.raise_for_status()
+    return r.content
+
+def _openai_transcribe(audio_bytes, filename="call.mp3"):
+    if not OPENAI_API_KEY:
+        raise Exception("OPENAI_API_KEY not set")
+    r = requests.post(
+        "https://api.openai.com/v1/audio/transcriptions",
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+        files={"file": (filename, audio_bytes, "audio/mpeg")},
+        data={"model": "whisper-1"},
+        timeout=180)
+    if r.status_code >= 400:
+        raise Exception(f"Whisper HTTP {r.status_code}: {r.text[:200]}")
+    return (r.json().get("text") or "").strip()
+
+def _save_transcript(reg, page, caller, transcript):
+    """Save a transcript to dashboard comments + Maximizer Note."""
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    text = "📝 Call transcript:\n" + transcript
+    synced = 0
+    try:
+        found = mx_find_by_org_number(reg)
+        if found and found.get("key"):
+            resp = mx_create_note(found["key"], text, caller, timestamp=ts)
+            if resp and resp.get("Code") == 0:
+                synced = 1
+    except Exception as e:
+        print(f"  transcript→mx error: {e}")
+    db_exec("INSERT INTO comment_history(reg_number,page,text,caller,timestamp,synced_to_maximizer) VALUES(?,?,?,?,?,?)",
+            (reg, page, text, caller, ts, synced))
+    print(f"  transcript saved for {reg} (mx_synced={synced})")
+
+def _transcribe_call_async(call_id, reg, to_number, caller, page):
+    """Background worker: wait for the recording to be ready, transcribe, save."""
+    import time
+    for attempt in range(8):           # ~ up to 7 minutes (recordings process after the call)
+        time.sleep(45 if attempt else 20)
+        try:
+            uri, rec_id, err = _rc_find_recording(call_id, to_number)
+            if not uri:
+                print(f"  transcript wait {reg}: {err} (attempt {attempt+1})")
+                continue
+            audio = _rc_download_recording(uri)
+            transcript = _openai_transcribe(audio)
+            if transcript:
+                _save_transcript(reg, page, caller, transcript)
+            else:
+                print(f"  transcript empty for {reg}")
+            return
+        except Exception as e:
+            print(f"  transcribe attempt {attempt+1} error for {reg}: {e}")
+    print(f"  transcript gave up for {reg} (no recording after retries)")
+
+@app.route("/api/rc/transcribe", methods=["POST"])
+def api_rc_transcribe():
+    """Kick off (or retry) transcription for a completed RingOut call."""
+    if not _rc_configured():
+        return jsonify({"ok": False, "error": "RingCentral not configured"}), 400
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False, "error": "OPENAI_API_KEY not set"}), 400
+    data = request.json or {}
+    call_id = str(data.get("call_id", "")).strip()
+    reg     = str(data.get("reg", "")).strip()
+    to_num  = str(data.get("to", "")).strip()
+    caller  = str(data.get("caller", "")).strip() or "Unknown"
+    page    = str(data.get("page", "")).strip()
+    if not reg:
+        return jsonify({"ok": False, "error": "Missing reg"}), 400
+    t = threading.Thread(target=_transcribe_call_async,
+                         args=(call_id, reg, to_num, caller, page), daemon=True)
+    t.start()
+    return jsonify({"ok": True, "status": "started"})
 RC_TEST_PAGE_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
