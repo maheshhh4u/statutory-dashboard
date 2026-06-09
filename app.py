@@ -2394,6 +2394,41 @@ def _mx_find_company_key(name):
     return ""
 
 
+def _push_unsynced_calls_to_mx(reg_str, mx_key):
+    """Push any unsynced call-log entries to Maximizer as Notes.
+    Each call becomes a Note capturing outcome, duration, phone, caller and time.
+    """
+    try:
+        rows = db_query(
+            "SELECT id, phone_used, outcome, notes, duration_sec, caller, timestamp "
+            "FROM call_log WHERE reg_number=? AND synced_to_maximizer=0 ORDER BY id ASC",
+            (reg_str,)
+        )
+        if not rows:
+            return 0
+        pushed = 0
+        for row_id, phone, outcome, notes, dur, cname, ts in rows:
+            try:
+                note_text = f"📞 Call: {outcome or 'Logged'}"
+                try: dur = int(dur or 0)
+                except: dur = 0
+                if dur: note_text += f" ({dur//60}m {dur%60}s)"
+                if phone: note_text += f"\nPhone: {phone}"
+                if cname: note_text += f"\nCalled by: {cname}"
+                if notes: note_text += f"\n\n{notes}"
+                resp = mx_create_note(mx_key, note_text, cname or "Dashboard", timestamp=ts)
+                if resp and resp.get("Code") == 0:
+                    db_exec("UPDATE call_log SET synced_to_maximizer=1 WHERE id=?", (row_id,))
+                    pushed += 1
+            except Exception as e:
+                print(f"  Call-note push error id={row_id}: {e}")
+        if pushed:
+            print(f"  Pushed {pushed} unsynced calls to Maximizer for {reg_str}")
+        return pushed
+    except Exception as e:
+        print(f"  _push_unsynced_calls error: {e}")
+        return 0
+
 def _push_unsynced_comments_to_mx(reg_str, mx_key):
     """Push any unsynced dashboard comments to Maximizer as individual Notes.
     Each comment becomes its own Note with the original timestamp.
@@ -2487,6 +2522,7 @@ def do_sync_one(reg, c, caller, page):
     # ── Push any unsynced dashboard comments → Maximizer Notes ──────────────
     if mx_key and reg_str:
         _push_unsynced_comments_to_mx(reg_str, mx_key)
+        _push_unsynced_calls_to_mx(reg_str, mx_key)
 
     return action, None
 
