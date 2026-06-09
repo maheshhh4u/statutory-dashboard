@@ -999,6 +999,32 @@ function callBtn(pg,reg,name,ccPhone){
 
 // ── AI pre-call insights ───────────────────────────────────────────────────────
 let aiCache = {};  // reg → analysis html (cache so re-opening doesn't re-bill the API)
+function charityCategory(pg, reg){
+  if(pg==='prospects'){
+    const labelMap={best:'Best Immediate',readiness:'Readiness Package',
+      contract:'Contract Growth',retention:'Retention/Replace'};
+    const inLists=[];
+    ['best','readiness','contract','retention'].forEach(k=>{
+      if(((typeof pAll!=='undefined'&&pAll[k])||[]).some(c=>String(c.reg_number)===String(reg))) inLists.push(k);
+    });
+    let primary=(pList&&pList!=='all'&&inLists.includes(pList))?pList:(inLists[0]||(pList!=='all'?pList:'best'));
+    const labels=inLists.map(k=>labelMap[k]).join(', ');
+    return {category:labelMap[primary]||primary,
+            note:(typeof CRITERIA!=='undefined'?CRITERIA[primary]:'')||'',
+            all_lists:labels};
+  }
+  const meta={
+    new:{category:'Newly Registered',
+      note:'Recently registered with the Charity Commission — early in their lifecycle, likely still building funding streams, systems and statutory relationships.'},
+    late:{category:'Late Accounts',
+      note:'Has not filed its annual return/accounts on time with the Charity Commission — may signal capacity strain, a transition, or governance/admin pressure. Approach with tact.'},
+    old:{category:'40+ Years · Zero Statutory',
+      note:'Established 40+ years but currently has ZERO statutory/government income — a long, trusted track record with strong untapped potential for first-time statutory funding.'},
+    milestones:{category:'Anniversary Watch',
+      note:'Approaching a milestone anniversary within the next 12 months with zero government grants/contracts — entering a new chapter and may be receptive to statutory funding support for the first time. Timing is the hook.'}
+  };
+  return meta[pg]||{category:'',note:'',all_lists:''};
+}
 function findCharityData(pg, reg){
   const pools = {
     prospects: (typeof pFil!=='undefined'&&pFil.length)?pFil:(typeof getPD==='function'?getPD():[]),
@@ -1034,8 +1060,9 @@ function runAiAnalysis(pg, reg){
   btn.disabled=true; btn.style.opacity='0.6';
   box.innerHTML='<div style="color:var(--t3)">🤖 Analysing charity data… this takes a few seconds.</div>';
   const charity=findCharityData(pg,reg);
+  const cat=charityCategory(pg,reg);
   fetch('/api/ai/analyze',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({charity})})
+    body:JSON.stringify({charity,category:cat.category,category_note:cat.note,all_lists:cat.all_lists||''})})
     .then(r=>r.json()).then(d=>{
       btn.disabled=false; btn.style.opacity='1';
       if(!d.ok){

@@ -789,6 +789,19 @@ def ai_analyze():
 
     profile = _build_charity_profile_text(c, comments, calls)
 
+    # Category / list context — why this charity is a prospect
+    category      = str(data.get("category", "")).strip()
+    category_note = str(data.get("category_note", "")).strip()
+    all_lists     = str(data.get("all_lists", "")).strip()
+    cat_block = ""
+    if category:
+        cat_block = (f"\n\nPROSPECT LIST CONTEXT — this charity surfaced in 9 Mountains' "
+                     f"'{category}' list. What that list means: {category_note}")
+        if all_lists and all_lists != category:
+            cat_block += f"\n(It also qualifies for: {all_lists}.)"
+        cat_block += ("\nThis is the SPECIFIC reason 9 Mountains is calling — make the "
+                      "'Why they're a fit' and 'Talking points' sections speak directly to it.")
+
     system_prompt = (
         "You are a sharp, concise sales-intelligence analyst preparing a caller from 9 Mountains "
         "for a phone call to a UK charity. " + NINEM_PITCH + " "
@@ -799,12 +812,14 @@ def ai_analyze():
     )
     user_prompt = (
         "Prepare a pre-call briefing from the data below.\n\n"
-        f"{profile}\n\n"
+        f"{profile}"
+        f"{cat_block}\n\n"
         "Structure it with these short sections (use the exact headings):\n"
         "**Snapshot** — 1-2 sentences on what they do, who they serve, and their size.\n"
         "**Financial picture** — income, funding mix, and any notable trend or risk.\n"
-        "**Why they're a fit for 9 Mountains** — likely needs or pain points, grounded in the data.\n"
-        "**Talking points** — 3-4 specific, concrete things to mention or ask on the call.\n"
+        "**Why they're a fit for 9 Mountains** — likely needs or pain points, grounded in the data "
+        "and the prospect-list reason above.\n"
+        "**Talking points** — 3-4 specific, concrete things to mention or ask on the call, tuned to this list.\n"
         "**Watch-outs** — anything to be tactful about, or gaps in what we know.\n"
     )
 
