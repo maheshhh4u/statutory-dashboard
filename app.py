@@ -481,6 +481,11 @@ def compute_old():
 @app.route("/")
 def index(): return render_template("index.html")
 
+@app.route("/healthz")
+def healthz():
+    """Lightweight keep-alive endpoint for an external uptime pinger (no heavy work)."""
+    return "ok", 200
+
 @app.route("/api/prospects")
 def api_prospects():
     r=bg_check("prospects",{"lists":{"best":[],"readiness":[],"contract":[],"retention":[]},"counts":{},"total":0})
