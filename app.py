@@ -729,7 +729,7 @@ def _fmt_money(v):
         return f"£{n:.0f}"
     except: return str(v or "")
 
-def _build_charity_profile_text(c, comments, calls):
+def _build_charity_profile_text(c, comments, calls, transcripts=None):
     """Assemble everything we know about a charity into a readable profile for the AI."""
     L = []
     L.append(f"Name: {c.get('name','')}")
@@ -768,7 +768,22 @@ def _build_charity_profile_text(c, comments, calls):
     if calls:
         L.append("\nPrevious call history:")
         for cl in calls[-8:]: L.append(f"  - {cl}")
+    if transcripts:
+        L.append("\nPREVIOUS CALL TRANSCRIPTS (use these for continuity — pick up where the last conversation left off):")
+        for ts, cname, body in transcripts:
+            L.append(f"\n--- Call on {ts} (caller: {cname}) ---")
+            L.append(body)
     return "\n".join(L)
+
+def _trim_transcript(text, limit=2200):
+    """Trim a long transcript while keeping the opening context and the close
+    (where outcomes / next steps usually are)."""
+    body = str(text).replace("📝 Call transcript:", "").strip()
+    if len(body) <= limit:
+        return body
+    head = body[:800].rsplit(" ", 1)[0]
+    tail = body[-1200:].split(" ", 1)[-1]
+    return head + " …[middle of call omitted]… " + tail
 
 @app.route("/api/ai/analyze", methods=["POST"])
 def ai_analyze():
@@ -788,12 +803,15 @@ def ai_analyze():
     except Exception as e:
         print(f"  ai enrich error: {e}")
 
-    # Gather dashboard comments + call history
-    comments, calls = [], []
+    # Gather dashboard comments + call history (separating out call transcripts)
+    comments, calls, transcripts = [], [], []
     try:
         for text, cname, ts in db_query(
             "SELECT text, caller, timestamp FROM comment_history WHERE reg_number=? ORDER BY id ASC", (reg,)):
-            comments.append(f"[{ts}] {cname or 'Unknown'}: {text}")
+            if str(text).startswith("📝 Call transcript:"):
+                transcripts.append((ts, cname or "Unknown", str(text)))
+            else:
+                comments.append(f"[{ts}] {cname or 'Unknown'}: {text}")
     except Exception: pass
     try:
         for outcome, dur, cname, ts in db_query(
@@ -802,7 +820,12 @@ def ai_analyze():
             calls.append(f"[{ts}] {cname or 'Unknown'}: {outcome}{d}")
     except Exception: pass
 
-    profile = _build_charity_profile_text(c, comments, calls)
+    # Include the 2 most recent transcripts (newest first), trimmed for cost
+    trans_for_prompt = [(ts, cname, _trim_transcript(text))
+                        for ts, cname, text in transcripts[-2:][::-1]]
+    has_transcripts = len(trans_for_prompt) > 0
+
+    profile = _build_charity_profile_text(c, comments, calls, trans_for_prompt)
 
     # Category / list context — why this charity is a prospect
     category      = str(data.get("category", "")).strip()
@@ -830,11 +853,15 @@ def ai_analyze():
         f"{profile}"
         f"{cat_block}\n\n"
         "Structure it with these short sections (use the exact headings):\n"
-        "**Snapshot** — 1-2 sentences on what they do, who they serve, and their size.\n"
+        + ("**Last call recap** — what was discussed on the previous call(s) from the transcript: "
+           "key points, any interest/objections/commitments, and what to follow up on now. "
+           "Reference specifics from what was actually said.\n" if has_transcripts else "")
+        + "**Snapshot** — 1-2 sentences on what they do, who they serve, and their size.\n"
         "**Financial picture** — income, funding mix, and any notable trend or risk.\n"
         "**Why they're a fit for 9 Mountains** — likely needs or pain points, grounded in the data "
         "and the prospect-list reason above.\n"
-        "**Talking points** — 3-4 specific, concrete things to mention or ask on the call, tuned to this list.\n"
+        "**Talking points** — 3-4 specific, concrete things to mention or ask on the call, tuned to this list"
+        + (" and to where the last conversation left off" if has_transcripts else "") + ".\n"
         "**Watch-outs** — anything to be tactful about, or gaps in what we know.\n"
     )
 
