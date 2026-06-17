@@ -2781,6 +2781,23 @@ def mx_test():
         hint = f"Render IP ({server_ip}) may not be whitelisted." if ("403" in msg or "whitelist" in msg.lower()) else ""
         return jsonify({"ok":False,"error":msg,"hint":hint,"server_ip":server_ip}), 200
 
+@app.route("/api/maximizer/sync_one", methods=["POST"])
+def mx_sync_one_row():
+    """Sync a single charity to Maximizer (per-row sync button)."""
+    data = request.json or {}
+    c = dict(data.get("charity") or {})
+    reg = str(c.get("reg_number", "")).strip()
+    page = str(data.get("page", "")).strip()
+    caller = str(data.get("caller", "")).strip()
+    if not reg:
+        return jsonify({"ok": False, "error": "Missing reg_number"}), 400
+    c["reg_number"] = reg
+    try:
+        action, _ = do_sync_one(reg, c, caller, page)
+        return jsonify({"ok": True, "action": action})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:200]}), 500
+
 @app.route("/api/maximizer/sync",methods=["POST"])
 def mx_sync():
     global MX_BASE

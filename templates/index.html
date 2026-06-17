@@ -205,6 +205,9 @@ tr.removed-row td,tr.removed-row td a{color:#c0392b !important}
 /* STATUS SELECT */
 .ssel{font-family:inherit;font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;max-width:130px}
 .ssel:focus{outline:none;border-color:var(--green)}
+.rsync{display:block;margin:3px auto 0;width:22px;height:18px;padding:0;border:1px solid var(--bd,#ccd);border-radius:4px;background:var(--surface,#fff);color:#1e3a5f;cursor:pointer;font-size:11px;line-height:1}
+.rsync:hover{background:#1e3a5f;color:#fff;border-color:#1e3a5f}
+.rsync:disabled{opacity:.6;cursor:default}
 .s-client{background:#c8f0d8;color:var(--green);border-color:var(--green);font-weight:700}
 .s-interested{background:var(--goldl);color:var(--gold);border-color:#d4b040}
 .s-meeting{background:var(--bluel);color:var(--blue);border-color:#6080c8}
@@ -371,6 +374,7 @@ select:focus{outline:none;border-color:var(--green)}
           <th>Total Income</th>
           <th>Statutory</th>
           <th>Source</th>
+          <th style="width:140px">Stage</th>
         </tr>
       </thead>
       <tbody id="callingBody">
@@ -1164,6 +1168,11 @@ function startCallTimer(){
     if(dur) dur.value=m+':'+String(s).padStart(2,'0');
   },1000);
 }
+function stopCallTimer(){
+  // Stop counting but KEEP the elapsed value in the duration field so it can be saved.
+  if(_callTimerInterval){clearInterval(_callTimerInterval);_callTimerInterval=null;}
+  _callTimerStart=null;
+}
 function resetCallTimer(){
   if(_callTimerInterval){clearInterval(_callTimerInterval);_callTimerInterval=null;}
   _callTimerStart=null;
@@ -1206,6 +1215,7 @@ function placeRingOut(reg){
           // Call ended (both legs finished) → stop polling cleanly
           if(s.callerStatus==='Finished' || s.calleeStatus==='Finished'){
             clearInterval(iv);
+            stopCallTimer();   // freeze the timer at the call's final duration
             if(connected){
               status.style.background='#eef9f1'; status.style.color='#1d7a3a';
               status.innerHTML='✓ Call finished. Fill in the outcome below and Save.';
@@ -1603,7 +1613,7 @@ function renderPT(pg){
     const ai=[ol,cc].filter(Boolean).join(' ');
     const st=statuses['prospects|'+c.reg_number]||'';
     return`<tr class="${(st==='Client'?'row-client ':'')+(c.removed?'removed-row':'')}">
-      <td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="prospects" data-reg="${esc(c.reg_number)}" ${(mxSel['prospects']&&mxSel['prospects'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"></td><td style="text-align:center">${callBtn('prospects',c.reg_number,c.name,c.phone)}</td>
+      <td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="prospects" data-reg="${esc(c.reg_number)}" ${(mxSel['prospects']&&mxSel['prospects'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('prospects','${esc(c.reg_number)}',this)">⇄</button></td><td style="text-align:center">${callBtn('prospects',c.reg_number,c.name,c.phone)}</td>
       <td class="mono">${c.reg_number}</td>
       <td title="${esc(c.name)}">${esc((c.name||'').substring(0,28))}${(c.name||'').length>28?'…':''}${c.removed?'<span class="removed-tag">REMOVED</span>':''}</td>
       <td class="mono">${fmt(f.total_income)}</td>
@@ -1676,7 +1686,7 @@ function renderSR(data,pg){
       ?`<span class="tag" style="background:#c0392b;color:#fff">Removed</span>`
       :`<span class="tag tag-green">Active</span>`;
     return`<tr class="${rowCls.trim()}">
-      <td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="search" data-reg="${esc(c.reg_number)}" ${(mxSel['search']&&mxSel['search'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"></td><td style="text-align:center">${callBtn('search',c.reg_number,c.name,c.phone)}</td>
+      <td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="search" data-reg="${esc(c.reg_number)}" ${(mxSel['search']&&mxSel['search'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('search','${esc(c.reg_number)}',this)">⇄</button></td><td style="text-align:center">${callBtn('search',c.reg_number,c.name,c.phone)}</td>
       <td class="mono">${c.reg_number}</td>
       <td title="${esc(c.name)}">${esc((c.name||'').substring(0,24))}${(c.name||'').length>24?'…':''}${isRemoved?'<span class="removed-tag">REMOVED</span>':''}</td>
       <td>${statusTag}</td>
@@ -1786,7 +1796,7 @@ function renderNT(pg){
   document.getElementById('new-rmeta').textContent=`Showing ${nFil.length} of ${nAll.length} charities`;
   document.getElementById('new-body').innerHTML=nFil.slice(s,e).map(c=>{
     const st=statuses['new|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="new" data-reg="${esc(c.reg_number)}" ${(mxSel['new']&&mxSel['new'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"></td><td style="text-align:center">${callBtn('new',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.date_registered}</td>${ctCell(c.reg_number,'website',c.website)}${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}<td><span class="tag tag-green">Active</span></td><td>${sSelect('new',c.reg_number)}</td><td>${cmBox('new',c.reg_number)}</td><td>${cBtn('new',c.reg_number,c.name||'')}</td><td>${callerCol('new',c.reg_number)}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="new" data-reg="${esc(c.reg_number)}" ${(mxSel['new']&&mxSel['new'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('new','${esc(c.reg_number)}',this)">⇄</button></td><td style="text-align:center">${callBtn('new',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}</td><td class="mono">${c.date_registered}</td>${ctCell(c.reg_number,'website',c.website)}${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}<td><span class="tag tag-green">Active</span></td><td>${sSelect('new',c.reg_number)}</td><td>${cmBox('new',c.reg_number)}</td><td>${cBtn('new',c.reg_number,c.name||'')}</td><td>${callerCol('new',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('new-pag-info','new-pag-btns',pg,nFil.length,renderNT);
 }
@@ -1843,7 +1853,7 @@ function renderLT(pg){
   document.getElementById('late-rmeta').textContent=`Showing ${lFil.length} of ${lAll.length} charities`;
   document.getElementById('late-body').innerHTML=lFil.slice(s,e).map(c=>{
     const st=statuses['late|'+c.reg_number]||'';
-    return`<tr class="${(st==='Client'?'row-client ':'')+(c.removed?'removed-row':'')}"><td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="late" data-reg="${esc(c.reg_number)}" ${(mxSel['late']&&mxSel['late'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"></td><td style="text-align:center">${callBtn('late',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}${c.removed?'<span class="removed-tag">REMOVED</span>':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td>${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}${ctCell(c.reg_number,'website',c.website)}<td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td><td>${callerCol('late',c.reg_number)}</td></tr>`;
+    return`<tr class="${(st==='Client'?'row-client ':'')+(c.removed?'removed-row':'')}"><td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="late" data-reg="${esc(c.reg_number)}" ${(mxSel['late']&&mxSel['late'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('late','${esc(c.reg_number)}',this)">⇄</button></td><td style="text-align:center">${callBtn('late',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,42))}${(c.name||'').length>42?'…':''}${c.removed?'<span class="removed-tag">REMOVED</span>':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td>${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}${ctCell(c.reg_number,'website',c.website)}<td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td><td>${callerCol('late',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('late-pag-info','late-pag-btns',pg,lFil.length,renderLT);
 }
@@ -1892,7 +1902,7 @@ function renderOT(pg){
   document.getElementById('old-rmeta').textContent=`Showing ${oFil.length} of ${oAll.length} charities`;
   document.getElementById('old-body').innerHTML=oFil.slice(s,e).map(c=>{
     const st=statuses['old|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="old_charities" data-reg="${esc(c.reg_number)}" ${(mxSel['old_charities']&&mxSel['old_charities'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"></td><td style="text-align:center">${callBtn('old',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td><td class="mono">${c.date_registered}</td><td class="mono" style="font-weight:600">${c.age_years}</td><td class="mono">${fmt(c.total_income)}</td><td class="mono">${c.fin_year||'—'}</td>${ctCell(c.reg_number,'website',c.website)}${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}<td>${sSelect('old',c.reg_number)}</td><td>${cmBox('old',c.reg_number)}</td><td>${cBtn('old',c.reg_number,c.name||'')}</td><td>${callerCol('old',c.reg_number)}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="old_charities" data-reg="${esc(c.reg_number)}" ${(mxSel['old_charities']&&mxSel['old_charities'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('old_charities','${esc(c.reg_number)}',this)">⇄</button></td><td style="text-align:center">${callBtn('old',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td><td class="mono">${c.date_registered}</td><td class="mono" style="font-weight:600">${c.age_years}</td><td class="mono">${fmt(c.total_income)}</td><td class="mono">${c.fin_year||'—'}</td>${ctCell(c.reg_number,'website',c.website)}${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}<td>${sSelect('old',c.reg_number)}</td><td>${cmBox('old',c.reg_number)}</td><td>${cBtn('old',c.reg_number,c.name||'')}</td><td>${callerCol('old',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('old-pag-info','old-pag-btns',pg,oFil.length,renderOT);
 }
@@ -2274,6 +2284,7 @@ function renderCalling(d){
       <td class="mono" style="font-weight:600">${fmt(c.total_income)}</td>
       <td class="mono">${fmt(c.statutory)}</td>
       <td><span class="src-chip">${esc(c.source||'')}</span></td>
+      <td>${sSelect('calling',c.reg_number)}</td>
     </tr>`;
   }).join('');
 }
@@ -2302,7 +2313,7 @@ function renderMsT(pg){
     const urgency=mo<=1?'var(--green)':mo<=3?'var(--gold)':'var(--text)';
     const st=statuses['milestones|'+c.reg_number]||'';
     return`<tr class="${st==='Client'?'row-client':''}">
-      <td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="milestones" data-reg="${esc(c.reg_number)}" ${(mxSel['milestones']&&mxSel['milestones'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"></td><td style="text-align:center">${callBtn('milestones',c.reg_number,c.name,c.phone)}</td>
+      <td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="milestones" data-reg="${esc(c.reg_number)}" ${(mxSel['milestones']&&mxSel['milestones'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('milestones','${esc(c.reg_number)}',this)">⇄</button></td><td style="text-align:center">${callBtn('milestones',c.reg_number,c.name,c.phone)}</td>
       <td class="mono">${c.reg_number}</td>
       <td title="${esc(c.name)}">${esc((c.name||'').substring(0,36))}${(c.name||'').length>36?'…':''}</td>
       <td class="mono">${c.date_registered}</td>
@@ -2431,6 +2442,27 @@ function toggleMxAll(cb){
     const set=_mxSet(box.dataset.page);
     if(cb.checked) set.add(box.dataset.reg); else set.delete(box.dataset.reg);
   });
+}
+function syncOneRow(pg, reg, btn){
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
+  if(!caller){alert('Please select your name from "Calling as:" dropdown first.');return;}
+  const charity=findCharityData(pg,reg);
+  charity.reg_number=reg;
+  const dashPage={prospects:'prospects',search:'search',new:'new',late:'late',old_charities:'old',milestones:'milestones'}[pg]||pg;
+  const cl=called[dashPage+'|'+reg];
+  charity._called=!!cl;
+  charity._caller=cl?(cl.caller||caller):'';
+  charity._status=statuses[dashPage+'|'+reg]||'';
+  const orig=btn.innerHTML;
+  btn.disabled=true; btn.innerHTML='⏳';
+  fetch('/api/maximizer/sync_one',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({charity,page:pg,caller})})
+    .then(r=>r.json()).then(d=>{
+      btn.disabled=false;
+      if(d.ok){ btn.innerHTML='✓'; btn.title='Synced to Maximizer ('+d.action+')'; setTimeout(()=>{btn.innerHTML=orig;},2500); }
+      else { btn.innerHTML='✗'; btn.title=d.error||'Sync failed'; setTimeout(()=>{btn.innerHTML=orig;},3500); }
+    })
+    .catch(e=>{ btn.disabled=false; btn.innerHTML='✗'; btn.title=e.message; setTimeout(()=>{btn.innerHTML=orig;},3500); });
 }
 
 function openMxModal(page){
