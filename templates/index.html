@@ -377,10 +377,14 @@ select:focus{outline:none;border-color:var(--green)}
           <th>Statutory</th>
           <th>Source</th>
           <th style="width:140px">Stage</th>
+          <th style="min-width:180px">Comment</th>
+          <th style="width:80px">Called</th>
+          <th style="width:90px">Caller</th>
+          <th style="min-width:120px">Also in / Elsewhere</th>
         </tr>
       </thead>
       <tbody id="callingBody">
-        <tr><td colspan="12" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>
+        <tr><td colspan="16" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>
       </tbody>
     </table>
   </div>
@@ -1101,6 +1105,9 @@ function openCallModal(pg,reg,name,ccPhone){
     <button type="button" onclick="runAiAnalysis('${pg}','${esc(reg)}')" id="ai-btn" style="width:100%;background:linear-gradient(135deg,#1e3a5f,#2d5a8f);color:#fff;border:none;border-radius:6px;padding:9px;cursor:pointer;font-size:13px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;justify-content:center;gap:6px">
       <span style="font-size:15px">🤖</span> AI Pre-Call Insights
     </button>
+    <button type="button" onclick="emailCharity('${pg}','${esc(reg)}','${esc((name||'').replace(/'/g,"\\'"))}')" style="width:100%;background:#fff;color:#0f6cbd;border:1.5px solid #0f6cbd;border-radius:6px;padding:8px;cursor:pointer;font-size:13px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;justify-content:center;gap:6px">
+      <span style="font-size:14px">✉️</span> Email charity (Outlook)
+    </button>
     <div id="ai-result" style="display:none;background:#f6f9fc;border:1px solid #d8e3ef;border-radius:6px;padding:12px;margin-bottom:14px;font-size:12.5px;line-height:1.55;max-height:300px;overflow-y:auto"></div>
     ${callerWarn}
     <div style="display:grid;grid-template-columns:1fr auto;gap:6px;margin-bottom:6px;align-items:end">
@@ -1257,6 +1264,24 @@ function placeRingOut(reg){
       status.textContent='✗ Network error: '+e.message;
       btn.disabled=false; btn.style.opacity='1';
     });
+}
+
+function emailCharity(pg,reg,name){
+  const ch=findCharityData(pg,reg)||{};
+  let email=(contactOverrides[reg]&&contactOverrides[reg].email)||ch.email||'';
+  email=(email||'').trim();
+  if(!email){
+    alert('No email address on file for this charity. Add one in the Email field on the list (or in the call window) first.');
+    return;
+  }
+  const subject='9 Mountains — '+(name||'');
+  const body='Dear '+(name||'team')+',\n\n';
+  // Open Outlook web compose (you are already signed in via Microsoft)
+  const url='https://outlook.office.com/mail/deeplink/compose'
+    +'?to='+encodeURIComponent(email)
+    +'&subject='+encodeURIComponent(subject)
+    +'&body='+encodeURIComponent(body);
+  window.open(url,'_blank');
 }
 
 function saveCall(pg,reg,ccPhone){
@@ -2238,7 +2263,7 @@ function loadCalling(){
   const body=document.getElementById('callingBody');
   const note=document.getElementById('callingNote');
   note.style.display='none';
-  body.innerHTML='<tr><td colspan="12" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>';
+  body.innerHTML='<tr><td colspan="16" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>';
   fetch('/api/daily_calling?category='+encodeURIComponent(cat))
     .then(r=>r.json())
     .then(d=>{
@@ -2250,7 +2275,7 @@ function loadCalling(){
       renderCalling(d);
     })
     .catch(e=>{
-      body.innerHTML=`<tr><td colspan="12" style="text-align:center;padding:30px"><div class="err-box">⚠ ${esc(e.message)}</div></td></tr>`;
+      body.innerHTML=`<tr><td colspan="16" style="text-align:center;padding:30px"><div class="err-box">⚠ ${esc(e.message)}</div></td></tr>`;
     });
 }
 
@@ -2268,13 +2293,17 @@ function renderCalling(d){
   document.getElementById('callingFill').style.width=(total?Math.round(done/total*100):0)+'%';
 
   if(!callingData.length){
-    body.innerHTML='<tr><td colspan="12" style="text-align:center;padding:30px;color:var(--t3)">No contacts to call for this category yet.</td></tr>';
+    body.innerHTML='<tr><td colspan="16" style="text-align:center;padding:30px;color:var(--t3)">No contacts to call for this category yet.</td></tr>';
     return;
   }
   body.innerHTML=callingData.map((c,i)=>{
     const rowCls=c.called_today?'called-today-row':'';
     const nm=esc((c.name||'').substring(0,46))+((c.name||'').length>46?'…':'');
     const calledChip=c.called_today?'<span class="called-chip">✓ called today</span>':'';
+    const otherPgs=['prospects','new','late','old','search','milestones'].filter(p=>isCalled(p,c.reg_number));
+    const pgL={'prospects':'Prospects','new':'Newly Reg.','late':'Late Accts','old':'40+ Yrs','search':'Search','milestones':'Milestones'};
+    const cc=otherPgs.map(p=>`<span class="tag tag-purple" style="font-size:9px" title="Called in ${pgL[p]}">★ ${pgL[p]}</span>`).join(' ');
+    const ai=[getOL(c.reg_number),cc].filter(Boolean).join(' ');
     return`<tr class="${rowCls}">
       <td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="calling" data-reg="${esc(c.reg_number)}" ${(mxSel['calling']&&mxSel['calling'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('calling','${esc(c.reg_number)}',this)">⇄</button></td>
       <td style="text-align:center">${callBtn('calling',c.reg_number,c.name,c.phone)}</td>
@@ -2288,6 +2317,10 @@ function renderCalling(d){
       <td class="mono">${fmt(c.statutory)}</td>
       <td><span class="src-chip">${esc(c.source||'')}</span></td>
       <td>${sSelect('calling',c.reg_number)}</td>
+      <td>${cmBox('calling',c.reg_number)}</td>
+      <td>${cBtn('calling',c.reg_number,c.name||'')}</td>
+      <td>${callerCol('calling',c.reg_number)}</td>
+      <td style="white-space:normal">${ai||'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
     </tr>`;
   }).join('');
 }
