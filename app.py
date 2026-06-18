@@ -1,4 +1,8 @@
 import os, io, csv, zipfile, requests, threading, json
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 from datetime import datetime, timedelta
 from flask import Flask, render_template, jsonify, request, Response, stream_with_context
 
@@ -987,6 +991,74 @@ def followup_done():
     if not fid: return jsonify({"ok": False}), 400
     db_exec("UPDATE follow_ups SET done=1 WHERE id=?", (fid,))
     return jsonify({"ok": True})
+
+# ── Email sending (SMTP) ──────────────────────────────────────────────────────
+SMTP_HOST      = os.environ.get("SMTP_HOST", "")
+SMTP_PORT      = int(os.environ.get("SMTP_PORT", "587") or 587)
+SMTP_USER      = os.environ.get("SMTP_USER", "")
+SMTP_PASS      = os.environ.get("SMTP_PASS", "")
+SMTP_FROM      = os.environ.get("SMTP_FROM", "") or SMTP_USER
+SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", "9 Mountains")
+
+def _smtp_configured():
+    return bool(SMTP_HOST and SMTP_USER and SMTP_PASS)
+
+@app.route("/api/email/config")
+def email_config():
+    """Tell the frontend whether sending is configured (so it can show a helpful message)."""
+    return jsonify({"configured": _smtp_configured(),
+                    "from": SMTP_FROM if _smtp_configured() else ""})
+
+@app.route("/api/email/send", methods=["POST"])
+def email_send():
+    """Send an email directly from the dashboard via SMTP, and log it to
+    the charity's history + Maximizer Notes."""
+    if not _smtp_configured():
+        return jsonify({"ok": False, "error":
+            "Email sending isn't configured yet. Add SMTP_HOST, SMTP_USER, SMTP_PASS "
+            "(and SMTP_FROM) as environment variables in Render."}), 400
+    data = request.json or {}
+    to      = str(data.get("to", "")).strip()
+    subject = str(data.get("subject", "")).strip()
+    body    = str(data.get("body", "")).strip()
+    reg     = str(data.get("reg", "")).strip()
+    page    = str(data.get("page", "")).strip()
+    caller  = str(data.get("caller", "")).strip() or "Unknown"
+    if not to or not body:
+        return jsonify({"ok": False, "error": "Missing recipient or message body"}), 400
+    try:
+        msg = MIMEMultipart()
+        msg["From"]    = formataddr((SMTP_FROM_NAME, SMTP_FROM))
+        msg["To"]      = to
+        msg["Subject"] = subject or "(no subject)"
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+        if SMTP_PORT == 465:
+            srv = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30)
+        else:
+            srv = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
+            srv.ehlo(); srv.starttls(); srv.ehlo()
+        srv.login(SMTP_USER, SMTP_PASS)
+        srv.sendmail(SMTP_FROM, [a.strip() for a in to.split(",") if a.strip()], msg.as_string())
+        srv.quit()
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Send failed: {str(e)[:220]}"}), 500
+
+    # Log to dashboard history + Maximizer Note
+    logged = False; synced = 0
+    if reg:
+        ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        log = f"✉️ Email sent to {to}\nSubject: {subject}\n\n{body}"
+        try:
+            found = mx_find_by_org_number(reg)
+            if found and found.get("key"):
+                resp = mx_create_note(found["key"], log, caller, timestamp=ts)
+                if resp and resp.get("Code") == 0: synced = 1
+        except Exception as e:
+            print(f"  email→mx note error: {e}")
+        db_exec("INSERT INTO comment_history(reg_number,page,text,caller,timestamp,synced_to_maximizer) VALUES(?,?,?,?,?,?)",
+                (reg, page, log, caller, ts, synced))
+        logged = True
+    return jsonify({"ok": True, "logged": logged, "mx_synced": synced})
 
 @app.route("/api/call/history")
 def call_history():
