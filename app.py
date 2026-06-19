@@ -86,8 +86,8 @@ def db_init():
             updated_by TEXT,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )""")
-        # Idempotent column adds for email + website (no-op if already present)
-        for _col in ("email","website"):
+        # Idempotent column adds for email + website + contact person (no-op if already present)
+        for _col in ("email","website","contact_name","contact_role"):
             try: client.execute(f"ALTER TABLE phone_overrides ADD COLUMN {_col} TEXT")
             except Exception: pass
         # Call log — every call made through dashboard
@@ -210,20 +210,31 @@ def db_load_state():
 
         _contact_overrides.clear()
         try:
-            rows = db_query("SELECT reg_number, phone, email, website FROM phone_overrides")
+            rows = db_query("SELECT reg_number, phone, email, website, contact_name, contact_role FROM phone_overrides")
             for r in rows:
                 d = {}
                 if r[1]: d["phone"]   = r[1]
                 if r[2]: d["email"]   = r[2]
                 if r[3]: d["website"] = r[3]
+                if len(r) > 4 and r[4]: d["name"] = r[4]
+                if len(r) > 5 and r[5]: d["role"] = r[5]
                 if d: _contact_overrides[r[0]] = d
             print(f"[Turso] Loaded {len(_contact_overrides)} contact overrides")
         except Exception as e:
-            # Fallback if email/website columns aren't there yet (very first deploy)
-            rows = db_query("SELECT reg_number, phone FROM phone_overrides")
-            for r in rows:
-                if r[1]: _contact_overrides[r[0]] = {"phone": r[1]}
-            print(f"[Turso] Loaded {len(_contact_overrides)} phone-only overrides (legacy schema)")
+            # Fallback if newer columns aren't there yet (very first deploy)
+            try:
+                rows = db_query("SELECT reg_number, phone, email, website FROM phone_overrides")
+                for r in rows:
+                    d = {}
+                    if r[1]: d["phone"]=r[1]
+                    if r[2]: d["email"]=r[2]
+                    if r[3]: d["website"]=r[3]
+                    if d: _contact_overrides[r[0]] = d
+            except Exception:
+                rows = db_query("SELECT reg_number, phone FROM phone_overrides")
+                for r in rows:
+                    if r[1]: _contact_overrides[r[0]] = {"phone": r[1]}
+            print(f"[Turso] Loaded {len(_contact_overrides)} contact overrides (legacy schema)")
     except Exception as e:
         print(f"[Turso] db_load_state error: {e}")
 
@@ -680,16 +691,21 @@ def phone_override():
     )
 
 def _save_contact(reg, field, val, caller):
-    """Internal helper used by /api/phone and /api/contact."""
+    """Internal helper used by /api/phone and /api/contact.
+    Handles phone/email/website (Maximizer field updates) and name/role
+    (contact person — stored locally + pushed to Maximizer as a Note)."""
     if not reg:
         return jsonify({"ok":False, "error":"Missing reg_number"}), 400
-    if field not in MX_CONTACT_FIELD:
+    if field not in CONTACT_LIMITS:
         return jsonify({"ok":False, "error":"Bad field"}), 400
-    val = val[:CONTACT_LIMITS[field]]
-    existing = db_query("SELECT phone,email,website FROM phone_overrides WHERE reg_number=?", (reg,))
-    cur = {"phone": (existing[0][0] if existing else "") or "",
-           "email": (existing[0][1] if existing else "") or "",
-           "website":(existing[0][2] if existing else "") or ""}
+    val = (val or "")[:CONTACT_LIMITS[field]]
+    existing = db_query("SELECT phone,email,website,contact_name,contact_role FROM phone_overrides WHERE reg_number=?", (reg,))
+    e0 = existing[0] if existing else ("","","","","")
+    cur = {"phone":   (e0[0] if len(e0)>0 else "") or "",
+           "email":   (e0[1] if len(e0)>1 else "") or "",
+           "website": (e0[2] if len(e0)>2 else "") or "",
+           "name":    (e0[3] if len(e0)>3 else "") or "",
+           "role":    (e0[4] if len(e0)>4 else "") or ""}
     cur[field] = val
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     if not any(cur.values()):
@@ -697,20 +713,26 @@ def _save_contact(reg, field, val, caller):
         _contact_overrides.pop(reg, None)
     else:
         db_exec("""INSERT OR REPLACE INTO phone_overrides
-                   (reg_number,phone,email,website,updated_by,updated_at)
-                   VALUES(?,?,?,?,?,?)""",
-                (reg, cur["phone"], cur["email"], cur["website"], caller, ts))
+                   (reg_number,phone,email,website,contact_name,contact_role,updated_by,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (reg, cur["phone"], cur["email"], cur["website"], cur["name"], cur["role"], caller, ts))
         _contact_overrides[reg] = {k:v for k,v in cur.items() if v}
     synced = False
     try:
         found = mx_find_by_org_number(reg)
         if found and found.get("key"):
-            payload = {"Key": found["key"], MX_CONTACT_FIELD[field]: val}
-            r = mx_write_update(payload)
-            if r and r.get("Code") == 0: synced = True
+            if field in MX_CONTACT_FIELD:
+                payload = {"Key": found["key"], MX_CONTACT_FIELD[field]: val}
+                r = mx_write_update(payload)
+                if r and r.get("Code") == 0: synced = True
+            elif field in ("name", "role"):
+                # No safe contact-name field on a Company entry — record as a Note
+                nm = cur["name"]; rl = cur["role"]
+                note = "👤 Contact: " + (nm or "(name not set)") + (f" — {rl}" if rl else "")
+                resp = mx_create_note(found["key"], note, caller, timestamp=ts)
+                if resp and resp.get("Code") == 0: synced = True
     except Exception as e:
         print(f"  contact→mx update error: {e}")
-    # /api/phone callers expect this shape
     return jsonify({"ok": True, "phone": val if field=="phone" else None,
                     "field": field, "value": val, "synced_to_maximizer": synced})
 
@@ -722,7 +744,7 @@ def phones_bulk():
 
 # ── Contact overrides (phone / email / website) — manual edits per charity ────
 MX_CONTACT_FIELD = {"phone": "Phone1", "email": "Email1", "website": "WebSite"}
-CONTACT_LIMITS   = {"phone": 30,       "email": 100,      "website": 200}
+CONTACT_LIMITS   = {"phone": 30, "email": 100, "website": 200, "name": 80, "role": 80}
 
 @app.route("/api/contacts/bulk")
 def contacts_bulk():
