@@ -1106,7 +1106,7 @@ function openCallModal(pg,reg,name,ccPhone){
       <span style="font-size:15px">🤖</span> AI Pre-Call Insights
     </button>
     <button type="button" onclick="emailCharity('${pg}','${esc(reg)}','${esc((name||'').replace(/'/g,"\\'"))}')" style="width:100%;background:#fff;color:#0f6cbd;border:1.5px solid #0f6cbd;border-radius:6px;padding:8px;cursor:pointer;font-size:13px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;justify-content:center;gap:6px">
-      <span style="font-size:14px">✉️</span> Email charity
+      <span style="font-size:14px">✉️</span> Email charity (Outlook)
     </button>
     <div id="ai-result" style="display:none;background:#f6f9fc;border:1px solid #d8e3ef;border-radius:6px;padding:12px;margin-bottom:14px;font-size:12.5px;line-height:1.55;max-height:300px;overflow-y:auto"></div>
     ${callerWarn}
@@ -1270,65 +1270,18 @@ function emailCharity(pg,reg,name){
   const ch=findCharityData(pg,reg)||{};
   let email=(contactOverrides[reg]&&contactOverrides[reg].email)||ch.email||'';
   email=(email||'').trim();
-  const subject='9 Mountains \u2014 '+(name||'');
-  const sig=(currentCaller||localStorage.getItem(LS_CALLER)||'');
-  const body='Dear '+(name||'team')+',\n\n\n\nKind regards,\n'+sig;
-  let m=document.getElementById('email-modal');
-  if(!m){
-    m=document.createElement('div'); m.id='email-modal'; m.className='modal-bg';
-    document.body.appendChild(m);
-    m.addEventListener('mousedown',function(e){m._mdownBg=(e.target===m);});
-    m.addEventListener('click',function(e){ if(e.target===m && m._mdownBg) closeEmailModal(); });
+  if(!email){
+    alert('No email address on file for this charity. Add one in the Email field on the list (or in the call window) first.');
+    return;
   }
-  m.innerHTML=`<div class="modal" style="max-width:580px;max-height:88vh;overflow-y:auto">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <h3 style="margin:0">\u2709\ufe0f Email ${esc(name||'')}</h3>
-      <button onclick="closeEmailModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--t3);padding:0 6px;line-height:1">\u00d7</button>
-    </div>
-    <div style="font-size:12px;color:var(--t3);margin-bottom:10px">Sent straight from the dashboard. It is logged to this charity history and Maximizer Notes.</div>
-    <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">To</label>
-    <input id="em-to" value="${esc(email)}" placeholder="name@charity.org" style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;margin:3px 0 9px">
-    <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Subject</label>
-    <input id="em-subject" value="${esc(subject)}" style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;margin:3px 0 9px">
-    <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Message</label>
-    <textarea id="em-body" style="width:100%;min-height:170px;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;font-family:inherit;resize:vertical;margin-top:3px">${esc(body)}</textarea>
-    <div id="em-status" style="font-size:12px;margin-top:8px;display:none"></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-      <button class="btn btn-outline btn-sm" onclick="closeEmailModal()">Cancel</button>
-      <button id="em-send" class="btn btn-green btn-sm" onclick="sendEmail('${pg}','${esc(reg)}')">\u2709\ufe0f Send Email</button>
-    </div>
-  </div>`;
-  m.classList.add('open');
-}
-function closeEmailModal(){
-  const m=document.getElementById('email-modal'); if(m) m.classList.remove('open');
-}
-function sendEmail(pg,reg){
-  const to=document.getElementById('em-to').value.trim();
-  const subject=document.getElementById('em-subject').value.trim();
-  const body=document.getElementById('em-body').value.trim();
-  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
-  if(!to){alert('Please enter a recipient email address.');return;}
-  if(!body){alert('Please write a message.');return;}
-  const btn=document.getElementById('em-send'), st=document.getElementById('em-status');
-  btn.disabled=true;btn.style.opacity='0.6';btn.textContent='\u23f3 Sending\u2026';
-  if(st){st.style.display='block';st.style.color='var(--t3)';st.textContent='Sending email\u2026';}
-  fetch('/api/email/send',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({to,subject,body,reg,page:pg,caller})})
-    .then(r=>r.json()).then(d=>{
-      if(d.ok){
-        closeEmailModal();
-        const t=document.createElement('div');
-        t.style.cssText='position:fixed;bottom:20px;right:20px;background:var(--green);color:white;padding:10px 16px;border-radius:6px;font-size:13px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,.2)';
-        t.textContent='\u2713 Email sent'+(d.mx_synced?' & logged to Maximizer':(d.logged?' & logged to history':''));
-        document.body.appendChild(t);setTimeout(()=>t.remove(),4500);
-      } else {
-        btn.disabled=false;btn.style.opacity='1';btn.textContent='\u2709\ufe0f Send Email';
-        if(st){st.style.color='var(--red)';st.style.whiteSpace='pre-wrap';st.textContent='\u2717 '+(d.error||'Send failed');}
-      }
-    })
-    .catch(e=>{btn.disabled=false;btn.style.opacity='1';btn.textContent='\u2709\ufe0f Send Email';
-      if(st){st.style.color='var(--red)';st.textContent='\u2717 '+e.message;}});
+  const subject='9 Mountains \u2014 '+(name||'');
+  const body='Dear '+(name||'team')+',\n\n';
+  // Open Outlook web compose (you are already signed in via Microsoft)
+  const url='https://outlook.office.com/mail/deeplink/compose'
+    +'?to='+encodeURIComponent(email)
+    +'&subject='+encodeURIComponent(subject)
+    +'&body='+encodeURIComponent(body);
+  window.open(url,'_blank');
 }
 
 function saveCall(pg,reg,ccPhone){
