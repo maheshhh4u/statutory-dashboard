@@ -110,6 +110,19 @@ def db_init():
             done INTEGER DEFAULT 0
         )""")
         client.execute("CREATE INDEX IF NOT EXISTS idx_fu_at ON follow_ups(follow_up_at)")
+        # Persisted Daily Calling batch (a fixed set of 100, stable until regenerated)
+        client.execute("""CREATE TABLE IF NOT EXISTS calling_batch (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_no INTEGER,
+            reg_number TEXT,
+            position INTEGER,
+            completed INTEGER DEFAULT 0,
+            created_at TEXT,
+            category TEXT,
+            active INTEGER DEFAULT 1,
+            data TEXT
+        )""")
+        client.execute("CREATE INDEX IF NOT EXISTS idx_cb_active ON calling_batch(active)")
         # Seed default user if empty
         try:
             rs = client.execute("SELECT COUNT(*) FROM users")
@@ -946,6 +959,8 @@ def save_call():
                         "called_by": caller, "timestamp": ts}
     db_exec("INSERT OR REPLACE INTO called_log(key,reg_number,page,name,called_by,timestamp,data) VALUES(?,?,?,?,?,?,?)",
             (key, reg, page, name, caller, ts, "{}"))
+    # Mark this charity completed in the active calling batch (if it's in one)
+    db_exec("UPDATE calling_batch SET completed=1 WHERE active=1 AND reg_number=?", (reg,))
 
     # 5) Full Maximizer sync — create/update entry + push the comment & call note
     synced = 0; sync_error = ""
@@ -965,11 +980,20 @@ def save_call():
 
 @app.route("/api/followups")
 def followups_list():
-    """Upcoming follow-ups. ?scope=today (default) or ?scope=all (today + future, not done)."""
+    """Upcoming follow-ups. ?scope=today (default), ?scope=all (today + future),
+    or ?from=YYYY-MM-DD&to=YYYY-MM-DD for the calendar (any range, includes past)."""
     scope = str(request.args.get("scope","today")).strip()
+    dfrom = str(request.args.get("from","")).strip()
+    dto   = str(request.args.get("to","")).strip()
     today = datetime.utcnow().strftime("%Y-%m-%d")
     try:
-        if scope == "all":
+        if dfrom or dto:
+            where=["done=0"]; params=[]
+            if dfrom: where.append("substr(follow_up_at,1,10)>=?"); params.append(dfrom)
+            if dto:   where.append("substr(follow_up_at,1,10)<=?"); params.append(dto)
+            rows = db_query("SELECT id,reg_number,name,page,follow_up_at,caller,notes FROM follow_ups WHERE "
+                            + " AND ".join(where) + " ORDER BY follow_up_at ASC", tuple(params))
+        elif scope == "all":
             rows = db_query("""SELECT id,reg_number,name,page,follow_up_at,caller,notes
                                FROM follow_ups WHERE done=0 AND substr(follow_up_at,1,10)>=?
                                ORDER BY follow_up_at ASC""", (today,))
@@ -1059,6 +1083,35 @@ def email_send():
                 (reg, page, log, caller, ts, synced))
         logged = True
     return jsonify({"ok": True, "logged": logged, "mx_synced": synced})
+
+@app.route("/api/call_history_all")
+def call_history_all():
+    """All calls with optional date-range / caller / outcome filters (history viewer)."""
+    dfrom  = str(request.args.get("from","")).strip()
+    dto    = str(request.args.get("to","")).strip()
+    caller = str(request.args.get("caller","")).strip()
+    outcome= str(request.args.get("outcome","")).strip()
+    where=[]; params=[]
+    if dfrom:  where.append("substr(timestamp,1,10)>=?"); params.append(dfrom)
+    if dto:    where.append("substr(timestamp,1,10)<=?"); params.append(dto)
+    if caller: where.append("caller=?"); params.append(caller)
+    if outcome:where.append("outcome=?"); params.append(outcome)
+    sql="SELECT reg_number,page,phone_used,outcome,notes,duration_sec,caller,timestamp FROM call_log"
+    if where: sql+=" WHERE "+" AND ".join(where)
+    sql+=" ORDER BY timestamp DESC LIMIT 2000"
+    try:
+        rows=db_query(sql, tuple(params))
+    except Exception as e:
+        return jsonify({"calls":[], "count":0, "error":str(e)[:120], "callers":[], "outcomes":[]})
+    names={}
+    for reg,nm in db_query("SELECT reg_number,name FROM called_log"):
+        if nm: names[reg]=nm
+    calls=[{"reg_number":r[0],"page":r[1],"phone":r[2],"outcome":r[3],"notes":r[4],
+            "duration_sec":r[5] or 0,"caller":r[6],"timestamp":r[7],
+            "name":names.get(r[0],"")} for r in rows]
+    callers=[r[0] for r in db_query("SELECT DISTINCT caller FROM call_log WHERE caller IS NOT NULL AND caller<>'' ORDER BY caller")]
+    outcomes=[r[0] for r in db_query("SELECT DISTINCT outcome FROM call_log WHERE outcome IS NOT NULL AND outcome<>'' ORDER BY outcome")]
+    return jsonify({"calls":calls,"count":len(calls),"callers":callers,"outcomes":outcomes})
 
 @app.route("/api/call/history")
 def call_history():
@@ -1593,21 +1646,18 @@ CALLING_CATEGORIES = {
     "search": "Charity Search (saved)",
 }
 
-@app.route("/api/daily_calling")
-def api_daily_calling():
-    category = request.args.get("category","all").strip().lower()
+def _rank_calling_pool(category):
+    """Return (scored_sorted_list, error_response_or_None) for a calling category."""
     pools = _collect_from_cache()
-
-    # Charity Search source = combine all saved-search result sets (if any saved)
     if category == "search":
         rows = []
         for crit in _saved_searches.values():
             if isinstance(crit, dict) and crit.get("results"):
                 rows.extend(crit["results"])
         if not rows:
-            return jsonify({"charities":[], "count":0, "category":category,
-                            "category_label": CALLING_CATEGORIES.get(category,category),
-                            "note":"No saved searches with results yet. Run a Charity Search and save it to feed this view."})
+            return [], jsonify({"charities":[], "count":0, "category":category,
+                "category_label": CALLING_CATEGORIES.get(category,category),
+                "note":"No saved searches with results yet. Run a Charity Search and save it to feed this view."})
         src_map = {"Charity Search": rows}
     elif category == "all":
         src_map = pools
@@ -1616,27 +1666,20 @@ def api_daily_calling():
         if label and label in pools:
             src_map = {label: pools[label]}
         else:
-            # That list isn't cached yet — tell the UI to warm it up
-            return jsonify({"charities":[], "count":0, "category":category,
-                            "category_label": CALLING_CATEGORIES.get(category,category),
-                            "status":"not_loaded",
-                            "note":f"Open the '{CALLING_CATEGORIES.get(category,category)}' tab once to load its data, then return here."}), 200
-
+            return [], jsonify({"charities":[], "count":0, "category":category,
+                "category_label": CALLING_CATEGORIES.get(category,category), "status":"not_loaded",
+                "note":f"Open the '{CALLING_CATEGORIES.get(category,category)}' tab once to load its data, then return here."}), 200
     if not src_map:
-        return jsonify({"charities":[], "count":0, "category":category,
-                        "category_label": CALLING_CATEGORIES.get(category,category),
-                        "status":"not_loaded",
-                        "note":"No list data is loaded yet. Open the list tabs once to load them, then return here."}), 200
-
-    # Normalize + dedupe across sources (keep first/highest-priority source seen)
+        return [], jsonify({"charities":[], "count":0, "category":category,
+            "category_label": CALLING_CATEGORIES.get(category,category), "status":"not_loaded",
+            "note":"No list data is loaded yet. Open the list tabs once to load them, then return here."}), 200
     seen = {}
     for source, rows in src_map.items():
         for c in rows:
             reg = c.get("reg_number","")
             if not reg or reg in seen: continue
-            if c.get("removed"): continue   # never call removed charities
+            if c.get("removed"): continue
             seen[reg] = _normalize_for_calling(c, source)
-
     scored = []
     for reg, c in seen.items():
         sc, breakdown = priority_score(c)
@@ -1646,11 +1689,17 @@ def api_daily_calling():
         c["ever_called"] = _ever_called(reg)
         c["band"] = "high" if sc>=65 else ("med" if sc>=45 else "low")
         scored.append(c)
-
     scored.sort(key=lambda x: x["priority"], reverse=True)
+    return scored, None
+
+@app.route("/api/daily_calling")
+def api_daily_calling():
+    category = request.args.get("category","all").strip().lower()
+    scored, err = _rank_calling_pool(category)
+    if err is not None:
+        return err
     top = scored[:100]
     called_today_count = sum(1 for c in top if c["called_today"])
-
     return jsonify({
         "charities": top,
         "count": len(top),
@@ -1660,6 +1709,101 @@ def api_daily_calling():
         "category_label": CALLING_CATEGORIES.get(category, category),
         "generated": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
     })
+
+def _load_active_batch():
+    """Read the active batch from DB, freshen called/contact state, return list."""
+    rows = db_query("SELECT reg_number,position,completed,data FROM calling_batch WHERE active=1 ORDER BY position ASC")
+    out = []
+    for reg, pos, completed, data in rows:
+        try: c = json.loads(data) if data else {}
+        except Exception: c = {}
+        c["reg_number"] = reg
+        ov = _contact_overrides.get(reg) or {}
+        if ov.get("phone"):   c["phone"]   = ov["phone"]
+        if ov.get("email"):   c["email"]   = ov["email"]
+        if ov.get("website"): c["website"] = ov["website"]
+        c["completed"]    = int(completed or 0)
+        c["called_today"] = _called_today(reg)
+        c["ever_called"]  = _ever_called(reg)
+        out.append(c)
+    return out
+
+@app.route("/api/calling_batch")
+def api_calling_batch():
+    """Return the current active calling batch (persisted, stable until regenerated)."""
+    batch = _load_active_batch()
+    if not batch:
+        return jsonify({"charities": [], "count": 0, "has_batch": False,
+                        "note": "No active calling list yet. Pick a source and generate your first 100."})
+    meta = db_query("SELECT batch_no,created_at,category FROM calling_batch WHERE active=1 LIMIT 1")
+    batch_no, created_at, category = (meta[0] if meta else (1, "", "all"))
+    done = sum(1 for c in batch if c["completed"])
+    return jsonify({
+        "charities": batch, "count": len(batch), "has_batch": True,
+        "batch_no": batch_no, "created_at": created_at, "category": category,
+        "completed": done, "remaining": len(batch) - done,
+        "category_label": CALLING_CATEGORIES.get(category, category),
+    })
+
+@app.route("/api/calling_batch/status")
+def api_calling_batch_status():
+    rows = db_query("SELECT completed FROM calling_batch WHERE active=1")
+    total = len(rows)
+    done = sum(1 for r in rows if r[0])
+    return jsonify({"has_batch": total > 0, "total": total,
+                    "completed": done, "remaining": total - done,
+                    "all_done": total > 0 and done >= total})
+
+@app.route("/api/calling_batch/generate", methods=["POST"])
+def api_calling_batch_generate():
+    """Generate a new batch of 100. mode: 'fresh' (ignore leftovers),
+    'leftovers' (carry uncompleted forward first), or 'new' (all done → next 100)."""
+    data = request.json or {}
+    category = str(data.get("category", "all")).strip().lower() or "all"
+    mode = str(data.get("mode", "fresh")).strip().lower()
+
+    scored, err = _rank_calling_pool(category)
+    if err is not None:
+        return err
+
+    leftover_rows = db_query("SELECT reg_number,data FROM calling_batch WHERE active=1 AND completed=0 ORDER BY position ASC")
+    leftovers = []
+    for reg, d in leftover_rows:
+        try: c = json.loads(d) if d else {}
+        except Exception: c = {}
+        c["reg_number"] = reg
+        leftovers.append(c)
+    leftover_regs = set(c["reg_number"] for c in leftovers)
+
+    pool = [c for c in scored if not _ever_called(c["reg_number"])]
+
+    selected = []; used = set()
+    if mode == "leftovers":
+        for c in leftovers:
+            if c["reg_number"] not in used:
+                selected.append(c); used.add(c["reg_number"])
+    excl = set(used)
+    if mode == "fresh":
+        excl |= leftover_regs
+    for c in pool:
+        if len(selected) >= 100: break
+        reg = c["reg_number"]
+        if reg in excl or reg in used: continue
+        selected.append(c); used.add(reg)
+
+    selected = selected[:100]
+    if not selected:
+        return jsonify({"ok": False, "error": "No charities available to generate a new list for this source."}), 200
+
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    bno_rows = db_query("SELECT COALESCE(MAX(batch_no),0) FROM calling_batch")
+    batch_no = (bno_rows[0][0] if bno_rows else 0) + 1
+    db_exec("UPDATE calling_batch SET active=0 WHERE active=1")
+    for i, c in enumerate(selected):
+        db_exec("INSERT INTO calling_batch(batch_no,reg_number,position,completed,created_at,category,active,data) VALUES(?,?,?,?,?,?,1,?)",
+                (batch_no, c["reg_number"], i, 0, now, category, json.dumps(c)))
+    return jsonify({"ok": True, "batch_no": batch_no, "count": len(selected),
+                    "category": category, "carried_leftovers": (mode == "leftovers")})
 
 @app.route("/api/milestones")
 def api_milestones():

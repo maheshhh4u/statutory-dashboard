@@ -331,6 +331,8 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="ctrl-right">
       <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
       <button class="btn btn-outline btn-sm" onclick="loadCalling()">↺ Refresh</button>
+      <button class="btn btn-outline btn-sm" onclick="openCalendar()">📅 Calendar</button>
+      <button class="btn btn-outline btn-sm" onclick="openCallHistory()">📋 Call History</button>
       <button class="btn btn-outline btn-sm" style="border-color:#6060c0;color:#6060c0" onclick="openMxModal('calling')">🔄 Sync Maximizer</button>
     </div>
   </div>
@@ -338,7 +340,7 @@ select:focus{outline:none;border-color:var(--green)}
   <div class="calling-bar">
     <div class="calling-cat">
       <label for="callingCat">Source list:</label>
-      <select id="callingCat" onchange="loadCalling()">
+      <select id="callingCat">
         <option value="all">⭐ All combined</option>
         <option value="prospects">📋 Prospect Lists</option>
         <option value="new">🆕 Newly Registered</option>
@@ -347,9 +349,10 @@ select:focus{outline:none;border-color:var(--green)}
         <option value="milestones">🎂 Anniversary Watch</option>
         <option value="search">🔍 Charity Search (saved)</option>
       </select>
+      <button id="genListBtn" class="btn btn-sm" style="background:#1e3a5f;color:#fff;margin-left:8px" onclick="generateList()">✨ Generate List</button>
     </div>
     <div class="calling-progress">
-      <div class="calling-progress-label"><span id="callingDone">0</span> / <span id="callingTotal">0</span> called today</div>
+      <div class="calling-progress-label"><span id="callingDone">0</span> / <span id="callingTotal">0</span> completed</div>
       <div class="calling-progress-track"><div class="calling-progress-fill" id="callingFill" style="width:0%"></div></div>
     </div>
   </div>
@@ -2254,29 +2257,165 @@ function loadScheduledCalls(){
 }
 function markFollowupDone(id,btn){
   fetch('/api/followup/done',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({id})}).then(()=>{ loadScheduledCalls(); });
+    body:JSON.stringify({id})}).then(()=>{ loadScheduledCalls(); if(document.getElementById('cal-grid')) renderCalendar(); });
+}
+
+// ── Call History viewer (date range + filters) ──────────────────────────────
+function openCallHistory(){
+  const today=new Date().toISOString().slice(0,10);
+  const monthAgo=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+  const html=`
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-bottom:12px">
+      <div><label style="font-size:10px;color:var(--t3);display:block">From</label>
+        <input type="date" id="ch-from" value="${monthAgo}" style="padding:6px;border:1px solid var(--bd);border-radius:4px"></div>
+      <div><label style="font-size:10px;color:var(--t3);display:block">To</label>
+        <input type="date" id="ch-to" value="${today}" style="padding:6px;border:1px solid var(--bd);border-radius:4px"></div>
+      <div><label style="font-size:10px;color:var(--t3);display:block">Caller</label>
+        <select id="ch-caller" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">All</option></select></div>
+      <div><label style="font-size:10px;color:var(--t3);display:block">Outcome</label>
+        <select id="ch-outcome" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">All</option></select></div>
+      <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="loadCallHistory()">🔍 Search</button>
+    </div>
+    <div id="ch-results" style="font-size:12px;color:var(--t3)">Loading…</div>`;
+  showModal('📋 Call History', html);
+  loadCallHistory(true);
+}
+function loadCallHistory(initFilters){
+  const from=document.getElementById('ch-from').value;
+  const to=document.getElementById('ch-to').value;
+  const caller=document.getElementById('ch-caller').value;
+  const outcome=document.getElementById('ch-outcome').value;
+  const box=document.getElementById('ch-results');
+  box.innerHTML='Loading…';
+  const qs='from='+from+'&to='+to+'&caller='+encodeURIComponent(caller)+'&outcome='+encodeURIComponent(outcome);
+  fetch('/api/call_history_all?'+qs).then(r=>r.json()).then(d=>{
+    if(initFilters){
+      const cs=document.getElementById('ch-caller'), os=document.getElementById('ch-outcome');
+      (d.callers||[]).forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;cs.appendChild(o);});
+      (d.outcomes||[]).forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;os.appendChild(o);});
+    }
+    const calls=d.calls||[];
+    if(!calls.length){ box.innerHTML='<div style="padding:18px;text-align:center;color:var(--t3)">No calls found for these filters.</div>'; return; }
+    let rows=calls.map(c=>{
+      const dur=c.duration_sec?(Math.floor(c.duration_sec/60)+'m '+(c.duration_sec%60)+'s'):'—';
+      return `<tr style="border-bottom:1px solid var(--bd)">
+        <td style="padding:5px 8px;white-space:nowrap">${esc((c.timestamp||'').slice(0,16))}</td>
+        <td style="padding:5px 8px">${esc(c.name||('Reg '+c.reg_number))}</td>
+        <td style="padding:5px 8px">${esc(c.outcome||'')}</td>
+        <td style="padding:5px 8px">${dur}</td>
+        <td style="padding:5px 8px">${esc(c.caller||'')}</td>
+        <td style="padding:5px 8px;color:var(--t3)">${esc((c.notes||'').slice(0,80))}</td>
+      </tr>`;}).join('');
+    box.innerHTML=`<div style="color:var(--t2);margin-bottom:6px">${calls.length} call${calls.length===1?'':'s'}</div>
+      <div style="max-height:50vh;overflow-y:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="text-align:left;border-bottom:2px solid var(--bd);position:sticky;top:0;background:var(--surface,#fff)">
+        <th style="padding:5px 8px">When</th><th style="padding:5px 8px">Charity</th><th style="padding:5px 8px">Outcome</th>
+        <th style="padding:5px 8px">Duration</th><th style="padding:5px 8px">Caller</th><th style="padding:5px 8px">Notes</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  }).catch(e=>{ box.innerHTML='<div class="err-box">⚠ '+esc(e.message)+'</div>'; });
+}
+
+// ── Calendar of scheduled follow-up calls ───────────────────────────────────
+let _calMonth=null;
+function openCalendar(){
+  _calMonth=new Date(); _calMonth.setDate(1);
+  const html=`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <button class="btn btn-outline btn-sm" onclick="calNav(-1)">← Prev</button>
+      <strong id="cal-title" style="font-size:15px"></strong>
+      <button class="btn btn-outline btn-sm" onclick="calNav(1)">Next →</button>
+    </div>
+    <div id="cal-grid"></div>`;
+  showModal('📅 Scheduled Calls Calendar', html);
+  renderCalendar();
+}
+function calNav(delta){ _calMonth.setMonth(_calMonth.getMonth()+delta); renderCalendar(); }
+function renderCalendar(){
+  const grid=document.getElementById('cal-grid'); if(!grid) return;
+  const y=_calMonth.getFullYear(), m=_calMonth.getMonth();
+  const title=document.getElementById('cal-title');
+  if(title) title.textContent=_calMonth.toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+  const from=`${y}-${String(m+1).padStart(2,'0')}-01`;
+  const last=new Date(y,m+1,0).getDate();
+  const to=`${y}-${String(m+1).padStart(2,'0')}-${String(last).padStart(2,'0')}`;
+  grid.innerHTML='<div style="color:var(--t3);padding:12px">Loading…</div>';
+  fetch('/api/followups?from='+from+'&to='+to).then(r=>r.json()).then(d=>{
+    const byDay={};
+    (d.followups||[]).forEach(f=>{ const day=(f.follow_up_at||'').slice(8,10); (byDay[day]=byDay[day]||[]).push(f); });
+    const firstDow=(new Date(y,m,1).getDay()+6)%7;   // Mon=0
+    const todayStr=new Date().toISOString().slice(0,10);
+    let cells='';
+    for(let i=0;i<firstDow;i++) cells+='<div style="min-height:64px;border:1px solid var(--bd);background:#fafafa"></div>';
+    for(let day=1;day<=last;day++){
+      const ds=String(day).padStart(2,'0');
+      const dateStr=`${y}-${String(m+1).padStart(2,'0')}-${ds}`;
+      const items=byDay[ds]||[];
+      const isToday=dateStr===todayStr;
+      const evs=items.slice(0,3).map(f=>`<div title="${esc((f.name||'')+' '+(f.follow_up_at||''))}" style="font-size:9px;background:#e8b339;color:#1e3a5f;border-radius:3px;padding:1px 3px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','')">${esc((f.follow_up_at||'').slice(11,16))} ${esc((f.name||'').slice(0,12))}</div>`).join('');
+      const more=items.length>3?`<div style="font-size:9px;color:var(--t3)">+${items.length-3} more</div>`:'';
+      cells+=`<div style="min-height:64px;border:1px solid var(--bd);padding:2px 3px;${isToday?'background:#fff8e6;border-color:#e8b339':''}">
+        <div style="font-size:11px;font-weight:600;color:${isToday?'#b8860b':'var(--t2)'}">${day}</div>${evs}${more}</div>`;
+    }
+    const dows=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=>`<div style="font-size:10px;font-weight:600;color:var(--t3);text-align:center;padding:3px">${d}</div>`).join('');
+    grid.innerHTML=`<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:0">${dows}${cells}</div>
+      <div style="font-size:11px;color:var(--t3);margin-top:8px">Showing scheduled follow-up calls. Click an entry to open the call window.</div>`;
+  }).catch(e=>{ grid.innerHTML='<div class="err-box">⚠ '+esc(e.message)+'</div>'; });
 }
 
 function loadCalling(){
   loadScheduledCalls();
-  const cat=document.getElementById('callingCat').value;
   const body=document.getElementById('callingBody');
   const note=document.getElementById('callingNote');
   note.style.display='none';
-  body.innerHTML='<tr><td colspan="16" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>';
-  fetch('/api/daily_calling?category='+encodeURIComponent(cat))
+  body.innerHTML='<tr><td colspan="16" style="text-align:center;padding:30px;color:var(--t3)">Loading your calling list…</td></tr>';
+  fetch('/api/calling_batch')
     .then(r=>r.json())
     .then(d=>{
       callingData=d.charities||[];
-      if(d.note){
-        note.innerHTML='ℹ️ '+esc(d.note);
+      if(!d.has_batch){
+        note.innerHTML='ℹ️ '+esc(d.note||'No active calling list. Pick a source and click Generate List.');
         note.style.display='block';
+      } else if(d.category){
+        const sel=document.getElementById('callingCat'); if(sel) sel.value=d.category;
       }
       renderCalling(d);
     })
     .catch(e=>{
       body.innerHTML=`<tr><td colspan="16" style="text-align:center;padding:30px"><div class="err-box">⚠ ${esc(e.message)}</div></td></tr>`;
     });
+}
+
+function generateList(){
+  const cat=document.getElementById('callingCat').value;
+  fetch('/api/calling_batch/status').then(r=>r.json()).then(s=>{
+    if(!s.has_batch || s.all_done){
+      doGenerate(cat,'fresh');           // first list, or all done → next 100
+    } else {
+      showGeneratePopup(cat, s.remaining);
+    }
+  }).catch(()=>doGenerate(cat,'fresh'));
+}
+function showGeneratePopup(cat, remaining){
+  const html=`
+    <p style="margin:0 0 14px;font-size:14px">You still have <strong>${remaining}</strong> uncompleted ${remaining===1?'call':'calls'} in the current list. What would you like to do?</p>
+    <div style="display:flex;flex-direction:column;gap:9px">
+      <button class="btn btn-green" onclick="doGenerate('${cat}','leftovers')">➕ Include leftovers in next 100 set</button>
+      <button class="btn btn-outline" onclick="doGenerate('${cat}','fresh')">🔄 Generate fresh 100 list (set leftovers aside)</button>
+      <button class="btn btn-outline" style="margin-top:4px" onclick="closeGenericModal(true)">Cancel</button>
+    </div>`;
+  showModal('Generate new calling list', html);
+}
+function doGenerate(cat, mode){
+  closeGenericModal(true);
+  const body=document.getElementById('callingBody');
+  body.innerHTML='<tr><td colspan="16" style="text-align:center;padding:30px;color:var(--t3)">⏳ Generating your list of 100…</td></tr>';
+  fetch('/api/calling_batch/generate',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({category:cat,mode})})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok===false){ alert(d.error||d.note||'Could not generate the list. Open the source list tab once to load its data, then try again.'); }
+      loadCalling();
+    })
+    .catch(e=>{ alert('Error generating list: '+e.message); loadCalling(); });
 }
 
 function prioBadge(band,score){
@@ -2287,19 +2426,25 @@ function prioBadge(band,score){
 
 function renderCalling(d){
   const body=document.getElementById('callingBody');
-  const done=d.called_today||0, total=d.count||0;
+  const done=d.completed||0, total=d.count||0;
   document.getElementById('callingDone').textContent=done;
   document.getElementById('callingTotal').textContent=total;
   document.getElementById('callingFill').style.width=(total?Math.round(done/total*100):0)+'%';
-
+  const gb=document.getElementById('genListBtn');
+  if(gb){
+    if(!d.has_batch) gb.innerHTML='✨ Generate List';
+    else if((d.remaining||0)===0) gb.innerHTML='✅ Generate Next 100';
+    else gb.innerHTML='🔄 Generate New List';
+  }
   if(!callingData.length){
-    body.innerHTML='<tr><td colspan="16" style="text-align:center;padding:30px;color:var(--t3)">No contacts to call for this category yet.</td></tr>';
+    body.innerHTML='<tr><td colspan="16" style="text-align:center;padding:30px;color:var(--t3)">'
+      +(d.has_batch?'This list is empty.':'No active list yet — pick a source above and click <strong>Generate List</strong>.')+'</td></tr>';
     return;
   }
   body.innerHTML=callingData.map((c,i)=>{
-    const rowCls=c.called_today?'called-today-row':'';
+    const rowCls=(c.completed||c.called_today)?'called-today-row':'';
     const nm=esc((c.name||'').substring(0,46))+((c.name||'').length>46?'…':'');
-    const calledChip=c.called_today?'<span class="called-chip">✓ called today</span>':'';
+    const calledChip=c.completed?'<span class="called-chip">✓ done</span>':(c.called_today?'<span class="called-chip">✓ called today</span>':'');
     const otherPgs=['prospects','new','late','old','search','milestones'].filter(p=>isCalled(p,c.reg_number));
     const pgL={'prospects':'Prospects','new':'Newly Reg.','late':'Late Accts','old':'40+ Yrs','search':'Search','milestones':'Milestones'};
     const cc=otherPgs.map(p=>`<span class="tag tag-purple" style="font-size:9px" title="Called in ${pgL[p]}">★ ${pgL[p]}</span>`).join(' ');
