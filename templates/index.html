@@ -1104,6 +1104,7 @@ function runAiAnalysis(pg, reg){
 }
 
 function openCallModal(pg,reg,name,ccPhone){
+  window._callCtx={pg:pg, reg:String(reg), name:name||''};
   const overridePhone=phoneOverrides[reg]||'';
   const currentPhone=overridePhone||ccPhone||'';
   const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
@@ -1237,6 +1238,13 @@ function placeRingOut(reg){
             if(connected){
               status.style.background='#eef9f1'; status.style.color='#1d7a3a';
               status.innerHTML='✓ Call finished. Fill in the outcome below and Save.';
+              // Auto-mark Called + Caller since a real call was made (duration > 0)
+              const dv=(document.getElementById('call-duration')||{}).value||'';
+              let durSec=0;
+              if(dv){const p=dv.split(':').map(x=>parseInt(x)||0); durSec=(p.length===2)?p[0]*60+p[1]:(p[0]||0);}
+              if(durSec>0 && window._callCtx && String(window._callCtx.reg)===String(reg)){
+                autoMarkCalled(window._callCtx.pg, reg, window._callCtx.name);
+              }
             }
             btn.disabled=false; btn.style.opacity='1';
             return;
@@ -2136,6 +2144,23 @@ function removeUser(name){
 }
 
 // ── Called tracking with caller name ─────────────────────────────────────────
+function autoMarkCalled(pg, reg, name){
+  // Automatically mark Called + Caller after a real call (duration > 0). No toggle-off.
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
+  if(!caller) return;
+  const k=pg+'|'+reg;
+  if(called[k]) return;                       // already marked — leave it
+  called[k]={pg,reg,name,caller,ts:new Date().toLocaleString('en-GB')};
+  const btn=document.getElementById('cb-'+pg+'-'+reg);
+  if(btn){btn.textContent='✓ Called';btn.className='cbtn called';}
+  const callerCell=document.getElementById('cc-col-'+pg+'-'+reg);
+  if(callerCell){callerCell.innerHTML='<span class="tag tag-green" style="font-size:10px">'+esc(caller)+'</span>';}
+  refreshCalled();
+  fetch('/api/mark_called_by',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({reg_number:reg,page:pg,name:name,caller:caller,toggle:false})})
+    .then(r=>r.json()).then(d=>{if(!d.ok)console.warn('auto-mark error',d);}).catch(()=>{});
+}
+
 function toggleCalled(pg,reg,name){
   // If no caller selected, show the selection popup first
   if(!currentCaller){
