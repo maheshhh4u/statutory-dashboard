@@ -1690,11 +1690,11 @@ def _rank_calling_pool(category):
         else:
             return [], jsonify({"charities":[], "count":0, "category":category,
                 "category_label": CALLING_CATEGORIES.get(category,category), "status":"not_loaded",
-                "note":f"Open the '{CALLING_CATEGORIES.get(category,category)}' tab once to load its data, then return here."}), 200
+                "note":f"Open the '{CALLING_CATEGORIES.get(category,category)}' tab once to load its data, then return here."})
     if not src_map:
         return [], jsonify({"charities":[], "count":0, "category":category,
             "category_label": CALLING_CATEGORIES.get(category,category), "status":"not_loaded",
-            "note":"No list data is loaded yet. Open the list tabs once to load them, then return here."}), 200
+            "note":"No list data is loaded yet. Open the list tabs once to load them, then return here."})
     seen = {}
     for source, rows in src_map.items():
         for c in rows:
