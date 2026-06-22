@@ -135,6 +135,8 @@ tbody tr:nth-child(even){background:var(--alt)}
 tbody tr.row-client{background:#fff3d0 !important;border-left:3px solid var(--gold)}
 tbody tr:hover{background:var(--navy-pale) !important}
 tbody tr.row-client:hover{background:#fae9b0 !important}
+tbody tr.row-called{background:#e3f6e6 !important;border-left:3px solid #5cb85c}
+tbody tr.row-called:hover{background:#d3efd8 !important}
 tbody tr{border-bottom:1px solid var(--border)}
 tbody tr:last-child{border-bottom:none}
 tbody td{padding:8px 12px;font-size:12px;max-width:260px;white-space:normal;word-break:break-word;vertical-align:top}
@@ -1564,6 +1566,14 @@ function countC(pg){return Object.keys(called).filter(k=>k.startsWith(pg+'|')).l
 function refreshCalled(){
   const m={prospects:'p-called',new:'new-called',late:'late-called',old:'old-called',milestones:'ms-called'};
   Object.entries(m).forEach(([p,id])=>{const el=document.getElementById(id);if(el)el.textContent=countC(p);});
+  // Highlight called rows in light green (matches each row's Stage dropdown id to the called key)
+  document.querySelectorAll('tr.row-called').forEach(tr=>tr.classList.remove('row-called'));
+  Object.keys(called).forEach(k=>{
+    const i=k.indexOf('|'); if(i<0) return;
+    const sel=document.getElementById('ss-'+k.slice(0,i)+'-'+k.slice(i+1));
+    const tr=sel&&sel.closest('tr');
+    if(tr) tr.classList.add('row-called');
+  });
 }
 
 // ── Comments ───────────────────────────────────────────────────────────────────

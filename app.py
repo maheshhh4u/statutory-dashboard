@@ -1,4 +1,4 @@
-import os, io, csv, zipfile, requests, threading, json
+import os, io, csv, zipfile, requests, threading, json, re
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
