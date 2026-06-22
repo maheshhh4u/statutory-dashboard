@@ -2684,6 +2684,7 @@ function renderCalling(d){
       <td style="white-space:normal">${ai||'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
     </tr>`;
   }).join('');
+  refreshCalled();
 }
 function applyMF(){
   const n=(v('mf-name')||'').toLowerCase(),r=(v('mf-reg')||'').toLowerCase();
