@@ -138,6 +138,13 @@ tbody tr.row-client:hover{background:#fae9b0 !important}
 tbody tr{border-bottom:1px solid var(--border)}
 tbody tr:last-child{border-bottom:none}
 tbody td{padding:8px 12px;font-size:12px;max-width:260px;white-space:normal;word-break:break-word;vertical-align:top}
+.section table thead th{position:relative}
+.col-grip{position:absolute;top:0;right:0;width:7px;height:100%;cursor:col-resize;user-select:none;z-index:5}
+.col-grip:hover{background:var(--gold,#e8b339)}
+body.wrap-off tbody td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body.wrap-off .ct-cell .ct-val{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#wrapToggleBtn{position:fixed;left:16px;bottom:16px;z-index:1500;background:var(--navy,#1e3a5f);color:#fff;border:none;border-radius:20px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:inherit}
+#wrapToggleBtn:hover{filter:brightness(1.15)}
 .mono{font-family:'JetBrains Mono','Consolas','SF Mono',monospace;font-size:11px}
 /* CALL BUTTON - Gold SVG phone icon on navy */
 .call-btn{background:var(--navy);border:1.5px solid rgba(232,179,57,.45);color:var(--gold);border-radius:6px;cursor:pointer;padding:5px 9px;font-size:15px;transition:all .15s;display:inline-flex;align-items:center;justify-content:center;line-height:1;font-family:inherit}
@@ -1405,8 +1412,64 @@ function switchTab(id,btn){
   if(id==='milestones'&&!msAll.length)loadMilestones();
   if(id==='prospects'&&!pLoaded)loadProspects();
   if(id==='search')loadSavedList();
+  setTimeout(setupResizableTables,80);
 }
 function navTo(id){switchTab(id,null);window.scrollTo(0,0);}
+
+// ── Resizable columns (Excel-style drag on header edges) ───────────────────────
+function ensureFixed(table){
+  if(table._fixed) return;
+  table._fixed=true;
+  const ths=Array.from(table.querySelectorAll('thead th'));
+  const widths=ths.map(th=>th.offsetWidth);
+  let cg=table.querySelector('colgroup');
+  if(!cg){
+    cg=document.createElement('colgroup');
+    widths.forEach(w=>{const c=document.createElement('col');c.style.width=w+'px';cg.appendChild(c);});
+    table.insertBefore(cg, table.firstChild);
+  }
+  table.style.tableLayout='fixed';
+  table.style.width=widths.reduce((a,b)=>a+b,0)+'px';
+}
+function attachGrips(table){
+  if(table._grips) return;
+  const ths=Array.from(table.querySelectorAll('thead th'));
+  if(!ths.length) return;
+  table._grips=true;
+  ths.forEach((th,i)=>{
+    const grip=document.createElement('div'); grip.className='col-grip';
+    th.appendChild(grip);
+    grip.addEventListener('click',e=>e.stopPropagation());     // don't trigger sort
+    grip.addEventListener('mousedown',e=>{
+      e.preventDefault(); e.stopPropagation();
+      ensureFixed(table);                                       // measure + lock at drag time
+      const cols=Array.from(table.querySelectorAll('colgroup col'));
+      if(!cols[i]) return;
+      const startX=e.pageX, startW=cols[i].offsetWidth||parseInt(cols[i].style.width,10)||80;
+      document.body.style.userSelect='none';
+      function mv(ev){ cols[i].style.width=Math.max(40,startW+(ev.pageX-startX))+'px'; }
+      function up(){ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); document.body.style.userSelect=''; }
+      document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+    });
+  });
+}
+function setupResizableTables(){ document.querySelectorAll('.section table').forEach(attachGrips); }
+
+// ── Wrap on/off toggle ─────────────────────────────────────────────────────────
+function updateWrapBtn(){
+  const b=document.getElementById('wrapToggleBtn'); if(!b) return;
+  b.textContent = document.body.classList.contains('wrap-off') ? '↩ Wrap: Off' : '↩ Wrap: On';
+}
+function toggleWrap(){
+  const off=document.body.classList.toggle('wrap-off');
+  try{ localStorage.setItem('sp_wrap_off', off?'1':'0'); }catch(e){}
+  updateWrapBtn();
+}
+function restoreWrap(){
+  let off=false; try{ off=localStorage.getItem('sp_wrap_off')==='1'; }catch(e){}
+  if(off) document.body.classList.add('wrap-off');
+  updateWrapBtn();
+}
 
 // ── Utils ──────────────────────────────────────────────────────────────────────
 function fmt(v){if(!v&&v!==0)return'—';v=parseFloat(v);if(isNaN(v)||v===0)return'—';if(v>=1e6)return'£'+(v/1e6).toFixed(1)+'m';if(v>=1e3)return'£'+Math.round(v/1e3)+'k';return'£'+v.toLocaleString();}
@@ -2932,6 +2995,9 @@ document.getElementById('mx-modal').addEventListener('click',function(e){
 });
 // Load users first — initCaller() is called inside loadUsers() after users arrive
 loadUsers();
+restoreWrap();
+setTimeout(setupResizableTables,300);
 </script>
+<button id="wrapToggleBtn" onclick="toggleWrap()" title="Toggle text wrapping in tables">↩ Wrap: On</button>
 </body>
 </html>
