@@ -145,6 +145,9 @@ body.wrap-off tbody td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis
 body.wrap-off .ct-cell .ct-val{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #wrapToggleBtn{position:fixed;left:16px;bottom:16px;z-index:1500;background:var(--navy,#1e3a5f);color:#fff;border:none;border-radius:20px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:inherit}
 #wrapToggleBtn:hover{filter:brightness(1.15)}
+.find-btn{background:#eef3f9;border:1px solid #cdd9e6;border-radius:5px;cursor:pointer;font-size:13px;padding:2px 6px;line-height:1}
+.find-btn:hover{background:var(--gold,#e8b339);border-color:var(--gold,#e8b339)}
+.find-btn:disabled{opacity:.6;cursor:default}
 .mono{font-family:'JetBrains Mono','Consolas','SF Mono',monospace;font-size:11px}
 /* CALL BUTTON - Gold SVG phone icon on navy */
 .call-btn{background:var(--navy);border:1.5px solid rgba(232,179,57,.45);color:var(--gold);border-radius:6px;cursor:pointer;padding:5px 9px;font-size:15px;transition:all .15s;display:inline-flex;align-items:center;justify-content:center;line-height:1;font-family:inherit}
@@ -390,7 +393,7 @@ select:focus{outline:none;border-color:var(--green)}
           <th>Charity Name</th>
           <th>Phone</th>
           <th>Email</th>
-          <th>Website</th><th>Contact Person</th><th>Job Role</th>
+          <th>Website</th><th title="AI find contact">🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
           <th>Total Income</th>
           <th>Statutory</th>
           <th>Source</th>
@@ -402,7 +405,7 @@ select:focus{outline:none;border-color:var(--green)}
         </tr>
       </thead>
       <tbody id="callingBody">
-        <tr><td colspan="18" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>
+        <tr><td colspan="21" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>
       </tbody>
     </table>
   </div>
@@ -468,7 +471,7 @@ select:focus{outline:none;border-color:var(--green)}
         <th onclick="sortP('fin_year')">Fin Year</th>
         <th style="min-width:100px">Phone</th>
         <th style="min-width:140px">Email</th>
-        <th style="min-width:120px">Website</th><th>Contact Person</th><th>Job Role</th>
+        <th style="min-width:120px">Website</th><th title="AI find contact">🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
         <th>Flags</th>
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
@@ -547,7 +550,7 @@ select:focus{outline:none;border-color:var(--green)}
         <th>Trend</th><th>List</th>
         <th onclick="sortS('town')">Town</th>
         <th onclick="sortS('county')">County</th>
-        <th>Phone</th><th>Email</th><th style="min-width:120px">Website</th><th>Contact Person</th><th>Job Role</th><th>Flags</th>
+        <th>Phone</th><th>Email</th><th style="min-width:120px">Website</th><th title="AI find contact">🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th><th>Flags</th>
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
         <th>Called</th>
@@ -596,7 +599,7 @@ select:focus{outline:none;border-color:var(--green)}
         <th onclick="sortN('reg_number')">Reg No.</th>
         <th onclick="sortN('name')" style="min-width:200px">Charity Name</th>
         <th onclick="sortN('date_registered')">Date Registered</th>
-        <th>Website</th><th>Contact Person</th><th>Job Role</th>
+        <th>Website</th><th title="AI find contact">🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
         <th style="min-width:100px">Phone</th>
         <th style="min-width:140px">Email</th>
         <th>Stat.</th>
@@ -655,7 +658,7 @@ select:focus{outline:none;border-color:var(--green)}
         <th>Severity</th>
         <th style="min-width:100px">Phone</th>
         <th style="min-width:140px">Email</th>
-        <th style="min-width:120px">Website</th><th>Contact Person</th><th>Job Role</th>
+        <th style="min-width:120px">Website</th><th title="AI find contact">🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
         <th style="min-width:130px">Status</th>
         <th style="min-width:160px">Comment</th>
         <th>Called</th>
@@ -707,7 +710,7 @@ select:focus{outline:none;border-color:var(--green)}
         <th onclick="sortO('age_years')">Age (Yrs)</th>
         <th onclick="sortO('total_income')">Latest Income</th>
         <th onclick="sortO('fin_year')">Fin Year</th>
-        <th>Website</th><th>Contact Person</th><th>Job Role</th>
+        <th>Website</th><th title="AI find contact">🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
         <th style="min-width:100px">Phone</th>
         <th style="min-width:140px">Email</th>
         <th style="min-width:130px">Status</th>
@@ -782,7 +785,7 @@ select:focus{outline:none;border-color:var(--green)}
         <th onclick="sortMs('anniversary_date')">Anniversary Date</th>
         <th onclick="sortMs('months_to_anniversary')">Months Away</th>
         <th onclick="sortMs('total_income')">Latest Income</th>
-        <th>Website</th><th>Contact Person</th><th>Job Role</th>
+        <th>Website</th><th title="AI find contact">🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
         <th style="min-width:100px">Phone</th>
         <th style="min-width:140px">Email</th>
         <th style="min-width:130px">Status</th>
@@ -953,15 +956,59 @@ function toProperCase(s){
   return (s||'').toLowerCase().replace(/\b([a-z])/g, m=>m.toUpperCase())
     .replace(/(['-])([a-z])/g, (m,p1,p2)=>p1+p2.toUpperCase());
 }
+function cToast(msg, kind){
+  const t=document.createElement('div');
+  const bg = kind==='err' ? '#b8860b' : (kind==='warn' ? '#7a5c00' : 'var(--navy,#1e3a5f)');
+  t.style.cssText='position:fixed;bottom:20px;right:20px;background:'+bg+';color:#fff;padding:10px 16px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2);max-width:360px';
+  t.textContent=msg;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(),5000);
+}
+function findBtn(reg, name){
+  return `<button type="button" class="find-btn" title="Find the top contact for this charity using AI (web search)" onclick="findContact('${esc(reg)}',this)" data-name="${esc(name||'')}">🔎</button>`;
+}
+function findContact(reg, btn){
+  const name=(btn&&btn.dataset.name)||'';
+  if(btn){ btn.disabled=true; btn._old=btn.textContent; btn.textContent='⏳'; }
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
+  fetch('/api/ai/find_contact',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({reg_number:reg,name:name,caller:caller})})
+   .then(r=>r.json()).then(d=>{
+     if(btn){ btn.disabled=false; btn.textContent=btn._old||'🔎'; }
+     if(!d.ok){ cToast(d.error||'Contact lookup failed','err'); return; }
+     if(d.found===false){ cToast(d.note||'No verifiable contact found — try the website manually.','warn'); return; }
+     const ov=contactOverrides[reg]||{};
+     if(d.name)  ov.name=d.name;
+     if(d.role)  ov.role=d.role;
+     if(d.phone) ov.cphone=d.phone;
+     if(d.email) ov.cemail=d.email;
+     contactOverrides[reg]=ov;
+     if(d.phone) phoneOverrides[reg]=phoneOverrides[reg]||d.phone;
+     updateContactCells(reg);
+     cToast('🤖 AI-suggested contact filled — please verify before calling');
+   })
+   .catch(e=>{ if(btn){ btn.disabled=false; btn.textContent=btn._old||'🔎'; } cToast('Lookup error: '+e.message,'err'); });
+}
+function updateContactCells(reg){
+  ['name','role','cphone','cemail'].forEach(f=>{
+    document.querySelectorAll('td.ct-cell[data-reg="'+reg+'"][data-field="'+f+'"]').forEach(td=>{
+      const v=(contactOverrides[reg]||{})[f]||'';
+      if(!v) return;
+      td.classList.remove('ct-empty'); td.classList.add('ct-edited');
+      const titleAttr=(f==='cemail'||f==='email')?(' title="'+esc(v)+'"'):'';
+      td.innerHTML='<span class="ct-val"'+titleAttr+'>'+esc(v)+'</span><span class="ct-ico">✎</span>';
+    });
+  });
+}
 function ctCell(reg, field, ccVal){
   const ov=(contactOverrides[reg]||{})[field]||'';
   const val=ov||ccVal||'';
   const edited=!!ov && ov!==(ccVal||'');
   const cls='ct-cell'+(edited?' ct-edited':'')+(!val?' ct-empty':'');
-  const ph={phone:'+ Add phone',email:'+ Add email',website:'+ Add website',name:'+ Add contact',role:'+ Add job role'}[field]||'+ Add';
+  const ph={phone:'+ Add phone',email:'+ Add email',website:'+ Add website',name:'+ Add contact',role:'+ Add job role',cphone:'+ Add direct phone',cemail:'+ Add direct email'}[field]||'+ Add';
   let disp='';
   if(!val) disp=`<span class="ct-add">${ph}</span>`;
-  else if(field==='email') disp=`<span class="ct-val" title="${esc(val)}">${esc(val)}</span>`;
+  else if(field==='email'||field==='cemail') disp=`<span class="ct-val" title="${esc(val)}">${esc(val)}</span>`;
   else if(field==='website'){
     const clean=val.replace(/^https?:\/\//i,'').replace(/^www\./i,'');
     disp=`<span class="ct-val" title="${esc(val)}">${esc(clean)}</span>`;
@@ -974,10 +1021,10 @@ function ctEdit(td, ev){
   if(ev&&ev.target&&(ev.target.tagName==='A'||ev.target.tagName==='INPUT'||ev.target.tagName==='BUTTON')) return;
   const cur=(contactOverrides[td.dataset.reg]||{})[td.dataset.field]||td.dataset.cc||'';
   const field=td.dataset.field;
-  const ph={phone:'07123 456789',email:'name@org.uk',website:'example.org',name:'e.g. John Smith',role:'e.g. Fundraising Manager'}[field]||'';
+  const ph={phone:'07123 456789',email:'name@org.uk',website:'example.org',name:'e.g. John Smith',role:'e.g. Fundraising Manager',cphone:'07123 456789',cemail:'name@org.uk'}[field]||'';
   td.classList.add('ct-editing');
   td._prevHTML=td.innerHTML;
-  const itype=(field==='email')?'email':(field==='website')?'url':(field==='phone')?'tel':'text';
+  const itype=(field==='email'||field==='cemail')?'email':(field==='website')?'url':(field==='phone'||field==='cphone')?'tel':'text';
   td.innerHTML=`<input class="ct-input" type="${itype}" value="${esc(cur)}" placeholder="${ph}" onblur="ctSave(this)" onkeydown="ctKey(event,this)">`;
   const inp=td.querySelector('input');
   inp.focus(); inp.select();
@@ -1745,7 +1792,7 @@ function renderPT(pg){
       <td class="mono">${f.fin_year||'—'}</td>
       ${ctCell(c.reg_number,'phone',c.phone)}
       ${ctCell(c.reg_number,'email',c.email)}
-      ${ctCell(c.reg_number,'website',c.website)}${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}
+      ${ctCell(c.reg_number,'website',c.website)}<td style="text-align:center;padding:0 4px">${findBtn(c.reg_number,c.name)}</td>${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}${ctCell(c.reg_number,'cphone','')}${ctCell(c.reg_number,'cemail','')}
       <td>${flgs}</td>
       <td>${sSelect('prospects',c.reg_number)}</td>
       <td>${cmBox('prospects',c.reg_number)}</td>
@@ -1818,7 +1865,7 @@ function renderSR(data,pg){
       <td>${esc(c.county||'')}</td>
       ${ctCell(c.reg_number,'phone',c.phone)}
       ${ctCell(c.reg_number,'email',c.email)}
-      ${ctCell(c.reg_number,'website',c.website)}${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}
+      ${ctCell(c.reg_number,'website',c.website)}<td style="text-align:center;padding:0 4px">${findBtn(c.reg_number,c.name)}</td>${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}${ctCell(c.reg_number,'cphone','')}${ctCell(c.reg_number,'cemail','')}
       <td>${flgs}</td>
       <td>${sSelect('search',c.reg_number)}</td>
       <td>${cmBox('search',c.reg_number)}</td>
@@ -1914,7 +1961,7 @@ function renderNT(pg){
   document.getElementById('new-rmeta').textContent=`Showing ${nFil.length} of ${nAll.length} charities`;
   document.getElementById('new-body').innerHTML=nFil.slice(s,e).map(c=>{
     const st=statuses['new|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="new" data-reg="${esc(c.reg_number)}" ${(mxSel['new']&&mxSel['new'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('new','${esc(c.reg_number)}',this)">⇄</button></td><td style="text-align:center">${callBtn('new',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc(c.name||'')}</td><td class="mono">${c.date_registered}</td>${ctCell(c.reg_number,'website',c.website)}${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}<td><span class="tag tag-green">Active</span></td><td>${sSelect('new',c.reg_number)}</td><td>${cmBox('new',c.reg_number)}</td><td>${cBtn('new',c.reg_number,c.name||'')}</td><td>${callerCol('new',c.reg_number)}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="new" data-reg="${esc(c.reg_number)}" ${(mxSel['new']&&mxSel['new'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('new','${esc(c.reg_number)}',this)">⇄</button></td><td style="text-align:center">${callBtn('new',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc(c.name||'')}</td><td class="mono">${c.date_registered}</td>${ctCell(c.reg_number,'website',c.website)}<td style="text-align:center;padding:0 4px">${findBtn(c.reg_number,c.name)}</td>${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}${ctCell(c.reg_number,'cphone','')}${ctCell(c.reg_number,'cemail','')}${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}<td><span class="tag tag-green">Active</span></td><td>${sSelect('new',c.reg_number)}</td><td>${cmBox('new',c.reg_number)}</td><td>${cBtn('new',c.reg_number,c.name||'')}</td><td>${callerCol('new',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('new-pag-info','new-pag-btns',pg,nFil.length,renderNT);
 }
@@ -1971,7 +2018,7 @@ function renderLT(pg){
   document.getElementById('late-rmeta').textContent=`Showing ${lFil.length} of ${lAll.length} charities`;
   document.getElementById('late-body').innerHTML=lFil.slice(s,e).map(c=>{
     const st=statuses['late|'+c.reg_number]||'';
-    return`<tr class="${(st==='Client'?'row-client ':'')+(c.removed?'removed-row':'')}"><td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="late" data-reg="${esc(c.reg_number)}" ${(mxSel['late']&&mxSel['late'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('late','${esc(c.reg_number)}',this)">⇄</button></td><td style="text-align:center">${callBtn('late',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc(c.name||'')}${c.removed?'<span class="removed-tag">REMOVED</span>':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td>${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}${ctCell(c.reg_number,'website',c.website)}${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}<td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td><td>${callerCol('late',c.reg_number)}</td></tr>`;
+    return`<tr class="${(st==='Client'?'row-client ':'')+(c.removed?'removed-row':'')}"><td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="late" data-reg="${esc(c.reg_number)}" ${(mxSel['late']&&mxSel['late'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('late','${esc(c.reg_number)}',this)">⇄</button></td><td style="text-align:center">${callBtn('late',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc(c.name||'')}${c.removed?'<span class="removed-tag">REMOVED</span>':''}</td><td class="mono">${c.due_date}</td><td class="mono" style="font-weight:600">${c.months_late} mo</td><td class="mono">${fmt(c.latest_income)}</td><td>${sevTag(c.months_late)}</td>${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}${ctCell(c.reg_number,'website',c.website)}<td style="text-align:center;padding:0 4px">${findBtn(c.reg_number,c.name)}</td>${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}${ctCell(c.reg_number,'cphone','')}${ctCell(c.reg_number,'cemail','')}<td>${sSelect('late',c.reg_number)}</td><td>${cmBox('late',c.reg_number)}</td><td>${cBtn('late',c.reg_number,c.name||'')}</td><td>${callerCol('late',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('late-pag-info','late-pag-btns',pg,lFil.length,renderLT);
 }
@@ -2020,7 +2067,7 @@ function renderOT(pg){
   document.getElementById('old-rmeta').textContent=`Showing ${oFil.length} of ${oAll.length} charities`;
   document.getElementById('old-body').innerHTML=oFil.slice(s,e).map(c=>{
     const st=statuses['old|'+c.reg_number]||'';
-    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="old_charities" data-reg="${esc(c.reg_number)}" ${(mxSel['old_charities']&&mxSel['old_charities'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('old_charities','${esc(c.reg_number)}',this)">⇄</button></td><td style="text-align:center">${callBtn('old',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc(c.name||'')}</td><td class="mono">${c.date_registered}</td><td class="mono" style="font-weight:600">${c.age_years}</td><td class="mono">${fmt(c.total_income)}</td><td class="mono">${c.fin_year||'—'}</td>${ctCell(c.reg_number,'website',c.website)}${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}<td>${sSelect('old',c.reg_number)}</td><td>${cmBox('old',c.reg_number)}</td><td>${cBtn('old',c.reg_number,c.name||'')}</td><td>${callerCol('old',c.reg_number)}</td></tr>`;
+    return`<tr class="${st==='Client'?'row-client':''}"><td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="old_charities" data-reg="${esc(c.reg_number)}" ${(mxSel['old_charities']&&mxSel['old_charities'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('old_charities','${esc(c.reg_number)}',this)">⇄</button></td><td style="text-align:center">${callBtn('old',c.reg_number,c.name,c.phone)}</td><td class="mono">${c.reg_number}</td><td title="${esc(c.name)}">${esc(c.name||'')}</td><td class="mono">${c.date_registered}</td><td class="mono" style="font-weight:600">${c.age_years}</td><td class="mono">${fmt(c.total_income)}</td><td class="mono">${c.fin_year||'—'}</td>${ctCell(c.reg_number,'website',c.website)}<td style="text-align:center;padding:0 4px">${findBtn(c.reg_number,c.name)}</td>${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}${ctCell(c.reg_number,'cphone','')}${ctCell(c.reg_number,'cemail','')}${ctCell(c.reg_number,'phone',c.phone)}${ctCell(c.reg_number,'email',c.email)}<td>${sSelect('old',c.reg_number)}</td><td>${cmBox('old',c.reg_number)}</td><td>${cBtn('old',c.reg_number,c.name||'')}</td><td>${callerCol('old',c.reg_number)}</td></tr>`;
   }).join('');
   renderPag('old-pag-info','old-pag-btns',pg,oFil.length,renderOT);
 }
@@ -2473,7 +2520,7 @@ function loadCalling(){
   const body=document.getElementById('callingBody');
   const note=document.getElementById('callingNote');
   note.style.display='none';
-  body.innerHTML='<tr><td colspan="18" style="text-align:center;padding:30px;color:var(--t3)">Loading your calling list…</td></tr>';
+  body.innerHTML='<tr><td colspan="21" style="text-align:center;padding:30px;color:var(--t3)">Loading your calling list…</td></tr>';
   fetch('/api/calling_batch')
     .then(r=>r.json())
     .then(d=>{
@@ -2487,7 +2534,7 @@ function loadCalling(){
       renderCalling(d);
     })
     .catch(e=>{
-      body.innerHTML=`<tr><td colspan="18" style="text-align:center;padding:30px"><div class="err-box">⚠ ${esc(e.message)}</div></td></tr>`;
+      body.innerHTML=`<tr><td colspan="21" style="text-align:center;padding:30px"><div class="err-box">⚠ ${esc(e.message)}</div></td></tr>`;
     });
 }
 
@@ -2548,7 +2595,7 @@ function autoLoadAndGenerate(cat, mode){
     alert('This source can\'t be auto-loaded. Please open its tab once, then generate.');
     loadCalling(); return;
   }
-  body.innerHTML='<tr><td colspan="18" style="text-align:center;padding:30px;color:var(--t3)">⏳ Loading source data… first load can take up to a minute.</td></tr>';
+  body.innerHTML='<tr><td colspan="21" style="text-align:center;padding:30px;color:var(--t3)">⏳ Loading source data… first load can take up to a minute.</td></tr>';
   let chain=Promise.resolve();
   eps.forEach(u=>{ chain=chain.then(()=>warmEndpoint(u)); });
   chain.then(()=>runGenerate(cat,mode)).then(d=>{
@@ -2560,7 +2607,7 @@ function autoLoadAndGenerate(cat, mode){
 function doGenerate(cat, mode){
   closeGenericModal(true);
   const body=document.getElementById('callingBody');
-  body.innerHTML='<tr><td colspan="18" style="text-align:center;padding:30px;color:var(--t3)">⏳ Generating your list of 100…</td></tr>';
+  body.innerHTML='<tr><td colspan="21" style="text-align:center;padding:30px;color:var(--t3)">⏳ Generating your list of 100…</td></tr>';
   runGenerate(cat,mode).then(d=>{
     if(d.status==='not_loaded'){
       if(cat==='search'){
@@ -2596,7 +2643,7 @@ function renderCalling(d){
     else gb.innerHTML='🔄 Generate New List';
   }
   if(!callingData.length){
-    body.innerHTML='<tr><td colspan="18" style="text-align:center;padding:30px;color:var(--t3)">'
+    body.innerHTML='<tr><td colspan="21" style="text-align:center;padding:30px;color:var(--t3)">'
       +(d.has_batch?'This list is empty.':'No active list yet — pick a source above and click <strong>Generate List</strong>.')+'</td></tr>';
     return;
   }
@@ -2616,7 +2663,7 @@ function renderCalling(d){
       <td title="${esc(c.name)}"><span class="mono" style="font-size:10px;color:var(--t3)">${esc(c.reg_number)}</span><br>${nm}${calledChip}</td>
       ${ctCell(c.reg_number,'phone',c.phone)}
       ${ctCell(c.reg_number,'email',c.email)}
-      ${ctCell(c.reg_number,'website',c.website)}${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}
+      ${ctCell(c.reg_number,'website',c.website)}<td style="text-align:center;padding:0 4px">${findBtn(c.reg_number,c.name)}</td>${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}${ctCell(c.reg_number,'cphone','')}${ctCell(c.reg_number,'cemail','')}
       <td class="mono" style="font-weight:600">${fmt(c.total_income)}</td>
       <td class="mono">${fmt(c.statutory)}</td>
       <td><span class="src-chip">${esc(c.source||'')}</span></td>
@@ -2661,7 +2708,7 @@ function renderMsT(pg){
       <td class="mono" style="color:${urgency};font-weight:600">${c.anniversary_date}</td>
       <td class="mono" style="color:${urgency};font-weight:600">${mo} mo</td>
       <td class="mono">${fmt(c.total_income)}</td>
-      ${ctCell(c.reg_number,'website',c.website)}${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}
+      ${ctCell(c.reg_number,'website',c.website)}<td style="text-align:center;padding:0 4px">${findBtn(c.reg_number,c.name)}</td>${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}${ctCell(c.reg_number,'cphone','')}${ctCell(c.reg_number,'cemail','')}
       ${ctCell(c.reg_number,'phone',c.phone)}
       ${ctCell(c.reg_number,'email',c.email)}
       <td>${sSelect('milestones',c.reg_number)}</td>

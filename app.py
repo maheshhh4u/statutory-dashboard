@@ -87,7 +87,7 @@ def db_init():
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )""")
         # Idempotent column adds for email + website + contact person (no-op if already present)
-        for _col in ("email","website","contact_name","contact_role"):
+        for _col in ("email","website","contact_name","contact_role","contact_phone","contact_email"):
             try: client.execute(f"ALTER TABLE phone_overrides ADD COLUMN {_col} TEXT")
             except Exception: pass
         # Call log — every call made through dashboard
@@ -210,14 +210,16 @@ def db_load_state():
 
         _contact_overrides.clear()
         try:
-            rows = db_query("SELECT reg_number, phone, email, website, contact_name, contact_role FROM phone_overrides")
+            rows = db_query("SELECT reg_number, phone, email, website, contact_name, contact_role, contact_phone, contact_email FROM phone_overrides")
             for r in rows:
                 d = {}
                 if r[1]: d["phone"]   = r[1]
                 if r[2]: d["email"]   = r[2]
                 if r[3]: d["website"] = r[3]
-                if len(r) > 4 and r[4]: d["name"] = r[4]
-                if len(r) > 5 and r[5]: d["role"] = r[5]
+                if len(r) > 4 and r[4]: d["name"]   = r[4]
+                if len(r) > 5 and r[5]: d["role"]   = r[5]
+                if len(r) > 6 and r[6]: d["cphone"] = r[6]
+                if len(r) > 7 and r[7]: d["cemail"] = r[7]
                 if d: _contact_overrides[r[0]] = d
             print(f"[Turso] Loaded {len(_contact_overrides)} contact overrides")
         except Exception as e:
@@ -699,13 +701,10 @@ def _save_contact(reg, field, val, caller):
     if field not in CONTACT_LIMITS:
         return jsonify({"ok":False, "error":"Bad field"}), 400
     val = (val or "")[:CONTACT_LIMITS[field]]
-    existing = db_query("SELECT phone,email,website,contact_name,contact_role FROM phone_overrides WHERE reg_number=?", (reg,))
-    e0 = existing[0] if existing else ("","","","","")
-    cur = {"phone":   (e0[0] if len(e0)>0 else "") or "",
-           "email":   (e0[1] if len(e0)>1 else "") or "",
-           "website": (e0[2] if len(e0)>2 else "") or "",
-           "name":    (e0[3] if len(e0)>3 else "") or "",
-           "role":    (e0[4] if len(e0)>4 else "") or ""}
+    existing = db_query("SELECT phone,email,website,contact_name,contact_role,contact_phone,contact_email FROM phone_overrides WHERE reg_number=?", (reg,))
+    e0 = existing[0] if existing else ("","","","","","","")
+    def _g(i): return (e0[i] if len(e0)>i else "") or ""
+    cur = {"phone":_g(0),"email":_g(1),"website":_g(2),"name":_g(3),"role":_g(4),"cphone":_g(5),"cemail":_g(6)}
     cur[field] = val
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     if not any(cur.values()):
@@ -713,9 +712,9 @@ def _save_contact(reg, field, val, caller):
         _contact_overrides.pop(reg, None)
     else:
         db_exec("""INSERT OR REPLACE INTO phone_overrides
-                   (reg_number,phone,email,website,contact_name,contact_role,updated_by,updated_at)
-                   VALUES(?,?,?,?,?,?,?,?)""",
-                (reg, cur["phone"], cur["email"], cur["website"], cur["name"], cur["role"], caller, ts))
+                   (reg_number,phone,email,website,contact_name,contact_role,contact_phone,contact_email,updated_by,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (reg, cur["phone"], cur["email"], cur["website"], cur["name"], cur["role"], cur["cphone"], cur["cemail"], caller, ts))
         _contact_overrides[reg] = {k:v for k,v in cur.items() if v}
     synced = False
     try:
@@ -725,10 +724,13 @@ def _save_contact(reg, field, val, caller):
                 payload = {"Key": found["key"], MX_CONTACT_FIELD[field]: val}
                 r = mx_write_update(payload)
                 if r and r.get("Code") == 0: synced = True
-            elif field in ("name", "role"):
-                # No safe contact-name field on a Company entry — record as a Note
-                nm = cur["name"]; rl = cur["role"]
-                note = "👤 Contact: " + (nm or "(name not set)") + (f" — {rl}" if rl else "")
+            elif field in ("name", "role", "cphone", "cemail"):
+                # No safe contact-person fields on a Company entry — record as a Note
+                nm = cur["name"]; rl = cur["role"]; cp = cur["cphone"]; ce = cur["cemail"]
+                parts = ["👤 Contact: " + (nm or "(name not set)") + (f" — {rl}" if rl else "")]
+                if cp: parts.append("☎ " + cp)
+                if ce: parts.append("✉ " + ce)
+                note = "  |  ".join(parts)
                 resp = mx_create_note(found["key"], note, caller, timestamp=ts)
                 if resp and resp.get("Code") == 0: synced = True
     except Exception as e:
@@ -744,7 +746,7 @@ def phones_bulk():
 
 # ── Contact overrides (phone / email / website) — manual edits per charity ────
 MX_CONTACT_FIELD = {"phone": "Phone1", "email": "Email1", "website": "WebSite"}
-CONTACT_LIMITS   = {"phone": 30, "email": 100, "website": 200, "name": 80, "role": 80}
+CONTACT_LIMITS   = {"phone": 30, "email": 100, "website": 200, "name": 80, "role": 80, "cphone": 40, "cemail": 120}
 
 @app.route("/api/contacts/bulk")
 def contacts_bulk():
@@ -924,6 +926,90 @@ def ai_analyze():
                         "model": OPENAI_MODEL, "name": c.get("name", "")})
     except Exception as e:
         return jsonify({"ok": False, "error": f"AI request failed: {str(e)[:200]}"}), 500
+
+@app.route("/api/ai/find_contact", methods=["POST"])
+def api_ai_find_contact():
+    """Use a web-search-grounded model to find the most senior contactable person
+    at a charity (name, role, phone, email). Persists results + a Maximizer note."""
+    data = request.get_json(force=True) or {}
+    reg  = (data.get("reg_number") or "").strip()
+    name = (data.get("name") or "").strip()
+    caller = (data.get("caller") or "AI lookup")
+    if not reg and not name:
+        return jsonify({"ok": False, "error": "Missing charity"}), 400
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False, "error": "AI is not configured. Add OPENAI_API_KEY in Render."}), 400
+
+    search_model = os.environ.get("OPENAI_SEARCH_MODEL", "gpt-4o-mini-search-preview")
+    prompt = (
+        "You are helping a UK charity-fundraising team find the single best person to call at a charity.\n"
+        f"Charity name: {name}\n"
+        f"Charity Commission registration number: {reg}\n\n"
+        "Find the most senior contactable person — prefer CEO / Chief Executive / Director; "
+        "if there is none, the Chair of Trustees; otherwise the charity's main named contact. "
+        "Check the charity's official website and the Charity Commission register "
+        "(register-of-charities.charitycommission.gov.uk).\n\n"
+        "Return ONLY a compact JSON object, no prose, with exactly these keys: "
+        '"name", "role", "phone", "email". '
+        "Use an empty string for anything you cannot find on a real, current web page. "
+        "NEVER guess or invent a phone number or email address — only include them if they actually appear on a real page "
+        "(the charity's site or a directory). A general charity phone/email is acceptable if no personal one is published."
+    )
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={"model": search_model,
+                  "web_search_options": {"user_location": {"type": "approximate",
+                                                           "approximate": {"country": "GB"}}},
+                  "messages": [{"role": "user", "content": prompt}]},
+            timeout=90)
+        if resp.status_code != 200:
+            return jsonify({"ok": False, "error": f"OpenAI error {resp.status_code}: {resp.text[:200]}"}), 502
+        content = ((resp.json().get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
+        # Extract the JSON object from the response (strip code fences / surrounding text)
+        m = re.search(r"\{.*\}", content, re.DOTALL)
+        parsed = {}
+        if m:
+            try: parsed = json.loads(m.group(0))
+            except Exception: parsed = {}
+        out = {"name":  str(parsed.get("name")  or "").strip()[:CONTACT_LIMITS["name"]],
+               "role":  str(parsed.get("role")  or "").strip()[:CONTACT_LIMITS["role"]],
+               "phone": str(parsed.get("phone") or "").strip()[:CONTACT_LIMITS["cphone"]],
+               "email": str(parsed.get("email") or "").strip()[:CONTACT_LIMITS["cemail"]]}
+        if not any(out.values()):
+            return jsonify({"ok": True, "found": False,
+                            "note": "The AI couldn't find a verifiable contact for this charity.",
+                            **out})
+        # Persist all fields at once (DB + cache + a single Maximizer note)
+        if reg:
+            existing = db_query("SELECT phone,email,website,contact_name,contact_role,contact_phone,contact_email FROM phone_overrides WHERE reg_number=?", (reg,))
+            e0 = existing[0] if existing else ("","","","","","","")
+            def _g(i): return (e0[i] if len(e0)>i else "") or ""
+            cur = {"phone":_g(0),"email":_g(1),"website":_g(2),"name":_g(3),"role":_g(4),"cphone":_g(5),"cemail":_g(6)}
+            if out["name"]:  cur["name"]   = out["name"]
+            if out["role"]:  cur["role"]   = out["role"]
+            if out["phone"]: cur["cphone"] = out["phone"]
+            if out["email"]: cur["cemail"] = out["email"]
+            ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            db_exec("""INSERT OR REPLACE INTO phone_overrides
+                       (reg_number,phone,email,website,contact_name,contact_role,contact_phone,contact_email,updated_by,updated_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    (reg, cur["phone"], cur["email"], cur["website"], cur["name"], cur["role"], cur["cphone"], cur["cemail"], caller, ts))
+            _contact_overrides[reg] = {k:v for k,v in cur.items() if v}
+            try:
+                found = mx_find_by_org_number(reg)
+                if found and found.get("key"):
+                    parts = ["🤖 AI-suggested contact: " + (cur["name"] or "(name not found)") + (f" — {cur['role']}" if cur["role"] else "")]
+                    if cur["cphone"]: parts.append("☎ " + cur["cphone"])
+                    if cur["cemail"]: parts.append("✉ " + cur["cemail"])
+                    parts.append("(verify before use)")
+                    mx_create_note(found["key"], "  |  ".join(parts), caller, timestamp=ts)
+            except Exception as e:
+                print(f"  find_contact→mx note error: {e}")
+        return jsonify({"ok": True, "found": True, **out})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"AI lookup failed: {str(e)[:200]}"}), 502
 
 @app.route("/api/contact", methods=["POST"])
 def contact_override():
