@@ -1788,16 +1788,36 @@ def api_calling_batch_generate():
     if err is not None:
         return err
 
+    # Name-based exclusions (Women's Institute, schools, colleges, men's shed, Rotary, …)
+    EXCLUDE_PATTERNS = {
+        "wi":        ["womens institute", "woman institute"],
+        "schools":   ["school"],
+        "colleges":  ["college"],
+        "mens_shed": ["mens shed", "man shed"],
+        "rotary":    ["rotary"],
+    }
+    exclude_keys = data.get("exclude") or []
+    excl_kw = []
+    for k in exclude_keys:
+        excl_kw += EXCLUDE_PATTERNS.get(str(k), [])
+    def _norm(s):
+        return (s or "").lower().replace("'", "").replace("\u2019", "")
+    def _name_excluded(c):
+        if not excl_kw: return False
+        nm = _norm(c.get("name"))
+        return any(kw in nm for kw in excl_kw)
+
     leftover_rows = db_query("SELECT reg_number,data FROM calling_batch WHERE active=1 AND completed=0 ORDER BY position ASC")
     leftovers = []
     for reg, d in leftover_rows:
         try: c = json.loads(d) if d else {}
         except Exception: c = {}
         c["reg_number"] = reg
+        if _name_excluded(c): continue   # drop excluded leftovers too
         leftovers.append(c)
     leftover_regs = set(c["reg_number"] for c in leftovers)
 
-    pool = [c for c in scored if not _ever_called(c["reg_number"])]
+    pool = [c for c in scored if not _ever_called(c["reg_number"]) and not _name_excluded(c)]
 
     selected = []; used = set()
     if mode == "leftovers":

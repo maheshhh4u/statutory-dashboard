@@ -351,6 +351,14 @@ select:focus{outline:none;border-color:var(--green)}
       </select>
       <button id="genListBtn" class="btn btn-sm" style="background:#1e3a5f;color:#fff;margin-left:8px" onclick="generateList()">✨ Generate List</button>
     </div>
+    <div class="calling-exclude" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--t2)">
+      <span style="color:var(--t3);font-weight:600">Exclude from list:</span>
+      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="wi" checked onchange="saveExclusions()"> Women's Institute</label>
+      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="schools" checked onchange="saveExclusions()"> Schools</label>
+      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="colleges" checked onchange="saveExclusions()"> Colleges</label>
+      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="mens_shed" checked onchange="saveExclusions()"> Men's Shed</label>
+      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="rotary" checked onchange="saveExclusions()"> Rotary</label>
+    </div>
     <div class="calling-progress">
       <div class="calling-progress-label"><span id="callingDone">0</span> / <span id="callingTotal">0</span> completed</div>
       <div class="calling-progress-track"><div class="calling-progress-fill" id="callingFill" style="width:0%"></div></div>
@@ -2397,6 +2405,7 @@ function renderCalendar(){
 
 function loadCalling(){
   loadScheduledCalls();
+  restoreExclusions();
   const body=document.getElementById('callingBody');
   const note=document.getElementById('callingNote');
   note.style.display='none';
@@ -2438,12 +2447,25 @@ function showGeneratePopup(cat, remaining){
     </div>`;
   showModal('Generate new calling list', html);
 }
+function getExclusions(){
+  return Array.from(document.querySelectorAll('.excl-cb:checked')).map(cb=>cb.value);
+}
+function saveExclusions(){
+  try{ localStorage.setItem('sp_exclusions', JSON.stringify(getExclusions())); }catch(e){}
+}
+function restoreExclusions(){
+  let saved=null;
+  try{ saved=JSON.parse(localStorage.getItem('sp_exclusions')||'null'); }catch(e){}
+  if(!Array.isArray(saved)) return;   // keep defaults (all checked) if never set
+  document.querySelectorAll('.excl-cb').forEach(cb=>{ cb.checked=saved.includes(cb.value); });
+}
 function doGenerate(cat, mode){
   closeGenericModal(true);
+  const exclude=getExclusions();
   const body=document.getElementById('callingBody');
   body.innerHTML='<tr><td colspan="18" style="text-align:center;padding:30px;color:var(--t3)">⏳ Generating your list of 100…</td></tr>';
   fetch('/api/calling_batch/generate',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({category:cat,mode})})
+    body:JSON.stringify({category:cat,mode,exclude})})
     .then(r=>r.json()).then(d=>{
       if(d.ok===false){ alert(d.error||d.note||'Could not generate the list. Open the source list tab once to load its data, then try again.'); }
       loadCalling();
