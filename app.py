@@ -123,6 +123,12 @@ def db_init():
             data TEXT
         )""")
         client.execute("CREATE INDEX IF NOT EXISTS idx_cb_active ON calling_batch(active)")
+        client.execute("""CREATE TABLE IF NOT EXISTS newsletter_flags (
+            reg_number TEXT PRIMARY KEY,
+            flag INTEGER DEFAULT 0,
+            updated_by TEXT,
+            updated_at TEXT
+        )""")
         # Seed default user if empty
         try:
             rs = client.execute("SELECT COUNT(*) FROM users")
@@ -167,12 +173,13 @@ def db_query(sql, params=()):
 # ─── Cache and load in-memory state from Turso ────────────────────────────────
 _cache={}; _called_log={}; _comments={}; _statuses={}; _saved_searches={}
 _contact_overrides={}   # {reg_number: {phone,email,website}} user-edited contact details
+_newsletter={}          # {reg_number: 1} newsletter opt-in flags
 _bg_status={}; _bg_lock=threading.Lock()
 _users=["Muhanna"]  # admin-managed caller list
 
 def db_load_state():
     """Load all DB state into in-memory dicts. Clears existing state first."""
-    global _users, _called_log, _comments, _statuses, _saved_searches, _contact_overrides
+    global _users, _called_log, _comments, _statuses, _saved_searches, _contact_overrides, _newsletter
     if not TURSO_URL or not TURSO_TOKEN: return
 
     try:
@@ -207,6 +214,14 @@ def db_load_state():
             try: _saved_searches[r[0]] = json.loads(r[1])
             except: _saved_searches[r[0]] = {}
         print(f"[Turso] Loaded {len(_saved_searches)} saved searches")
+
+        _newsletter.clear()
+        try:
+            rows = db_query("SELECT reg_number, flag FROM newsletter_flags WHERE flag=1")
+            for r in rows: _newsletter[r[0]] = 1
+            print(f"[Turso] Loaded {len(_newsletter)} newsletter flags")
+        except Exception as e:
+            print(f"[Turso] newsletter load skipped: {e}")
 
         _contact_overrides.clear()
         try:
@@ -927,6 +942,28 @@ def ai_analyze():
     except Exception as e:
         return jsonify({"ok": False, "error": f"AI request failed: {str(e)[:200]}"}), 500
 
+@app.route("/api/newsletter/bulk", methods=["GET"])
+def newsletter_bulk():
+    return jsonify({reg: 1 for reg in _newsletter})
+
+@app.route("/api/newsletter", methods=["POST"])
+def newsletter_set():
+    data = request.get_json(force=True) or {}
+    reg = str(data.get("reg_number", "")).strip()
+    on  = bool(data.get("on", False))
+    caller = str(data.get("caller", "")).strip() or "Unknown"
+    if not reg:
+        return jsonify({"ok": False, "error": "Missing reg_number"}), 400
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    if on:
+        _newsletter[reg] = 1
+        db_exec("INSERT OR REPLACE INTO newsletter_flags(reg_number,flag,updated_by,updated_at) VALUES(?,?,?,?)",
+                (reg, 1, caller, ts))
+    else:
+        _newsletter.pop(reg, None)
+        db_exec("DELETE FROM newsletter_flags WHERE reg_number=?", (reg,))
+    return jsonify({"ok": True, "on": on})
+
 @app.route("/api/ai/find_contact", methods=["POST"])
 def api_ai_find_contact():
     """Use a web-search-grounded model to find the most senior contactable person
@@ -945,8 +982,11 @@ def api_ai_find_contact():
         "You are helping a UK charity-fundraising team find the single best person to call at a charity.\n"
         f"Charity name: {name}\n"
         f"Charity Commission registration number: {reg}\n\n"
-        "Find the most senior contactable person — prefer CEO / Chief Executive / Director; "
-        "if there is none, the Chair of Trustees; otherwise the charity's main named contact. "
+        "Find the single most senior contactable person, in this strict priority order: "
+        "1) CEO / Chief Executive (highest priority); 2) Executive Director / Managing Director; "
+        "3) Founder; 4) Director of Fundraising / Head of Fundraising; 5) other senior Directors or VPs; "
+        "6) Chair of Trustees; 7) the charity's main named contact. "
+        "Only move to the next option when the higher one genuinely does not exist. "
         "Check the charity's official website and the Charity Commission register "
         "(register-of-charities.charitycommission.gov.uk).\n\n"
         "Return ONLY a compact JSON object, no prose, with exactly these keys: "

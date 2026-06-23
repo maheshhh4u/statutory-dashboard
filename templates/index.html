@@ -141,6 +141,10 @@ tbody tr{border-bottom:1px solid var(--border)}
 tbody tr:last-child{border-bottom:none}
 tbody td{padding:8px 12px;font-size:12px;max-width:260px;white-space:normal;word-break:break-word;vertical-align:top}
 .section table thead th{position:relative}
+#callingScroll{max-height:74vh;overflow:auto}
+#callingTable thead th{position:sticky;top:0;z-index:3}
+#callingTable thead tr.cfilter-row th{top:29px;z-index:2;background:var(--s2);padding:3px 4px}
+#callingTable thead tr.cfilter-row input{width:100%;box-sizing:border-box;font-size:10px;padding:2px 4px;border:1px solid var(--bd);border-radius:3px;font-family:inherit;font-weight:400;text-transform:none}
 .col-grip{position:absolute;top:0;right:0;width:7px;height:100%;cursor:col-resize;user-select:none;z-index:5}
 .col-grip:hover{background:var(--gold,#e8b339)}
 body.wrap-off tbody td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -345,6 +349,7 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-outline btn-sm" onclick="loadCalling()">↺ Refresh</button>
       <button class="btn btn-outline btn-sm" onclick="openCalendar()">📅 Calendar</button>
       <button class="btn btn-outline btn-sm" onclick="openCallHistory()">📋 Call History</button>
+      <button class="btn btn-outline btn-sm" id="callFilterBtn" onclick="toggleCallingFilters()">🔍 Filters</button>
       <button class="btn btn-outline btn-sm" style="border-color:#6060c0;color:#6060c0" onclick="openMxModal('calling')">🔄 Sync Maximizer</button>
     </div>
   </div>
@@ -384,7 +389,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div id="scheduledCallsBody"></div>
   </div>
 
-  <div class="tbl-wrap tbl-scroll">
+  <div class="tbl-wrap tbl-scroll" id="callingScroll">
     <table id="callingTable">
       <thead>
         <tr>
@@ -402,12 +407,35 @@ select:focus{outline:none;border-color:var(--green)}
           <th style="width:140px">Stage</th>
           <th style="min-width:180px">Comment</th>
           <th style="width:80px">Called</th>
+          <th style="width:72px" title="Newsletter opt-in">Newsletter</th>
           <th style="width:90px">Caller</th>
           <th style="min-width:120px">Also in / Elsewhere</th>
         </tr>
+        <tr class="cfilter-row" id="callingFilterRow" style="display:none">
+          <th></th><th></th><th></th>
+          <th><input class="cfilter" data-ci="3" oninput="filterCalling()" placeholder="Priority"></th>
+          <th><input class="cfilter" data-ci="4" oninput="filterCalling()" placeholder="Name / Reg"></th>
+          <th><input class="cfilter" data-ci="5" oninput="filterCalling()" placeholder="Phone"></th>
+          <th><input class="cfilter" data-ci="6" oninput="filterCalling()" placeholder="Email"></th>
+          <th><input class="cfilter" data-ci="7" oninput="filterCalling()" placeholder="Website"></th>
+          <th></th>
+          <th><input class="cfilter" data-ci="9" oninput="filterCalling()" placeholder="Contact"></th>
+          <th><input class="cfilter" data-ci="10" oninput="filterCalling()" placeholder="Role"></th>
+          <th><input class="cfilter" data-ci="11" oninput="filterCalling()" placeholder="Phone"></th>
+          <th><input class="cfilter" data-ci="12" oninput="filterCalling()" placeholder="Email"></th>
+          <th><input class="cfilter" data-ci="13" oninput="filterCalling()" placeholder="Income"></th>
+          <th><input class="cfilter" data-ci="14" oninput="filterCalling()" placeholder="Statutory"></th>
+          <th><input class="cfilter" data-ci="15" oninput="filterCalling()" placeholder="Source"></th>
+          <th><input class="cfilter" data-ci="16" oninput="filterCalling()" placeholder="Stage"></th>
+          <th><input class="cfilter" data-ci="17" oninput="filterCalling()" placeholder="Comment"></th>
+          <th><input class="cfilter" data-ci="18" oninput="filterCalling()" placeholder="Called"></th>
+          <th></th>
+          <th><input class="cfilter" data-ci="20" oninput="filterCalling()" placeholder="Caller"></th>
+          <th><input class="cfilter" data-ci="21" oninput="filterCalling()" placeholder="Also in"></th>
+        </tr>
       </thead>
       <tbody id="callingBody">
-        <tr><td colspan="21" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>
+        <tr><td colspan="22" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>
       </tbody>
     </table>
   </div>
@@ -920,6 +948,17 @@ let statuses={}; // "page|reg" → status
 let comments={}; // "page|reg" → comment
 let phoneOverrides={}; // reg → override phone (kept as derived view for legacy code paths)
 let contactOverrides={}; // reg → {phone,email,website} — unified manual overrides
+let newsletterFlags={};  // reg → 1 (newsletter opt-in)
+function toggleNewsletter(reg, cb){
+  const on=!!(cb&&cb.checked);
+  if(on) newsletterFlags[reg]=1; else delete newsletterFlags[reg];
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
+  fetch('/api/newsletter',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({reg_number:reg,on:on,caller:caller})})
+    .then(r=>r.json()).then(d=>{if(!d.ok)console.warn('newsletter error',d);})
+    .catch(e=>console.warn('newsletter fetch error',e));
+}
+fetch('/api/newsletter/bulk').then(r=>r.json()).then(d=>{ newsletterFlags=d||{}; }).catch(()=>{});
 let pLoaded=false;
 let sMode='simple';
 let ss={}; // saved searches name→criteria
@@ -1207,6 +1246,7 @@ function openCallModal(pg,reg,name,ccPhone){
       <option value="No Answer">📵 No Answer</option>
       <option value="Wrong Number">⚠ Wrong Number</option>
       <option value="Busy">⏱ Busy</option>
+      <option value="Line Dropped">📴 Line Dropped</option>
       <option value="Not Interested">✗ Not Interested</option>
       <option value="Interested">★ Interested — Follow Up</option>
     </select>
@@ -1541,11 +1581,11 @@ function sa(a,col,dir,nest){
 
 // ── Status helpers ─────────────────────────────────────────────────────────────
 const STATUS_OPTS=['','Contacted','Call back','Interested','Meeting secured','Not interested','Client'];
-const STATUS_LABELS={'':'— Set status —','Contacted':'1. Contacted','Call back':'2. Call back','Interested':'3. Interested','Meeting secured':'4. Meeting secured','Not interested':'5. Not interested','Client':'6. Client'};
+const STATUS_LABELS={'':'— Set Stage —','Contacted':'1. Contacted','Call back':'2. Call back','Interested':'3. Interested','Meeting secured':'4. Meeting secured','Not interested':'5. Not interested','Client':'6. Client'};
 function sCls(s){const m={'Client':'s-client','Interested':'s-interested','Meeting secured':'s-meeting','Contacted':'s-contacted','Call back':'s-callback','Not interested':'s-notinterested'};return m[s]||'';}
 function sSelect(pg,reg){
   const k=pg+'|'+reg,cur=statuses[k]||'';
-  const opts=STATUS_OPTS.map(o=>`<option value="${esc(o)}"${o===cur?' selected':''}>${STATUS_LABELS[o]||o||'— Set status —'}</option>`).join('');
+  const opts=STATUS_OPTS.map(o=>`<option value="${esc(o)}"${o===cur?' selected':''}>${STATUS_LABELS[o]||o||'— Set Stage —'}</option>`).join('');
   return`<select class="ssel ${sCls(cur)}" id="ss-${pg}-${reg}" onchange="setStatus('${pg}','${esc(reg)}',this)">${opts}</select>`;
 }
 function setStatus(pg,reg,el){
@@ -1655,7 +1695,7 @@ function showModal(title, html){
     m.id='generic-modal';
     m.className='modal-bg';
     m.innerHTML=`<div class="modal" style="max-width:650px;max-height:80vh;overflow-y:auto">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div id="gm-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;cursor:move;user-select:none">
         <h3 id="gm-title" style="margin:0"></h3>
         <button onclick="closeGenericModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--t3);padding:0 6px;line-height:1">×</button>
       </div>
@@ -1663,6 +1703,18 @@ function showModal(title, html){
       <div style="text-align:right;margin-top:14px"><button class="btn btn-outline btn-sm" onclick="closeGenericModal()">Close</button></div>
     </div>`;
     document.body.appendChild(m);
+    // Make the window draggable by its header (so it doesn't block the data behind it)
+    m._drag={x:0,y:0};
+    const box=m.querySelector('.modal');
+    const hdr=m.querySelector('#gm-header');
+    hdr.addEventListener('mousedown', function(e){
+      if(e.target.tagName==='BUTTON') return;
+      e.preventDefault();
+      const sx=e.clientX, sy=e.clientY, ox=m._drag.x, oy=m._drag.y;
+      function mv(ev){ m._drag.x=ox+(ev.clientX-sx); m._drag.y=oy+(ev.clientY-sy); box.style.transform='translate('+m._drag.x+'px,'+m._drag.y+'px)'; }
+      function up(){ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); }
+      document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+    });
     // Close on backdrop click — but only if the mousedown ALSO started on the
     // backdrop (so drag-selecting text inside an input never closes the modal).
     m.addEventListener('mousedown', function(e){ m._mdownBg=(e.target===m); });
@@ -1672,6 +1724,8 @@ function showModal(title, html){
   }
   document.getElementById('gm-title').innerHTML=title;
   document.getElementById('gm-body').innerHTML=html;
+  // Re-center each time it opens
+  if(m._drag){ m._drag.x=0; m._drag.y=0; const bx=m.querySelector('.modal'); if(bx) bx.style.transform=''; }
   m.classList.add('open');
 }
 function closeGenericModal(force){
@@ -2530,7 +2584,7 @@ function loadCalling(){
   const body=document.getElementById('callingBody');
   const note=document.getElementById('callingNote');
   note.style.display='none';
-  body.innerHTML='<tr><td colspan="21" style="text-align:center;padding:30px;color:var(--t3)">Loading your calling list…</td></tr>';
+  body.innerHTML='<tr><td colspan="22" style="text-align:center;padding:30px;color:var(--t3)">Loading your calling list…</td></tr>';
   fetch('/api/calling_batch')
     .then(r=>r.json())
     .then(d=>{
@@ -2544,7 +2598,7 @@ function loadCalling(){
       renderCalling(d);
     })
     .catch(e=>{
-      body.innerHTML=`<tr><td colspan="21" style="text-align:center;padding:30px"><div class="err-box">⚠ ${esc(e.message)}</div></td></tr>`;
+      body.innerHTML=`<tr><td colspan="22" style="text-align:center;padding:30px"><div class="err-box">⚠ ${esc(e.message)}</div></td></tr>`;
     });
 }
 
@@ -2605,7 +2659,7 @@ function autoLoadAndGenerate(cat, mode){
     alert('This source can\'t be auto-loaded. Please open its tab once, then generate.');
     loadCalling(); return;
   }
-  body.innerHTML='<tr><td colspan="21" style="text-align:center;padding:30px;color:var(--t3)">⏳ Loading source data… first load can take up to a minute.</td></tr>';
+  body.innerHTML='<tr><td colspan="22" style="text-align:center;padding:30px;color:var(--t3)">⏳ Loading source data… first load can take up to a minute.</td></tr>';
   let chain=Promise.resolve();
   eps.forEach(u=>{ chain=chain.then(()=>warmEndpoint(u)); });
   chain.then(()=>runGenerate(cat,mode)).then(d=>{
@@ -2616,8 +2670,9 @@ function autoLoadAndGenerate(cat, mode){
 }
 function doGenerate(cat, mode){
   closeGenericModal(true);
+  callingScroll=null;
   const body=document.getElementById('callingBody');
-  body.innerHTML='<tr><td colspan="21" style="text-align:center;padding:30px;color:var(--t3)">⏳ Generating your list of 100…</td></tr>';
+  body.innerHTML='<tr><td colspan="22" style="text-align:center;padding:30px;color:var(--t3)">⏳ Generating your list of 100…</td></tr>';
   runGenerate(cat,mode).then(d=>{
     if(d.status==='not_loaded'){
       if(cat==='search'){
@@ -2640,6 +2695,50 @@ function prioBadge(band,score){
   return`<span class="prio-badge ${cls}">${dot} ${band==='high'?'High':band==='med'?'Med':'Low'}<span class="prio-score">${Math.round(score)}</span></span>`;
 }
 
+let callingScroll=null;
+function filterCalling(){
+  const fs=[...document.querySelectorAll('#callingFilterRow input.cfilter')]
+            .map(i=>({ci:+i.dataset.ci, v:i.value.trim().toLowerCase()})).filter(f=>f.v);
+  document.querySelectorAll('#callingBody tr').forEach(tr=>{
+    if(!tr.children||tr.children.length<3) return;
+    let show=true;
+    for(const f of fs){
+      const cell=tr.children[f.ci]; let txt='';
+      if(cell){
+        const sel=cell.querySelector('select');
+        const inp=cell.querySelector('input:not([type=checkbox]),textarea');
+        if(sel) txt=sel.options[sel.selectedIndex]?sel.options[sel.selectedIndex].text:'';
+        else if(inp) txt=inp.value;
+        else txt=cell.textContent;
+      }
+      if(!txt.toLowerCase().includes(f.v)){show=false;break;}
+    }
+    tr.style.display=show?'':'none';
+  });
+}
+function toggleCallingFilters(){
+  const row=document.getElementById('callingFilterRow');
+  const btn=document.getElementById('callFilterBtn');
+  if(!row) return;
+  const willShow=(getComputedStyle(row).display==='none');
+  row.style.display=willShow?'table-row':'none';
+  if(btn) btn.style.fontWeight=willShow?'700':'';
+  if(!willShow){
+    document.querySelectorAll('#callingFilterRow input.cfilter').forEach(i=>i.value='');
+    filterCalling();
+  }
+}
+function setupCallingScroll(){
+  const sc=document.getElementById('callingScroll');
+  if(!sc) return;
+  if(!sc._scrollBound){ sc._scrollBound=true; sc.addEventListener('scroll',()=>{ callingScroll=sc.scrollTop; }); }
+  setTimeout(()=>{
+    if(callingScroll!=null){ sc.scrollTop=callingScroll; return; }
+    const rows=[...sc.querySelectorAll('#callingBody tr')];
+    const next=rows.find(tr=>tr.style.display!=='none' && !tr.classList.contains('called-today-row') && !tr.classList.contains('row-called'));
+    if(next){ const hdr=sc.querySelector('thead'); sc.scrollTop=Math.max(0, next.offsetTop-(hdr?hdr.offsetHeight:32)-6); }
+  },40);
+}
 function renderCalling(d){
   const body=document.getElementById('callingBody');
   const done=d.completed||0, total=d.count||0;
@@ -2653,7 +2752,7 @@ function renderCalling(d){
     else gb.innerHTML='🔄 Generate New List';
   }
   if(!callingData.length){
-    body.innerHTML='<tr><td colspan="21" style="text-align:center;padding:30px;color:var(--t3)">'
+    body.innerHTML='<tr><td colspan="22" style="text-align:center;padding:30px;color:var(--t3)">'
       +(d.has_batch?'This list is empty.':'No active list yet — pick a source above and click <strong>Generate List</strong>.')+'</td></tr>';
     return;
   }
@@ -2680,11 +2779,14 @@ function renderCalling(d){
       <td>${sSelect('calling',c.reg_number)}</td>
       <td>${cmBox('calling',c.reg_number)}</td>
       <td>${cBtn('calling',c.reg_number,c.name||'')}</td>
+      <td style="text-align:center"><input type="checkbox" class="nl-cb" ${newsletterFlags[c.reg_number]?'checked':''} onchange="toggleNewsletter('${esc(c.reg_number)}',this)" title="Newsletter opt-in"></td>
       <td>${callerCol('calling',c.reg_number)}</td>
       <td style="white-space:normal">${ai||'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
     </tr>`;
   }).join('');
   refreshCalled();
+  filterCalling();
+  setupCallingScroll();
 }
 function applyMF(){
   const n=(v('mf-name')||'').toLowerCase(),r=(v('mf-reg')||'').toLowerCase();
