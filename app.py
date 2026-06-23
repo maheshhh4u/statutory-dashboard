@@ -964,6 +964,59 @@ def newsletter_set():
         db_exec("DELETE FROM newsletter_flags WHERE reg_number=?", (reg,))
     return jsonify({"ok": True, "on": on})
 
+@app.route("/api/calling/export", methods=["POST"])
+def calling_export():
+    """Export the active Daily Calling list to CSV — all fields, status, and full history."""
+    data = request.get_json(force=True) or {}
+    regs_filter = data.get("regs")
+    regs_set = set(str(r) for r in regs_filter) if regs_filter else None
+
+    rows = db_query("SELECT reg_number, data, completed FROM calling_batch WHERE active=1 ORDER BY position ASC")
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Reg Number","Charity Name","Priority Band","Priority Score",
+                "Phone","Email","Website","Contact Person","Job Role","Contact Phone","Contact Email",
+                "Total Income","Statutory Income","Source","Stage","Called","Called By","Called At",
+                "Newsletter","Current Comment","Full History"])
+    for reg, d, completed in rows:
+        if regs_set is not None and str(reg) not in regs_set:
+            continue
+        try: c = json.loads(d) if d else {}
+        except Exception: c = {}
+        ov = _contact_overrides.get(reg, {})
+        key = f"calling|{reg}"
+        status = _statuses.get(key, "")
+        called = _called_log.get(key)
+        called_yes = "Yes" if (called or completed) else "No"
+        called_by = (called or {}).get("called_by", "")
+        called_at = (called or {}).get("timestamp", "")
+        newsletter = "Yes" if _newsletter.get(reg) else "No"
+        cur_comment = _comments.get(key, "")
+        hist = []
+        try:
+            for ts, cname, text in db_query("SELECT timestamp, caller, text FROM comment_history WHERE reg_number=? ORDER BY id ASC", (reg,)):
+                hist.append(f"[{ts}] NOTE by {cname or '?'}: {text or ''}")
+        except Exception: pass
+        try:
+            for ts, cname, outcome, dur, notes in db_query("SELECT timestamp, caller, outcome, duration_sec, notes FROM call_log WHERE reg_number=? ORDER BY id ASC", (reg,)):
+                dn = int(dur or 0)
+                line = f"[{ts}] CALL: {outcome or ''} ({dn//60}:{dn%60:02d}) by {cname or '?'}"
+                if notes: line += f" — {notes}"
+                hist.append(line)
+        except Exception: pass
+        full_hist = "\n".join(hist)
+        phone   = ov.get("phone")   or c.get("phone", "")
+        email   = ov.get("email")   or c.get("email", "")
+        website = ov.get("website") or c.get("website", "")
+        w.writerow([reg, c.get("name",""), c.get("band",""), c.get("priority",""),
+                    phone, email, website, ov.get("name",""), ov.get("role",""), ov.get("cphone",""), ov.get("cemail",""),
+                    c.get("total_income",""), c.get("statutory",""), c.get("source",""),
+                    status, called_yes, called_by, called_at, newsletter, cur_comment, full_hist])
+    out = "\ufeff" + buf.getvalue()   # BOM so Excel reads UTF-8 (£, emojis) correctly
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M")
+    return Response(out, mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=daily_calling_{ts}.csv"})
+
 @app.route("/api/ai/find_contact", methods=["POST"])
 def api_ai_find_contact():
     """Use a web-search-grounded model to find the most senior contactable person

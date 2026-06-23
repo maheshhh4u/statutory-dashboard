@@ -408,6 +408,7 @@ select:focus{outline:none;border-color:var(--green)}
     </select>
     <input type="text" id="cf-caller" placeholder="Caller…" oninput="filterCalling()" style="width:100px">
     <button class="btn btn-outline btn-sm" onclick="clearCallingFilter()">Clear</button>
+    <button class="btn btn-sm" style="background:#1e7a3f;color:#fff" onclick="exportCalling()">⬇ Export CSV</button>
     <span id="cf-count" style="font-size:11px;color:var(--t3);margin-left:auto"></span>
   </div>
 
@@ -2791,6 +2792,45 @@ function filterCalling(){
 function clearCallingFilter(){
   ['cf-name','cf-source','cf-caller','cf-stage','cf-called','cf-news'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   filterCalling();
+}
+function callingFilterActive(){
+  return ['cf-name','cf-source','cf-stage','cf-called','cf-news','cf-caller'].some(id=>{const e=document.getElementById(id);return e&&e.value;});
+}
+function countVisibleCalling(){
+  let n=0; document.querySelectorAll('#callingBody tr').forEach(tr=>{ if(tr.style.display!=='none' && tr.children.length>=21) n++; }); return n;
+}
+function exportCalling(){
+  if(!callingData.length){ cToast('Nothing to export — generate a list first.','warn'); return; }
+  if(!callingFilterActive()){ doExportCalling(null); return; }   // no filter → export everything
+  const html=`<p style="margin:0 0 14px;font-size:13px">You have filters applied. What would you like to export?</p>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-sm" style="background:#1e7a3f;color:#fff" onclick="closeGenericModal(true);doExportCalling('filtered')">Only filtered items (${countVisibleCalling()})</button>
+      <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="closeGenericModal(true);doExportCalling(null)">All items in the list</button>
+      <button class="btn btn-outline btn-sm" onclick="closeGenericModal(true)">Cancel</button>
+    </div>`;
+  showModal('Export to CSV', html);
+}
+function doExportCalling(mode){
+  let regs=null;
+  if(mode==='filtered'){
+    regs=[];
+    document.querySelectorAll('#callingBody tr').forEach(tr=>{
+      if(tr.style.display==='none') return;
+      const cb=tr.querySelector('input.mxcb[data-reg]');
+      if(cb) regs.push(cb.dataset.reg);
+    });
+    if(!regs.length){ cToast('No rows match the current filter.','warn'); return; }
+  }
+  cToast('Preparing CSV…');
+  fetch('/api/calling/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({regs})})
+    .then(r=>r.blob()).then(b=>{
+      const url=URL.createObjectURL(b);
+      const a=document.createElement('a');
+      a.href=url; a.download='daily_calling_'+new Date().toISOString().slice(0,10)+'.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),1500);
+    })
+    .catch(e=>cToast('Export failed: '+e.message,'err'));
 }
 function setupCallingScroll(){
   const sc=document.getElementById('callingScroll');
