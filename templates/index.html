@@ -2286,7 +2286,7 @@ function autoMarkCalled(pg, reg, name){
   if(callerCell){callerCell.innerHTML='<span class="tag tag-green" style="font-size:10px">'+esc(caller)+'</span>';}
   refreshCalled();
   fetch('/api/mark_called_by',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({reg_number:reg,page:pg,name:name,caller:caller,toggle:false})})
+    body:JSON.stringify({reg_number:reg,page:pg,name:name,caller:caller,toggle:false,called:true})})
     .then(r=>r.json()).then(d=>{if(!d.ok)console.warn('auto-mark error',d);}).catch(()=>{});
 }
 
@@ -2330,7 +2330,7 @@ function toggleCalled(pg,reg,name){
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({reg_number:reg, page:pg, name:name,
-                         caller:currentCaller, toggle:false})
+                         caller:currentCaller, toggle:false, called:nowCalled})
   }).then(r=>r.json()).then(d=>{
     if(!d.ok) console.warn('mark_called_by error',d);
   }).catch(e=>console.warn('mark_called_by fetch error',e));

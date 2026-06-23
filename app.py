@@ -1536,12 +1536,15 @@ def mark_called_by():
     name   = str(data.get("name","")).strip()
     caller = str(data.get("caller","")).strip() or "Unknown"
     do_toggle = data.get("toggle", True)
+    set_called = data.get("called", None)   # explicit desired state, if provided
     if not reg or not page:
         return jsonify({"ok":False,"error":"Missing reg_number or page"}), 400
     key = f"{page}|{reg}"
-    if do_toggle and key in _called_log:
-        del _called_log[key]
-        db_exec("DELETE FROM called_log WHERE key=?", (key,))
+    # Un-mark: explicit called=False, or legacy toggle of an already-called row
+    if set_called is False or (set_called is None and do_toggle and key in _called_log):
+        if key in _called_log:
+            del _called_log[key]
+            db_exec("DELETE FROM called_log WHERE key=?", (key,))
         return jsonify({"ok":True,"marked":False})
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     _called_log[key] = {
