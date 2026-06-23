@@ -526,6 +526,15 @@ def compute_old():
 @app.route("/")
 def index(): return render_template("index.html")
 
+@app.route("/api/rc/config")
+def rc_config():
+    """Expose non-secret RC config to the frontend for the Embeddable widget."""
+    return jsonify({
+        "client_id":  RC_CLIENT_ID,
+        "server_url": RC_SERVER_URL,
+        "configured": _rc_configured()
+    })
+
 @app.route("/healthz")
 def healthz():
     """Lightweight keep-alive endpoint for an external uptime pinger (no heavy work)."""
