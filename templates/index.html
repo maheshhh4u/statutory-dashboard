@@ -349,7 +349,6 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-outline btn-sm" onclick="loadCalling()">↺ Refresh</button>
       <button class="btn btn-outline btn-sm" onclick="openCalendar()">📅 Calendar</button>
       <button class="btn btn-outline btn-sm" onclick="openCallHistory()">📋 Call History</button>
-      <button class="btn btn-outline btn-sm" id="callFilterBtn" onclick="toggleCallingFilters()">🔍 Filters</button>
       <button class="btn btn-outline btn-sm" style="border-color:#6060c0;color:#6060c0" onclick="openMxModal('calling')">🔄 Sync Maximizer</button>
     </div>
   </div>
@@ -384,6 +383,34 @@ select:focus{outline:none;border-color:var(--green)}
 
   <div id="callingNote" class="calling-note" style="display:none"></div>
 
+  <div class="filter-bar" id="callingFilterBar">
+    <strong style="font-size:11px;color:var(--t3)">Filter:</strong>
+    <input type="text" id="cf-name" placeholder="Name / Reg…" oninput="filterCalling()" style="width:150px">
+    <input type="text" id="cf-source" placeholder="Source…" oninput="filterCalling()" style="width:110px">
+    <select id="cf-stage" onchange="filterCalling()">
+      <option value="">All stages</option>
+      <option value="Contacted">Contacted</option>
+      <option value="Call back">Call back</option>
+      <option value="Interested">Interested</option>
+      <option value="Meeting secured">Meeting secured</option>
+      <option value="Not interested">Not interested</option>
+      <option value="Client">Client</option>
+    </select>
+    <select id="cf-called" onchange="filterCalling()">
+      <option value="">Called: all</option>
+      <option value="yes">✓ Called</option>
+      <option value="no">Not called</option>
+    </select>
+    <select id="cf-news" onchange="filterCalling()">
+      <option value="">Newsletter: all</option>
+      <option value="yes">Newsletter ✓</option>
+      <option value="no">Not subscribed</option>
+    </select>
+    <input type="text" id="cf-caller" placeholder="Caller…" oninput="filterCalling()" style="width:100px">
+    <button class="btn btn-outline btn-sm" onclick="clearCallingFilter()">Clear</button>
+    <span id="cf-count" style="font-size:11px;color:var(--t3);margin-left:auto"></span>
+  </div>
+
   <div id="scheduledCalls" style="display:none;margin-bottom:14px;border:1.5px solid #e8b339;border-radius:8px;padding:12px 14px;background:#fffdf5">
     <div style="font-weight:700;color:#1e3a5f;margin-bottom:8px;font-size:14px">📅 Scheduled follow-up calls — today</div>
     <div id="scheduledCallsBody"></div>
@@ -410,28 +437,6 @@ select:focus{outline:none;border-color:var(--green)}
           <th style="width:72px" title="Newsletter opt-in">Newsletter</th>
           <th style="width:90px">Caller</th>
           <th style="min-width:120px">Also in / Elsewhere</th>
-        </tr>
-        <tr class="cfilter-row" id="callingFilterRow" style="display:none">
-          <th></th><th></th><th></th>
-          <th><input class="cfilter" data-ci="3" oninput="filterCalling()" placeholder="Priority"></th>
-          <th><input class="cfilter" data-ci="4" oninput="filterCalling()" placeholder="Name / Reg"></th>
-          <th><input class="cfilter" data-ci="5" oninput="filterCalling()" placeholder="Phone"></th>
-          <th><input class="cfilter" data-ci="6" oninput="filterCalling()" placeholder="Email"></th>
-          <th><input class="cfilter" data-ci="7" oninput="filterCalling()" placeholder="Website"></th>
-          <th></th>
-          <th><input class="cfilter" data-ci="9" oninput="filterCalling()" placeholder="Contact"></th>
-          <th><input class="cfilter" data-ci="10" oninput="filterCalling()" placeholder="Role"></th>
-          <th><input class="cfilter" data-ci="11" oninput="filterCalling()" placeholder="Phone"></th>
-          <th><input class="cfilter" data-ci="12" oninput="filterCalling()" placeholder="Email"></th>
-          <th><input class="cfilter" data-ci="13" oninput="filterCalling()" placeholder="Income"></th>
-          <th><input class="cfilter" data-ci="14" oninput="filterCalling()" placeholder="Statutory"></th>
-          <th><input class="cfilter" data-ci="15" oninput="filterCalling()" placeholder="Source"></th>
-          <th><input class="cfilter" data-ci="16" oninput="filterCalling()" placeholder="Stage"></th>
-          <th><input class="cfilter" data-ci="17" oninput="filterCalling()" placeholder="Comment"></th>
-          <th><input class="cfilter" data-ci="18" oninput="filterCalling()" placeholder="Called"></th>
-          <th></th>
-          <th><input class="cfilter" data-ci="20" oninput="filterCalling()" placeholder="Caller"></th>
-          <th><input class="cfilter" data-ci="21" oninput="filterCalling()" placeholder="Also in"></th>
         </tr>
       </thead>
       <tbody id="callingBody">
@@ -1242,7 +1247,7 @@ function openCallModal(pg,reg,name,ccPhone){
     <select id="call-outcome" style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;margin-bottom:10px">
       <option value="">— Select outcome —</option>
       <option value="Connected">✓ Connected</option>
-      <option value="Voicemail">📧 Voicemail Left</option>
+      <option value="Voicemail">📧 Voicemail</option>
       <option value="No Answer">📵 No Answer</option>
       <option value="Wrong Number">⚠ Wrong Number</option>
       <option value="Busy">⏱ Busy</option>
@@ -1285,10 +1290,13 @@ function startCallTimer(){
   _callTimerInterval=setInterval(()=>{
     const sec=Math.floor((Date.now()-_callTimerStart)/1000);
     const m=Math.floor(sec/60),s=sec%60;
+    const tstr=m+':'+String(s).padStart(2,'0');
     const td=document.getElementById('call-timer-display');
-    if(td) td.textContent='⏱ Timer: '+m+':'+String(s).padStart(2,'0');
+    if(td) td.textContent='⏱ Timer: '+tstr;
     const dur=document.getElementById('call-duration');
-    if(dur) dur.value=m+':'+String(s).padStart(2,'0');
+    if(dur) dur.value=tstr;
+    const dk=document.getElementById('dock-timer');
+    if(dk) dk.textContent=tstr;
   },1000);
 }
 function stopCallTimer(){
@@ -1688,6 +1696,47 @@ function showCommentHistory(reg){
   });
 }
 
+function minimizeCallWindow(){
+  const m=document.getElementById('generic-modal');
+  const dock=document.getElementById('callDock');
+  if(!m||!dock) return;
+  // Populate the dock from the call form
+  const ctx=window._callCtx||{};
+  document.getElementById('dock-name').textContent=ctx.name||'Charity';
+  document.getElementById('dock-reg').textContent=ctx.reg?('Reg '+ctx.reg):'';
+  const ph=document.getElementById('call-phone');
+  document.getElementById('dock-phone').textContent=ph?ph.value:'';
+  const td=document.getElementById('call-timer-display');
+  const dk=document.getElementById('dock-timer');
+  if(dk) dk.textContent=(td&&td.textContent)?td.textContent.replace('⏱ Timer: ',''):'0:00';
+  // Hide the modal (keeps all form values + timer running) and show the dock
+  m.classList.remove('open');
+  dock.style.display='block';
+}
+function restoreCallWindow(){
+  const m=document.getElementById('generic-modal');
+  const dock=document.getElementById('callDock');
+  if(dock) dock.style.display='none';
+  if(m) m.classList.add('open');
+}
+// Make the dock draggable (picture-in-picture style)
+(function(){
+  document.addEventListener('DOMContentLoaded', function(){
+    const dock=document.getElementById('callDock');
+    const hdr=document.getElementById('callDockHdr');
+    if(!dock||!hdr) return;
+    hdr.addEventListener('mousedown', function(e){
+      if(e.target.tagName==='BUTTON') return;
+      e.preventDefault();
+      const r=dock.getBoundingClientRect();
+      const sx=e.clientX, sy=e.clientY, sl=r.left, st=r.top;
+      dock.style.right='auto'; dock.style.bottom='auto'; dock.style.left=sl+'px'; dock.style.top=st+'px';
+      function mv(ev){ dock.style.left=Math.max(0,sl+(ev.clientX-sx))+'px'; dock.style.top=Math.max(0,st+(ev.clientY-sy))+'px'; }
+      function up(){ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); }
+      document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+    });
+  });
+})();
 function showModal(title, html){
   let m=document.getElementById('generic-modal');
   if(!m){
@@ -1697,7 +1746,10 @@ function showModal(title, html){
     m.innerHTML=`<div class="modal" style="max-width:650px;max-height:80vh;overflow-y:auto">
       <div id="gm-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;cursor:move;user-select:none">
         <h3 id="gm-title" style="margin:0"></h3>
-        <button onclick="closeGenericModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--t3);padding:0 6px;line-height:1">×</button>
+        <div style="display:flex;gap:2px;align-items:center">
+          <button id="gm-min" onclick="minimizeCallWindow()" title="Minimize (keep call active)" style="display:none;background:none;border:none;font-size:20px;cursor:pointer;color:var(--t3);padding:0 8px;line-height:1">–</button>
+          <button onclick="closeGenericModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--t3);padding:0 6px;line-height:1">×</button>
+        </div>
       </div>
       <div id="gm-body"></div>
       <div style="text-align:right;margin-top:14px"><button class="btn btn-outline btn-sm" onclick="closeGenericModal()">Close</button></div>
@@ -1724,6 +1776,10 @@ function showModal(title, html){
   }
   document.getElementById('gm-title').innerHTML=title;
   document.getElementById('gm-body').innerHTML=html;
+  // Minimize button only for the call window
+  const minBtn=document.getElementById('gm-min');
+  if(minBtn) minBtn.style.display = (html.indexOf('call-outcome')>=0) ? '' : 'none';
+  const dock=document.getElementById('callDock'); if(dock) dock.style.display='none';
   // Re-center each time it opens
   if(m._drag){ m._drag.x=0; m._drag.y=0; const bx=m.querySelector('.modal'); if(bx) bx.style.transform=''; }
   m.classList.add('open');
@@ -1741,6 +1797,7 @@ function closeGenericModal(force){
   }
   const m=document.getElementById('generic-modal');
   if(m) m.classList.remove('open');
+  const dock=document.getElementById('callDock'); if(dock) dock.style.display='none';
 }
 
 // ── Prospect criteria descriptions ────────────────────────────────────────────
@@ -2696,37 +2753,44 @@ function prioBadge(band,score){
 }
 
 let callingScroll=null;
+function _gv(id){const e=document.getElementById(id);return e?e.value:'';}
 function filterCalling(){
-  const fs=[...document.querySelectorAll('#callingFilterRow input.cfilter')]
-            .map(i=>({ci:+i.dataset.ci, v:i.value.trim().toLowerCase()})).filter(f=>f.v);
+  const name=_gv('cf-name').toLowerCase().trim();
+  const src=_gv('cf-source').toLowerCase().trim();
+  const stage=_gv('cf-stage');
+  const called=_gv('cf-called');
+  const news=_gv('cf-news');
+  const caller=_gv('cf-caller').toLowerCase().trim();
+  let shown=0;
   document.querySelectorAll('#callingBody tr').forEach(tr=>{
-    if(!tr.children||tr.children.length<3) return;
+    const tds=tr.children;
+    if(!tds||tds.length<21) return;
+    const nameTxt=(tds[4].textContent||'').toLowerCase();
+    const srcTxt=(tds[15].textContent||'').toLowerCase();
+    const sel=tds[16].querySelector('select');
+    const stageVal=sel?sel.value:'';
+    const isCalled=tr.classList.contains('row-called')||tr.classList.contains('called-today-row');
+    const nlCb=tds[19].querySelector('input[type=checkbox]');
+    const isNews=nlCb?nlCb.checked:false;
+    const callerTxt=(tds[20].textContent||'').toLowerCase();
     let show=true;
-    for(const f of fs){
-      const cell=tr.children[f.ci]; let txt='';
-      if(cell){
-        const sel=cell.querySelector('select');
-        const inp=cell.querySelector('input:not([type=checkbox]),textarea');
-        if(sel) txt=sel.options[sel.selectedIndex]?sel.options[sel.selectedIndex].text:'';
-        else if(inp) txt=inp.value;
-        else txt=cell.textContent;
-      }
-      if(!txt.toLowerCase().includes(f.v)){show=false;break;}
-    }
+    if(name && !nameTxt.includes(name)) show=false;
+    if(src && !srcTxt.includes(src)) show=false;
+    if(stage && stageVal!==stage) show=false;
+    if(called==='yes' && !isCalled) show=false;
+    if(called==='no' && isCalled) show=false;
+    if(news==='yes' && !isNews) show=false;
+    if(news==='no' && isNews) show=false;
+    if(caller && !callerTxt.includes(caller)) show=false;
     tr.style.display=show?'':'none';
+    if(show) shown++;
   });
+  const cc=document.getElementById('cf-count');
+  if(cc){ const anyF=name||src||stage||called||news||caller; cc.textContent=anyF?(shown+' shown'):''; }
 }
-function toggleCallingFilters(){
-  const row=document.getElementById('callingFilterRow');
-  const btn=document.getElementById('callFilterBtn');
-  if(!row) return;
-  const willShow=(getComputedStyle(row).display==='none');
-  row.style.display=willShow?'table-row':'none';
-  if(btn) btn.style.fontWeight=willShow?'700':'';
-  if(!willShow){
-    document.querySelectorAll('#callingFilterRow input.cfilter').forEach(i=>i.value='');
-    filterCalling();
-  }
+function clearCallingFilter(){
+  ['cf-name','cf-source','cf-caller','cf-stage','cf-called','cf-news'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  filterCalling();
 }
 function setupCallingScroll(){
   const sc=document.getElementById('callingScroll');
@@ -3159,5 +3223,20 @@ restoreWrap();
 setTimeout(setupResizableTables,300);
 </script>
 <button id="wrapToggleBtn" onclick="toggleWrap()" title="Toggle text wrapping in tables">↩ Wrap: On</button>
+<div id="callDock" style="display:none;position:fixed;bottom:18px;right:18px;width:288px;background:#fff;border:1px solid var(--bd);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.30);z-index:1450;overflow:hidden">
+  <div id="callDockHdr" style="background:linear-gradient(135deg,#1e3a5f,#2d5a8f);color:#fff;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none">
+    <span style="font-size:12px;font-weight:700">📞 Call in progress</span>
+    <button onclick="restoreCallWindow()" title="Restore full window" style="background:rgba(255,255,255,.18);border:none;color:#fff;border-radius:4px;cursor:pointer;font-size:13px;padding:1px 8px;line-height:1.4">▢</button>
+  </div>
+  <div style="padding:11px 13px">
+    <div id="dock-name" style="font-weight:600;font-size:13px;margin-bottom:2px;line-height:1.3"></div>
+    <div id="dock-reg" style="font-size:10px;color:var(--t3);margin-bottom:8px"></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+      <span id="dock-timer" style="font-family:monospace;font-size:22px;color:#1e3a5f;font-weight:700">0:00</span>
+      <span id="dock-phone" style="font-size:11px;color:var(--t3);font-family:monospace"></span>
+    </div>
+    <button onclick="restoreCallWindow()" style="width:100%;background:#1e3a5f;color:#fff;border:none;border-radius:6px;padding:8px;cursor:pointer;font-size:12px;font-weight:600">Open full window to save</button>
+  </div>
+</div>
 </body>
 </html>
