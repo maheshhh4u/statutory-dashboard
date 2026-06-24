@@ -3198,7 +3198,7 @@ let _rcReady=false, _rcPendingCall=null;
 
 function toggleRcWidget(){
   // adapter.js manages its own UI — nothing needed here
-  const adapterFrame=document.getElementById('rc-widget-adapter');
+  const adapterFrame=document.getElementById('rc-widget-adapter-frame');
   if(adapterFrame){
     const cur=adapterFrame.style.display||getComputedStyle(adapterFrame).display;
     adapterFrame.style.display=(cur==='none'?'':'none');
@@ -3215,9 +3215,9 @@ function _initRcWidget(clientId, serverUrl){
     +'&appServer='+encodeURIComponent(serverUrl||'https://platform.ringcentral.com')
     +'&redirectUri='+encodeURIComponent(rcRedirectUri);
   document.head.appendChild(script);
-  // The adapter creates an iframe with id="rc-widget-adapter" — wire up events after it loads
+  // The adapter creates an iframe with id="rc-widget-adapter-frame" — wire up events after it loads
   setTimeout(()=>{
-    const adapterFrame=document.getElementById('rc-widget-adapter')||document.getElementById('rc-widget');
+    const adapterFrame=document.getElementById('rc-widget-adapter-frame')||document.getElementById('rc-widget');
     if(adapterFrame) adapterFrame.allow='microphone; autoplay; camera; speaker-selection; clipboard-write';
   }, 3000);
   // Listen for messages from the adapter iframe
@@ -3255,8 +3255,8 @@ function _initRcWidget(clientId, serverUrl){
 }
 
 function _rcWidgetDial(phone, reg, pg, name){
-  // adapter.js creates an iframe with id="rc-widget-adapter"
-  const ifrm=document.getElementById('rc-widget-adapter')||document.getElementById('rc-widget');
+  // adapter.js creates an iframe with id="rc-widget-adapter-frame"
+  const ifrm=document.getElementById('rc-widget-adapter-frame')||document.getElementById('rc-widget');
   if(!ifrm||!ifrm.contentWindow) return;
   // Show the widget
   if(ifrm.style.display==='none') ifrm.style.display='';
