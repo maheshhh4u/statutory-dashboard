@@ -530,9 +530,9 @@ def index(): return render_template("index.html")
 def rc_config():
     """Expose non-secret RC config to the frontend for the Embeddable widget."""
     return jsonify({
-        "client_id":  RC_CLIENT_ID,
+        "client_id":  RC_EMBEDDABLE_CLIENT_ID,
         "server_url": RC_SERVER_URL,
-        "configured": _rc_configured()
+        "configured": bool(RC_EMBEDDABLE_CLIENT_ID)
     })
 
 @app.route("/healthz")
@@ -3769,7 +3769,7 @@ def mx_apply_to_latest():
 # Audio flows via WebRTC peer connection — no RC desktop app needed.
 
 RC_SERVER_URL    = os.environ.get("RC_SERVER_URL", "https://platform.ringcentral.com").rstrip("/")
-RC_CLIENT_ID     = os.environ.get("RC_CLIENT_ID", "")
+RC_EMBEDDABLE_CLIENT_ID = os.environ.get("RC_EMBEDDABLE_CLIENT_ID", "") or RC_CLIENT_ID
 RC_CLIENT_SECRET = os.environ.get("RC_CLIENT_SECRET", "")
 RC_JWT           = os.environ.get("RC_JWT", "")
 RC_FROM_EXT      = os.environ.get("RC_FROM_EXT", "")
