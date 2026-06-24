@@ -3181,46 +3181,52 @@ setTimeout(setupResizableTables,300);
 let _rcReady=false, _rcPendingCall=null;
 
 function toggleRcWidget(){
-  const p=document.getElementById('rc-widget-panel');
-  if(p) p.style.display=(p.style.display==='none'?'block':'none');
+  // adapter.js creates an iframe with id="rc-widget-adapter" — toggle its visibility
+  const adapterFrame=document.getElementById('rc-widget-adapter');
+  if(adapterFrame){
+    const cur=adapterFrame.style.display||getComputedStyle(adapterFrame).display;
+    adapterFrame.style.display=(cur==='none'?'':'none');
+  } else {
+    // fallback to our panel if adapter hasn't loaded yet
+    const p=document.getElementById('rc-widget-panel');
+    if(p) p.style.display=(p.style.display==='none'?'block':'none');
+  }
 }
 
 function _initRcWidget(clientId, serverUrl){
-  const ifrm=document.getElementById('rc-widget');
-  if(!ifrm||!clientId) return;
-  const isProduction=!serverUrl||serverUrl.includes('platform.ringcentral.com');
-  const env=isProduction?'production':'sandbox';
+  if(!clientId) return;
   const rcRedirectUri='https://apps.ringcentral.com/integration/ringcentral-embeddable/latest/redirect.html';
-  ifrm.src='https://apps.ringcentral.com/integration/ringcentral-embeddable/latest/app.html'
+  // Use adapter.js — this is the official method that handles WebRTC audio properly
+  const script=document.createElement('script');
+  script.src='https://apps.ringcentral.com/integration/ringcentral-embeddable/latest/adapter.js'
     +'?clientId='+encodeURIComponent(clientId)
     +'&appServer='+encodeURIComponent(serverUrl||'https://platform.ringcentral.com')
-    +'&redirectUri='+encodeURIComponent(rcRedirectUri)
-    +'&authorizationCode=true';
+    +'&redirectUri='+encodeURIComponent(rcRedirectUri);
+  document.head.appendChild(script);
+  // adapter.js creates its own iframe — hide our placeholder panel, show the toggle button
   document.getElementById('rc-widget-toggle').style.display='block';
-
-  // Listen for messages from the widget iframe
+  // The adapter creates an iframe with id="rc-widget-adapter" — wire up events after it loads
+  setTimeout(()=>{
+    const adapterFrame=document.getElementById('rc-widget-adapter')||document.getElementById('rc-widget');
+    if(adapterFrame) adapterFrame.allow='microphone; autoplay; camera; speaker-selection; clipboard-write';
+  }, 3000);
+  // Listen for messages from the adapter iframe
   window.addEventListener('message', function(e){
     const d=e.data;
     if(!d||typeof d!=='object') return;
-    // Widget ready
     if(d.type==='rc-adapter-initialized'||d.type==='rc-login-status-notify'){
       _rcReady=true;
       if(_rcPendingCall){ const p=_rcPendingCall; _rcPendingCall=null; _rcWidgetDial(p.phone,p.reg,p.pg,p.name); }
     }
-    // Call ringing / connecting
     if(d.type==='rc-call-ring-notify'||d.type==='rc-call-start-notify'){
       const cs=document.getElementById('call-status');
-      if(cs){ cs.style.display='block'; cs.style.background='#fef8e8'; cs.style.color='#8a6d1f'; cs.innerHTML='📞 Connecting via RingCentral softphone…'; }
-      // Show RC panel if hidden
-      const p=document.getElementById('rc-widget-panel'); if(p) p.style.display='block';
+      if(cs){ cs.style.display='block'; cs.style.background='#fef8e8'; cs.style.color='#8a6d1f'; cs.innerHTML='📞 Connecting via RingCentral…'; }
     }
-    // Call connected
     if(d.type==='rc-call-answer-notify'||d.type==='rc-active-call-notify'){
       const cs=document.getElementById('call-status');
       if(cs){ cs.style.display='block'; cs.style.background='#eef9f1'; cs.style.color='#1d7a3a'; cs.innerHTML='✓ <strong>Connected</strong> — talk now.'; }
       startCallTimer();
     }
-    // Call ended
     if(d.type==='rc-call-end-notify'){
       stopCallTimer();
       const cs=document.getElementById('call-status');
@@ -3239,9 +3245,11 @@ function _initRcWidget(clientId, serverUrl){
 }
 
 function _rcWidgetDial(phone, reg, pg, name){
-  const ifrm=document.getElementById('rc-widget');
+  // adapter.js creates an iframe with id="rc-widget-adapter"
+  const ifrm=document.getElementById('rc-widget-adapter')||document.getElementById('rc-widget');
   if(!ifrm||!ifrm.contentWindow) return;
-  const panel=document.getElementById('rc-widget-panel'); if(panel) panel.style.display='block';
+  // Show the widget
+  if(ifrm.style.display==='none') ifrm.style.display='';
   ifrm.contentWindow.postMessage({
     type: 'rc-adapter-new-call',
     phoneNumber: phone,
