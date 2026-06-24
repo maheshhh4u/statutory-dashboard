@@ -1179,6 +1179,8 @@ def save_call():
     if not reg or not outcome:
         return jsonify({"ok": False, "error": "Missing reg_number or outcome"}), 400
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    # Flag: should we try to fetch duration from RC call log?
+    fetch_rc_duration = (duration == 0 and phone and _rc_configured())
 
     # 1) Log the call (synced=0 — the sync below will push it)
     db_exec("""INSERT INTO call_log
@@ -1221,7 +1223,21 @@ def save_call():
         sync_error = str(e)[:200]
         print(f"  call→full sync error: {e}")
 
-    return jsonify({"ok": True, "synced_to_maximizer": synced, "sync_error": sync_error})
+    # 6) If duration wasn't captured in browser (RC desktop app calling),
+    #    fetch the real duration from RC call log in a background thread
+    if fetch_rc_duration:
+        def _bg_duration(phone_n, reg_n, page_n, ts_n):
+            rc_dur, err = _rc_fetch_call_duration(phone_n, max_wait=20)
+            if rc_dur and rc_dur > 0:
+                db_exec("UPDATE call_log SET duration_sec=? WHERE reg_number=? AND page=? AND timestamp=?",
+                        (rc_dur, reg_n, page_n, ts_n))
+                print(f"  RC duration fetched: {rc_dur}s for {reg_n}")
+            else:
+                print(f"  RC duration fetch failed: {err}")
+        threading.Thread(target=_bg_duration, args=(phone, reg, page, ts), daemon=True).start()
+
+    return jsonify({"ok": True, "synced_to_maximizer": synced, "sync_error": sync_error,
+                    "rc_duration_pending": fetch_rc_duration})
 
 @app.route("/api/followups")
 def followups_list():
@@ -3999,6 +4015,43 @@ def api_rc_ringout_status(call_id):
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)[:300]}), 500
 
+
+def _rc_fetch_call_duration(to_number, max_wait=12):
+    """Fetch the actual call duration (seconds) from RC call log for the most recent
+    call to to_number. Polls up to max_wait seconds for the record to appear."""
+    import time as _time
+    if not _rc_configured() or not to_number:
+        return None, "RC not configured or no number"
+    norm = lambda s: "".join(ch for ch in str(s or "") if ch.isdigit())[-9:]
+    want = norm(to_number)
+    if not want:
+        return None, "invalid number"
+    deadline = _time.time() + max_wait
+    while _time.time() < deadline:
+        try:
+            tok = _rc_get_access_token()
+            from datetime import datetime as _dt, timedelta as _td
+            date_from = (_dt.utcnow() - _td(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            r = requests.get(
+                f"{RC_SERVER_URL}/restapi/v1.0/account/~/extension/~/call-log",
+                headers={"Authorization": f"Bearer {tok}", "Accept": "application/json"},
+                params={"type": "Voice", "direction": "Outbound",
+                        "dateFrom": date_from, "perPage": 10, "view": "Detailed"},
+                timeout=15)
+            if r.status_code >= 400:
+                return None, f"call-log HTTP {r.status_code}"
+            records = r.json().get("records", []) or []
+            for rec in records:
+                to_ph = (rec.get("to") or {}).get("phoneNumber") or ""
+                if norm(to_ph) == want:
+                    dur = rec.get("duration")
+                    if dur is not None and int(dur) > 0:
+                        return int(dur), ""
+                    # Record exists but duration is 0 — call may still be finishing
+            _time.sleep(2)
+        except Exception as e:
+            return None, str(e)[:100]
+    return None, "RC call log not ready after wait"
 
 def _rc_find_recording(session_id, to_number):
     """Find a recorded call matching our RingOut session / prospect number.

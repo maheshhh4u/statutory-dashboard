@@ -1409,10 +1409,11 @@ function saveCall(pg,reg,ccPhone){
       const ok=d.synced_to_maximizer;
       const msg = ok ? '✓ Call saved & synced to Maximizer'
                      : '✓ Call saved · ⚠ Maximizer sync issue'+(d.sync_error?': '+d.sync_error:'');
+      const durNote = d.rc_duration_pending ? ' · ⏱ Fetching call duration from RC…' : '';
       closeGenericModal(true);
       const t=document.createElement('div');
       t.style.cssText='position:fixed;bottom:20px;right:20px;background:'+(ok?'var(--green)':'#b8860b')+';color:white;padding:10px 16px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2);max-width:340px';
-      t.textContent=msg+(fuAt?' · Follow-up set for '+fuAt:'')+(transcribing?' · 📝 Transcript will be added shortly':'');
+      t.textContent=msg+(fuAt?' · Follow-up set for '+fuAt:'')+(transcribing?' · 📝 Transcript will be added shortly':'')+durNote;
       document.body.appendChild(t);
       setTimeout(()=>t.remove(),5000);
     })
