@@ -129,6 +129,11 @@ def db_init():
             updated_by TEXT,
             updated_at TEXT
         )""")
+        client.execute("""CREATE TABLE IF NOT EXISTS calling_exclusions (
+            reg_number TEXT PRIMARY KEY,
+            excluded_by TEXT,
+            excluded_at TEXT
+        )""")
         # Seed default user if empty
         try:
             rs = client.execute("SELECT COUNT(*) FROM users")
@@ -174,12 +179,13 @@ def db_query(sql, params=()):
 _cache={}; _called_log={}; _comments={}; _statuses={}; _saved_searches={}
 _contact_overrides={}   # {reg_number: {phone,email,website}} user-edited contact details
 _newsletter={}          # {reg_number: 1} newsletter opt-in flags
+_calling_excl=set()     # reg_numbers permanently excluded from calling lists
 _bg_status={}; _bg_lock=threading.Lock()
 _users=["Muhanna"]  # admin-managed caller list
 
 def db_load_state():
     """Load all DB state into in-memory dicts. Clears existing state first."""
-    global _users, _called_log, _comments, _statuses, _saved_searches, _contact_overrides, _newsletter
+    global _users, _called_log, _comments, _statuses, _saved_searches, _contact_overrides, _newsletter, _calling_excl
     if not TURSO_URL or not TURSO_TOKEN: return
 
     try:
@@ -222,6 +228,14 @@ def db_load_state():
             print(f"[Turso] Loaded {len(_newsletter)} newsletter flags")
         except Exception as e:
             print(f"[Turso] newsletter load skipped: {e}")
+
+        _calling_excl.clear()
+        try:
+            rows = db_query("SELECT reg_number FROM calling_exclusions")
+            for r in rows: _calling_excl.add(r[0])
+            print(f"[Turso] Loaded {len(_calling_excl)} calling exclusions")
+        except Exception as e:
+            print(f"[Turso] calling_excl load skipped: {e}")
 
         _contact_overrides.clear()
         try:
@@ -950,6 +964,27 @@ def ai_analyze():
                         "model": OPENAI_MODEL, "name": c.get("name", "")})
     except Exception as e:
         return jsonify({"ok": False, "error": f"AI request failed: {str(e)[:200]}"}), 500
+
+@app.route("/api/calling/exclude", methods=["POST"])
+def calling_exclude():
+    data = request.get_json(force=True) or {}
+    reg = str(data.get("reg_number","")).strip()
+    excl = bool(data.get("exclude", True))
+    caller = str(data.get("caller","")).strip() or "Unknown"
+    if not reg: return jsonify({"ok":False,"error":"Missing reg_number"}),400
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    if excl:
+        _calling_excl.add(reg)
+        db_exec("INSERT OR REPLACE INTO calling_exclusions(reg_number,excluded_by,excluded_at) VALUES(?,?,?)",
+                (reg, caller, ts))
+    else:
+        _calling_excl.discard(reg)
+        db_exec("DELETE FROM calling_exclusions WHERE reg_number=?", (reg,))
+    return jsonify({"ok":True,"excluded":excl})
+
+@app.route("/api/calling/exclusions", methods=["GET"])
+def calling_exclusions_bulk():
+    return jsonify(list(_calling_excl))
 
 @app.route("/api/newsletter/bulk", methods=["GET"])
 def newsletter_bulk():
@@ -2008,7 +2043,7 @@ def api_calling_batch_generate():
         leftovers.append(c)
     leftover_regs = set(c["reg_number"] for c in leftovers)
 
-    pool = [c for c in scored if not _ever_called(c["reg_number"]) and not _name_excluded(c)]
+    pool = [c for c in scored if not _ever_called(c["reg_number"]) and not _name_excluded(c) and c["reg_number"] not in _calling_excl]
 
     selected = []; used = set()
     if mode == "leftovers":
@@ -2016,8 +2051,8 @@ def api_calling_batch_generate():
             if c["reg_number"] not in used:
                 selected.append(c); used.add(c["reg_number"])
     excl = set(used)
-    if mode == "fresh":
-        excl |= leftover_regs
+    # "fresh" no longer excludes uncalled leftovers — they get included in the new 100
+    # (only truly called items are excluded via _ever_called in the pool filter above)
     for c in pool:
         if len(selected) >= 100: break
         reg = c["reg_number"]

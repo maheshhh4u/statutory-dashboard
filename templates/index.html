@@ -438,12 +438,13 @@ select:focus{outline:none;border-color:var(--green)}
           <th style="min-width:180px">Comment</th>
           <th style="width:80px">Called</th>
           <th style="width:72px" title="Newsletter opt-in">Newsletter</th>
+          <th style="width:50px" title="Exclude from future lists">Excl.</th>
           <th style="width:90px">Caller</th>
           <th style="min-width:120px">Also in / Elsewhere</th>
         </tr>
       </thead>
       <tbody id="callingBody">
-        <tr><td colspan="22" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>
+        <tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>
       </tbody>
     </table>
   </div>
@@ -957,6 +958,7 @@ let comments={}; // "page|reg" → comment
 let phoneOverrides={}; // reg → override phone (kept as derived view for legacy code paths)
 let contactOverrides={}; // reg → {phone,email,website} — unified manual overrides
 let newsletterFlags={};  // reg → 1 (newsletter opt-in)
+let callingExcl=new Set(); // reg_numbers permanently excluded from Daily Calling lists
 function toggleNewsletter(reg, cb){
   const on=!!(cb&&cb.checked);
   if(on) newsletterFlags[reg]=1; else delete newsletterFlags[reg];
@@ -967,6 +969,18 @@ function toggleNewsletter(reg, cb){
     .catch(e=>console.warn('newsletter fetch error',e));
 }
 fetch('/api/newsletter/bulk').then(r=>r.json()).then(d=>{ newsletterFlags=d||{}; }).catch(()=>{});
+fetch('/api/calling/exclusions').then(r=>r.json()).then(d=>{ callingExcl=new Set(d||[]); }).catch(()=>{});
+function toggleCallingExcl(reg, btn){
+  const nowExcl=!callingExcl.has(reg);
+  if(nowExcl){ callingExcl.add(reg); } else { callingExcl.delete(reg); }
+  if(btn){ btn.title=nowExcl?'Click to re-include in future lists':'Click to exclude from future lists';
+    btn.textContent=nowExcl?'🚫':'➕'; btn.style.opacity=nowExcl?'1':'0.4'; }
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
+  fetch('/api/calling/exclude',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({reg_number:reg,exclude:nowExcl,caller:caller})})
+    .then(r=>r.json()).then(d=>{ if(!d.ok) console.warn('excl error',d); })
+    .catch(e=>console.warn('excl fetch err',e));
+}
 let pLoaded=false;
 let sMode='simple';
 let ss={}; // saved searches name→criteria
@@ -2557,7 +2571,7 @@ function loadCalling(){
   const body=document.getElementById('callingBody');
   const note=document.getElementById('callingNote');
   note.style.display='none';
-  body.innerHTML='<tr><td colspan="22" style="text-align:center;padding:30px;color:var(--t3)">Loading your calling list…</td></tr>';
+  body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">Loading your calling list…</td></tr>';
   fetch('/api/calling_batch')
     .then(r=>r.json())
     .then(d=>{
@@ -2571,7 +2585,7 @@ function loadCalling(){
       renderCalling(d);
     })
     .catch(e=>{
-      body.innerHTML=`<tr><td colspan="22" style="text-align:center;padding:30px"><div class="err-box">⚠ ${esc(e.message)}</div></td></tr>`;
+      body.innerHTML=`<tr><td colspan="23" style="text-align:center;padding:30px"><div class="err-box">⚠ ${esc(e.message)}</div></td></tr>`;
     });
 }
 
@@ -2632,7 +2646,7 @@ function autoLoadAndGenerate(cat, mode){
     alert('This source can\'t be auto-loaded. Please open its tab once, then generate.');
     loadCalling(); return;
   }
-  body.innerHTML='<tr><td colspan="22" style="text-align:center;padding:30px;color:var(--t3)">⏳ Loading source data… first load can take up to a minute.</td></tr>';
+  body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">⏳ Loading source data… first load can take up to a minute.</td></tr>';
   let chain=Promise.resolve();
   eps.forEach(u=>{ chain=chain.then(()=>warmEndpoint(u)); });
   chain.then(()=>runGenerate(cat,mode)).then(d=>{
@@ -2645,7 +2659,7 @@ function doGenerate(cat, mode){
   closeGenericModal(true);
   callingScroll=null;
   const body=document.getElementById('callingBody');
-  body.innerHTML='<tr><td colspan="22" style="text-align:center;padding:30px;color:var(--t3)">⏳ Generating your list of 100…</td></tr>';
+  body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">⏳ Generating your list of 100…</td></tr>';
   runGenerate(cat,mode).then(d=>{
     if(d.status==='not_loaded'){
       if(cat==='search'){
@@ -2771,7 +2785,7 @@ function renderCalling(d){
     else gb.innerHTML='🔄 Generate New List';
   }
   if(!callingData.length){
-    body.innerHTML='<tr><td colspan="22" style="text-align:center;padding:30px;color:var(--t3)">'
+    body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">'
       +(d.has_batch?'This list is empty.':'No active list yet — pick a source above and click <strong>Generate List</strong>.')+'</td></tr>';
     return;
   }
@@ -2799,6 +2813,7 @@ function renderCalling(d){
       <td>${cmBox('calling',c.reg_number)}</td>
       <td>${cBtn('calling',c.reg_number,c.name||'')}</td>
       <td style="text-align:center"><input type="checkbox" class="nl-cb" ${newsletterFlags[c.reg_number]?'checked':''} onchange="toggleNewsletter('${esc(c.reg_number)}',this)" title="Newsletter opt-in"></td>
+      <td style="text-align:center"><button type="button" onclick="toggleCallingExcl('${esc(c.reg_number)}',this)" title="${callingExcl.has(c.reg_number)?'Click to re-include in future lists':'Click to exclude from future lists'}" style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px;opacity:${callingExcl.has(c.reg_number)?'1':'0.3'}">${callingExcl.has(c.reg_number)?'🚫':'🚫'}</button></td>
       <td>${callerCol('calling',c.reg_number)}</td>
       <td style="white-space:normal">${ai||'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
     </tr>`;
@@ -3181,15 +3196,11 @@ setTimeout(setupResizableTables,300);
 let _rcReady=false, _rcPendingCall=null;
 
 function toggleRcWidget(){
-  // adapter.js creates an iframe with id="rc-widget-adapter" — toggle its visibility
+  // adapter.js manages its own UI — nothing needed here
   const adapterFrame=document.getElementById('rc-widget-adapter');
   if(adapterFrame){
     const cur=adapterFrame.style.display||getComputedStyle(adapterFrame).display;
     adapterFrame.style.display=(cur==='none'?'':'none');
-  } else {
-    // fallback to our panel if adapter hasn't loaded yet
-    const p=document.getElementById('rc-widget-panel');
-    if(p) p.style.display=(p.style.display==='none'?'block':'none');
   }
 }
 
@@ -3203,8 +3214,6 @@ function _initRcWidget(clientId, serverUrl){
     +'&appServer='+encodeURIComponent(serverUrl||'https://platform.ringcentral.com')
     +'&redirectUri='+encodeURIComponent(rcRedirectUri);
   document.head.appendChild(script);
-  // adapter.js creates its own iframe — hide our placeholder panel, show the toggle button
-  document.getElementById('rc-widget-toggle').style.display='block';
   // The adapter creates an iframe with id="rc-widget-adapter" — wire up events after it loads
   setTimeout(()=>{
     const adapterFrame=document.getElementById('rc-widget-adapter')||document.getElementById('rc-widget');
@@ -3286,11 +3295,6 @@ fetch('/api/rc/config').then(r=>r.json()).then(d=>{
 }).catch(()=>{});
 </script>
 <button id="wrapToggleBtn" onclick="toggleWrap()" title="Toggle text wrapping in tables">↩ Wrap: On</button>
-<!-- RingCentral Embeddable softphone panel -->
-<div id="rc-widget-panel" style="display:none;position:fixed;bottom:80px;right:18px;z-index:1400;box-shadow:0 8px 32px rgba(0,0,0,.25);border-radius:10px;overflow:hidden">
-  <iframe id="rc-widget" allow="microphone; autoplay; camera; speaker-selection; clipboard-write; display-capture" style="width:300px;height:520px;border:none;display:block"></iframe>
-</div>
-<button id="rc-widget-toggle" onclick="toggleRcWidget()" title="Open RingCentral softphone" style="display:none;position:fixed;bottom:18px;right:72px;z-index:1401;width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#0f5c2e,#1d7a3a);border:none;color:#fff;font-size:22px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.30);line-height:1">📞</button>
 <div id="callDock" style="display:none;position:fixed;bottom:18px;right:18px;width:288px;background:#fff;border:1px solid var(--bd);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.30);z-index:1450;overflow:hidden">
   <div id="callDockHdr" style="background:linear-gradient(135deg,#1e3a5f,#2d5a8f);color:#fff;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none">
     <span style="font-size:12px;font-weight:700">📞 Call in progress</span>
