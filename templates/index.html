@@ -3190,9 +3190,12 @@ function _initRcWidget(clientId, serverUrl){
   if(!ifrm||!clientId) return;
   const isProduction=!serverUrl||serverUrl.includes('platform.ringcentral.com');
   const env=isProduction?'production':'sandbox';
+  const rcRedirectUri='https://apps.ringcentral.com/integration/ringcentral-embeddable/latest/redirect.html';
   ifrm.src='https://apps.ringcentral.com/integration/ringcentral-embeddable/latest/app.html'
     +'?clientId='+encodeURIComponent(clientId)
-    +'&appServer='+encodeURIComponent(serverUrl||'https://platform.ringcentral.com');
+    +'&appServer='+encodeURIComponent(serverUrl||'https://platform.ringcentral.com')
+    +'&redirectUri='+encodeURIComponent(rcRedirectUri)
+    +'&authorizationCode=true';
   document.getElementById('rc-widget-toggle').style.display='block';
 
   // Listen for messages from the widget iframe
