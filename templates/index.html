@@ -3232,26 +3232,45 @@ function _initRcWidget(clientId, serverUrl){
       const cs=document.getElementById('call-status');
       if(cs){ cs.style.display='block'; cs.style.background='#fef8e8'; cs.style.color='#8a6d1f'; cs.innerHTML='📞 Connecting via RingCentral…'; }
     }
-    if(d.type==='rc-call-answer-notify'||d.type==='rc-active-call-notify'){
+    if(d.type==='rc-active-call-notify'){
+      const status=(d.call||{}).telephonyStatus||'';
       const cs=document.getElementById('call-status');
-      if(cs){ cs.style.display='block'; cs.style.background='#eef9f1'; cs.style.color='#1d7a3a'; cs.innerHTML='✓ <strong>Connected</strong> — talk now.'; }
-      startCallTimer();
+      if(status==='CallConnected'){
+        if(cs){ cs.style.display='block'; cs.style.background='#eef9f1'; cs.style.color='#1d7a3a'; cs.innerHTML='✓ <strong>Connected</strong> — talk now. Timer running.'; }
+        if(!window._callTimerRunning) startCallTimer();
+        window._callTimerRunning=true;
+      } else if(status==='NoCall'||status===''){
+        // call ended via active-call-notify
+        if(window._callTimerRunning){
+          stopCallTimer();
+          window._callTimerRunning=false;
+          _onCallEnded();
+        }
+      }
     }
     if(d.type==='rc-call-end-notify'){
-      stopCallTimer();
-      const cs=document.getElementById('call-status');
-      if(cs){ cs.style.display='block'; cs.style.background='#eef9f1'; cs.style.color='#1d7a3a'; cs.innerHTML='✓ Call finished. Fill in the outcome below and Save.'; }
-      const ctx=window._callCtx;
-      if(ctx){
-        const dv=(document.getElementById('call-duration')||{}).value||'';
-        let durSec=0;
-        if(dv){const p=dv.split(':').map(x=>parseInt(x)||0); durSec=(p.length===2)?p[0]*60+p[1]:(p[0]||0);}
-        if(durSec>0) autoMarkCalled(ctx.pg, ctx.reg, ctx.name);
+      if(window._callTimerRunning||true){
+        stopCallTimer();
+        window._callTimerRunning=false;
+        _onCallEnded();
       }
-      const btn=document.getElementById('call-dial');
-      if(btn){ btn.disabled=false; btn.style.opacity='1'; }
     }
   });
+}
+
+function _onCallEnded(){
+  const cs=document.getElementById('call-status');
+  if(cs){ cs.style.display='block'; cs.style.background='#eef9f1'; cs.style.color='#1d7a3a'; cs.innerHTML='✓ Call finished. Fill in the outcome below and Save.'; }
+  const btn=document.getElementById('call-dial');
+  if(btn){ btn.disabled=false; btn.style.opacity='1'; }
+  // Auto-mark called if call had duration
+  const ctx=window._callCtx;
+  if(ctx){
+    const dv=(document.getElementById('call-duration')||{}).value||'';
+    let durSec=0;
+    if(dv){const p=dv.split(':').map(x=>parseInt(x)||0); durSec=(p.length===2)?p[0]*60+p[1]:(p[0]||0);}
+    if(durSec>0) autoMarkCalled(ctx.pg, ctx.reg, ctx.name);
+  }
 }
 
 function _rcWidgetDial(phone, reg, pg, name){
@@ -3278,6 +3297,7 @@ function placeRingOut(reg){
   const status=document.getElementById('call-status');
   if(btn){ btn.disabled=true; btn.style.opacity='0.5'; }
   if(status){ status.style.display='block'; status.style.background='#fef8e8'; status.style.color='#8a6d1f'; status.innerHTML='📞 Launching RingCentral softphone…'; }
+  window._callTimerRunning=false;
   const ctx=window._callCtx||{};
   if(_rcReady){
     _rcWidgetDial(phone, reg, ctx.pg, ctx.name);
