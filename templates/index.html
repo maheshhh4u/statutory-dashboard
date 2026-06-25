@@ -1586,7 +1586,7 @@ function switchTab(id,btn){
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   const tabs=['home','calling','prospects','search','new','late','old','milestones','report'];
   if(btn)btn.classList.add('active');
-  else document.querySelectorAll('.nav-btn')[tabs.indexOf(id)].classList.add('active');
+  else { const nb=document.querySelectorAll('.nav-btn')[tabs.indexOf(id)]; if(nb) nb.classList.add('active'); }
   document.getElementById('tab-'+id).classList.add('active');
   if(id==='calling')loadCalling();
   if(id==='new'&&!nAll.length)loadNew();
