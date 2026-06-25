@@ -6,6 +6,7 @@
 <title>9 Mountains · Prospecting Dashboard</title>
 <!-- RingCentral Embeddable — src set dynamically once client_id is loaded -->
 <script id="rc-adapter-script"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet">
@@ -870,9 +871,10 @@ select:focus{outline:none;border-color:var(--green)}
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <label style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Caller</label>
-        <select id="rpt-caller" style="padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:inherit">
-          <option value="">All callers</option>
+        <select id="rpt-caller" multiple size="4" style="padding:4px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:inherit;min-width:140px" title="Hold Ctrl to select multiple callers">
+          <option value="" selected>All callers</option>
         </select>
+        <span style="font-size:10px;color:var(--t3)">Ctrl+click for multiple</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <label style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Promo emails sent</label>
@@ -1510,19 +1512,20 @@ function initReportDates(){
 }
 function initReportCallers(){
   const sel=document.getElementById('rpt-caller'); if(!sel) return;
-  const cur=sel.value;
+  const cur=Array.from(sel.selectedOptions).map(o=>o.value);
   while(sel.options.length>1) sel.remove(1);
-  (_users||[]).forEach(u=>{const o=document.createElement('option');o.value=u;o.textContent=u;sel.appendChild(o);});
-  if(cur) sel.value=cur;
+  (userList||[]).forEach(u=>{const o=document.createElement('option');o.value=u;o.textContent=u;if(cur.includes(u))o.selected=true;sel.appendChild(o);});
 }
 function loadReport(){
   const from=(document.getElementById('rpt-from')||{}).value||'';
   const to=(document.getElementById('rpt-to')||{}).value||'';
-  const caller=(document.getElementById('rpt-caller')||{}).value||'';
+  const callerSel=document.getElementById('rpt-caller');
+  const callers=callerSel?Array.from(callerSel.selectedOptions).map(o=>o.value).filter(v=>v):[];
   const promo=parseInt((document.getElementById('rpt-promo')||{}).value||'0')||0;
   if(!from||!to){ alert('Please select a date range.'); return; }
   document.getElementById('rpt-kpis').innerHTML='<div style="color:var(--t3);font-size:13px;padding:20px 0">Loading…</div>';
-  fetch(`/api/report?from=${from}&to=${to}&caller=${encodeURIComponent(caller)}`)
+  const callerParam=callers.length?callers.map(c=>'caller='+encodeURIComponent(c)).join('&'):'';
+  fetch(`/api/report?from=${from}&to=${to}${callerParam?'&'+callerParam:''}`)
     .then(r=>r.json()).then(d=>{
       if(!d.ok){ alert('Report error: '+(d.error||'unknown')); return; }
       renderReport(d, promo);
@@ -1564,31 +1567,39 @@ function renderReport(d, promoEmails){
       const pct=Math.round(v/outTotal*100);
       return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span style="font-weight:600">'+esc(k||'(none)')+'</span><span>'+v+' <span style="color:var(--t3)">('+pct+'%)</span></span></div><div style="background:#eee;border-radius:4px;height:6px"><div style="background:var(--navy);border-radius:4px;height:6px;width:'+pct+'%"></div></div></div>';
     }).join('')||'<div style="color:var(--t3);font-size:12px">No calls in this period.</div>';
-  document.getElementById('rpt-lists') && (document.getElementById('rpt-lists').innerHTML='');
   // Draw stacked bar chart for lists by caller
   const chartEl=document.getElementById('rpt-list-chart');
   if(chartEl){
     if(chartEl._chartInst){ chartEl._chartInst.destroy(); chartEl._chartInst=null; }
     const listKeys=Object.keys(d.list_caller||{});
-    const callerList=d.all_callers||[];
+    const callerList=(d.all_callers||[]).length ? d.all_callers : ['Calls'];
     const palette=['#1e3a5f','#e8b339','#1d7a3a','#c0392b','#5a4fbf','#2980b9','#8e44ad'];
-    if(listKeys.length){
+    chartEl.style.display='';
+    const noPrev=chartEl.parentNode.querySelector('p.no-chart-msg');
+    if(noPrev) noPrev.remove();
+    if(listKeys.length && typeof Chart!=='undefined'){
       const datasets=callerList.map((c,i)=>({
-        label:c, backgroundColor:palette[i%palette.length],
-        data:listKeys.map(l=>((d.list_caller[l]||{})[c])||0)
+        label:c,
+        backgroundColor:palette[i%palette.length],
+        data:listKeys.map(l=>{
+          const lc=d.list_caller[l]||{};
+          return c==='Calls' ? Object.values(lc).reduce((a,b)=>a+b,0) : (lc[c]||0);
+        })
       }));
-      if(!callerList.length && listKeys.length){
-        // no caller breakdown available — show simple totals
-        datasets.push({label:'Calls',backgroundColor:'#1e3a5f',data:listKeys.map(l=>Object.values(d.list_caller[l]||{}).reduce((a,b)=>a+b,0))});
-      }
-      import('https://cdn.jsdelivr.net/npm/chart.js@4/auto/auto.min.js').then(({default:Chart})=>{
-        chartEl._chartInst=new Chart(chartEl,{type:'bar',data:{labels:listKeys,datasets},
-          options:{responsive:true,plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
-            scales:{x:{stacked:true,ticks:{font:{size:10}}},y:{stacked:true,beginAtZero:true,ticks:{stepSize:1}}}}});
+      chartEl._chartInst=new Chart(chartEl,{
+        type:'bar',
+        data:{labels:listKeys, datasets},
+        options:{
+          responsive:true,
+          plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
+          scales:{x:{stacked:true,ticks:{font:{size:10}}},y:{stacked:true,beginAtZero:true,ticks:{stepSize:1,precision:0}}}
+        }
       });
     } else {
       chartEl.style.display='none';
-      const p=document.createElement('p'); p.textContent='No call data for this period.'; p.style.color='var(--t3)'; p.style.fontSize='12px';
+      const p=document.createElement('p');
+      p.className='no-chart-msg'; p.textContent='No call data for this period.';
+      p.style.cssText='color:var(--t3);font-size:12px;margin:0';
       chartEl.parentNode.insertBefore(p,chartEl);
     }
   }
@@ -2458,6 +2469,7 @@ function loadUsers(){
       openCallerPopup();
     }
     initCaller();
+    initReportCallers();
   });
 }
 

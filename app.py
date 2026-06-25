@@ -989,7 +989,7 @@ def calling_exclusions_bulk():
 @app.route("/api/report")
 def api_report():
     """Weekly calling performance report for a given caller + date range."""
-    caller = request.args.get("caller","").strip()
+    callers = [c.strip() for c in request.args.getlist("caller") if c.strip()]
     date_from = request.args.get("from","").strip()   # YYYY-MM-DD
     date_to   = request.args.get("to","").strip()     # YYYY-MM-DD
     if not date_from or not date_to:
@@ -1000,8 +1000,17 @@ def api_report():
     def q(sql, params=()):
         return db_query(sql, params)
     # Caller filter (empty = all callers)
-    cal_filter = "AND caller=?" if caller else ""
-    cal_params = (caller,) if caller else ()
+    if len(callers)==1:
+        cal_filter = "AND caller=?"
+        cal_params = (callers[0],)
+    elif len(callers)>1:
+        ph=','.join(['?']*len(callers))
+        cal_filter = f"AND caller IN ({ph})"
+        cal_params = tuple(callers)
+    else:
+        cal_filter = ""
+        cal_params = ()
+    caller = ", ".join(callers) if callers else "All callers"
     # ── Call metrics ────────────────────────────────────────────────────────
     base = f"FROM call_log WHERE timestamp>=? AND timestamp<=? {cal_filter}"
     bp = (ts_from, ts_to) + cal_params
@@ -1030,20 +1039,14 @@ def api_report():
         if pg not in list_caller: list_caller[pg]={}
         list_caller[pg][cr]=cnt
     # ── Follow-ups ───────────────────────────────────────────────────────────
-    fu_filter = "AND caller=?" if caller else ""
-    fu_params = (caller,) if caller else ()
-    followups = (q(f"SELECT COUNT(*) FROM follow_ups WHERE created_at>=? AND created_at<=? {fu_filter}",
-                   (ts_from, ts_to)+fu_params) or [[0]])[0][0]
-    # ── Newsletter sign-ups (scoped to date range where possible) ─────────────
-    nl_filter = "AND updated_by=?" if caller else ""
-    nl_params = (caller,) if caller else ()
+    followups = (q(f"SELECT COUNT(*) FROM follow_ups WHERE created_at>=? AND created_at<=? {cal_filter}",
+                   (ts_from, ts_to)+cal_params) or [[0]])[0][0]
+    # ── Newsletter sign-ups ───────────────────────────────────────────────────
+    nl_filter = cal_filter.replace("caller","updated_by") if cal_filter else ""
     newsletter = (q(f"SELECT COUNT(*) FROM newsletter_flags WHERE flag=1 AND updated_at>=? AND updated_at<=? {nl_filter}",
-                    (ts_from, ts_to)+nl_params) or [[0]])[0][0]
-    # ── Stage counts for period ───────────────────────────────────────────────
-    # Use statuses table — no timestamp, so show all-time totals per caller
-    st_filter = "AND caller=?" if caller else ""
-    st_params = (caller,) if caller else ()
-    stage_rows = q(f"SELECT status, COUNT(*) FROM statuses WHERE status!='' {st_filter} GROUP BY status ORDER BY COUNT(*) DESC", st_params)
+                    (ts_from, ts_to)+cal_params) or [[0]])[0][0]
+    # ── Stage counts ─────────────────────────────────────────────────────────
+    stage_rows = q(f"SELECT status, COUNT(*) FROM statuses WHERE status!='' {cal_filter} GROUP BY status ORDER BY COUNT(*) DESC", cal_params)
     stages = [{"stage":r[0],"count":r[1]} for r in (stage_rows or [])]
     # ── RC call time (hours) ──────────────────────────────────────────────────
     hours_on_rc = round(total_dur_sec / 3600, 2)
