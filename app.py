@@ -986,6 +986,77 @@ def calling_exclude():
 def calling_exclusions_bulk():
     return jsonify(list(_calling_excl))
 
+@app.route("/api/report")
+def api_report():
+    """Weekly calling performance report for a given caller + date range."""
+    caller = request.args.get("caller","").strip()
+    date_from = request.args.get("from","").strip()   # YYYY-MM-DD
+    date_to   = request.args.get("to","").strip()     # YYYY-MM-DD
+    if not date_from or not date_to:
+        return jsonify({"ok":False,"error":"Missing from/to dates"}),400
+    # Expand to full day range
+    ts_from = date_from + " 00:00:00"
+    ts_to   = date_to   + " 23:59:59"
+    def q(sql, params=()):
+        return db_query(sql, params)
+    # Caller filter (empty = all callers)
+    cal_filter = "AND caller=?" if caller else ""
+    cal_params = (caller,) if caller else ()
+    # ── Call metrics ────────────────────────────────────────────────────────
+    base = f"FROM call_log WHERE timestamp>=? AND timestamp<=? {cal_filter}"
+    bp = (ts_from, ts_to) + cal_params
+    calls_made      = (q(f"SELECT COUNT(*) {base}", bp) or [[0]])[0][0]
+    total_dur_sec   = (q(f"SELECT COALESCE(SUM(duration_sec),0) {base}", bp) or [[0]])[0][0]
+    conv_2min       = (q(f"SELECT COUNT(*) {base} AND duration_sec>=120", bp) or [[0]])[0][0]
+    meaningful      = (q(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Connected','Interested','Meeting secured')", bp) or [[0]])[0][0]
+    meetings        = (q(f"SELECT COUNT(*) {base} AND outcome='Meeting secured'", bp) or [[0]])[0][0]
+    a_grade         = (q(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Interested','Meeting secured')", bp) or [[0]])[0][0]
+    voicemail       = (q(f"SELECT COUNT(*) {base} AND outcome='Voicemail'", bp) or [[0]])[0][0]
+    no_answer       = (q(f"SELECT COUNT(*) {base} AND outcome='No Answer'", bp) or [[0]])[0][0]
+    # Outcome breakdown
+    outcome_rows = q(f"SELECT outcome, COUNT(*) {base} AND outcome IS NOT NULL AND outcome!='' GROUP BY outcome", bp)
+    outcomes = {r[0]:r[1] for r in (outcome_rows or [])}
+    # Lists used
+    list_rows = q(f"SELECT page, COUNT(*) {base} GROUP BY page ORDER BY COUNT(*) DESC", bp)
+    lists_used = [{"list": CALLING_CATEGORIES.get(r[0],r[0]), "calls": r[1]} for r in (list_rows or [])]
+    # ── Follow-ups ───────────────────────────────────────────────────────────
+    fu_filter = "AND caller=?" if caller else ""
+    fu_params = (caller,) if caller else ()
+    followups = (q(f"SELECT COUNT(*) FROM follow_ups WHERE created_at>=? AND created_at<=? {fu_filter}",
+                   (ts_from, ts_to)+fu_params) or [[0]])[0][0]
+    # ── Newsletter sign-ups (scoped to date range where possible) ─────────────
+    nl_filter = "AND updated_by=?" if caller else ""
+    nl_params = (caller,) if caller else ()
+    newsletter = (q(f"SELECT COUNT(*) FROM newsletter_flags WHERE flag=1 AND updated_at>=? AND updated_at<=? {nl_filter}",
+                    (ts_from, ts_to)+nl_params) or [[0]])[0][0]
+    # ── Stage counts for period ───────────────────────────────────────────────
+    # Use statuses table — no timestamp, so show all-time totals per caller
+    st_filter = "AND caller=?" if caller else ""
+    st_params = (caller,) if caller else ()
+    stage_rows = q(f"SELECT status, COUNT(*) FROM statuses WHERE status!='' {st_filter} GROUP BY status ORDER BY COUNT(*) DESC", st_params)
+    stages = [{"stage":r[0],"count":r[1]} for r in (stage_rows or [])]
+    # ── RC call time (hours) ──────────────────────────────────────────────────
+    hours_on_rc = round(total_dur_sec / 3600, 2)
+    return jsonify({
+        "ok": True,
+        "period": {"from": date_from, "to": date_to},
+        "caller": caller or "All callers",
+        "calls_made": calls_made,
+        "total_duration_sec": total_dur_sec,
+        "hours_on_rc": hours_on_rc,
+        "conversations_2min": conv_2min,
+        "meaningful_interactions": meaningful,
+        "meetings_booked": meetings,
+        "a_grade_calls": a_grade,
+        "voicemail": voicemail,
+        "no_answer": no_answer,
+        "followups_set": followups,
+        "newsletter_signups": newsletter,
+        "outcome_breakdown": outcomes,
+        "lists_used": lists_used,
+        "stage_totals": stages,
+    })
+
 @app.route("/api/newsletter/bulk", methods=["GET"])
 def newsletter_bulk():
     return jsonify({reg: 1 for reg in _newsletter})

@@ -338,6 +338,12 @@ select:focus{outline:none;border-color:var(--green)}
         <div class="home-card-desc">Charities approaching milestone anniversaries (5, 10, 15… 50 yrs) with zero statutory income — ideal prospect timing.</div>
         <span class="home-card-count">Click to Load</span>
       </div>
+      <div class="home-card" style="background:linear-gradient(135deg,#1e3a5f,#2d5a8f)" onclick="navTo('report')">
+        <div class="home-card-icon" style="font-size:36px">📊</div>
+        <div class="home-card-title" style="color:#fff">Calling Report</div>
+        <div class="home-card-desc" style="color:rgba(255,255,255,.8)">Weekly performance dashboard — calls made, conversations, meetings booked, hours on RC and more.</div>
+        <span class="home-card-count" style="background:#e8b339;color:#1e3a5f">View Report</span>
+      </div>
     </div>
   </div>
 </section>
@@ -835,6 +841,64 @@ select:focus{outline:none;border-color:var(--green)}
       <tbody id="ms-body"></tbody>
     </table></div>
     <div class="pag"><div class="pag-info" id="ms-pag-info"></div><div class="pag-btns" id="ms-pag-btns"></div></div>
+  </div>
+</section>
+
+<!-- CALLING REPORT -->
+<section id="tab-report" class="section">
+  <div class="ctrl">
+    <div class="ctrl-left"><h2>📊 Calling Report</h2><p>Weekly performance dashboard — filter by caller and date range</p></div>
+    <div class="ctrl-right">
+      <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
+    </div>
+  </div>
+  <div style="padding:0 24px 24px">
+
+    <!-- Filters -->
+    <div class="filter-bar" style="margin-bottom:24px;flex-wrap:wrap;gap:12px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <label style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Reporting week</label>
+        <input type="date" id="rpt-from" style="padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:inherit">
+        <span style="font-size:12px;color:var(--t3)">to</span>
+        <input type="date" id="rpt-to" style="padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:inherit">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <label style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Caller</label>
+        <select id="rpt-caller" style="padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:inherit">
+          <option value="">All callers</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <label style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Promo emails sent</label>
+        <input type="number" id="rpt-promo" min="0" value="0" style="width:70px;padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:inherit">
+        <span style="font-size:10px;color:var(--t3)">(enter manually)</span>
+      </div>
+      <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="loadReport()">Generate Report</button>
+    </div>
+
+    <!-- KPI cards -->
+    <div id="rpt-kpis" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px;margin-bottom:28px"></div>
+
+    <!-- Two-column detail -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+      <div>
+        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Outcome Breakdown</h3>
+        <div id="rpt-outcomes"></div>
+      </div>
+      <div>
+        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Lists Used This Period</h3>
+        <div id="rpt-lists"></div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px">
+      <div>
+        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Stage Totals (All Time)</h3>
+        <div id="rpt-stages"></div>
+      </div>
+      <div id="rpt-summary-box"></div>
+    </div>
+
   </div>
 </section>
 
@@ -1425,11 +1489,102 @@ function saveCall(pg,reg,ccPhone){
 
 document.getElementById('hdrDate').textContent=new Date().toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
 
+// ── Calling Report ────────────────────────────────────────────────────────────
+function initReportDates(){
+  const now=new Date();
+  const day=now.getDay();
+  const diffToMon=day===0?-6:1-day;
+  const mon=new Date(now); mon.setDate(now.getDate()+diffToMon);
+  const sun=new Date(mon); sun.setDate(mon.getDate()+6);
+  const fmt=d=>d.toISOString().slice(0,10);
+  const f=document.getElementById('rpt-from'), t=document.getElementById('rpt-to');
+  if(f&&!f.value) f.value=fmt(mon);
+  if(t&&!t.value) t.value=fmt(sun);
+}
+function initReportCallers(){
+  const sel=document.getElementById('rpt-caller'); if(!sel) return;
+  const cur=sel.value;
+  while(sel.options.length>1) sel.remove(1);
+  (_users||[]).forEach(u=>{const o=document.createElement('option');o.value=u;o.textContent=u;sel.appendChild(o);});
+  if(cur) sel.value=cur;
+}
+function loadReport(){
+  const from=(document.getElementById('rpt-from')||{}).value||'';
+  const to=(document.getElementById('rpt-to')||{}).value||'';
+  const caller=(document.getElementById('rpt-caller')||{}).value||'';
+  const promo=parseInt((document.getElementById('rpt-promo')||{}).value||'0')||0;
+  if(!from||!to){ alert('Please select a date range.'); return; }
+  document.getElementById('rpt-kpis').innerHTML='<div style="color:var(--t3);font-size:13px;padding:20px 0">Loading…</div>';
+  fetch(`/api/report?from=${from}&to=${to}&caller=${encodeURIComponent(caller)}`)
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ alert('Report error: '+(d.error||'unknown')); return; }
+      renderReport(d, promo);
+    }).catch(e=>alert('Report failed: '+e.message));
+}
+function rptKpiCard(label, value, sub, color){
+  color=color||'var(--navy)';
+  return `<div style="background:#fff;border-radius:10px;padding:16px 18px;box-shadow:0 2px 8px rgba(0,0,0,.08);border-left:4px solid ${color}">
+    <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">${label}</div>
+    <div style="font-size:32px;font-weight:800;color:${color};line-height:1">${value}</div>
+    ${sub?`<div style="font-size:11px;color:var(--t3);margin-top:4px">${sub}</div>`:''}
+  </div>`;
+}
+function fmtDur(sec){
+  const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;
+  if(h>0) return h+'h '+m+'m';
+  if(m>0) return m+'m '+s+'s';
+  return s+'s';
+}
+function renderReport(d, promoEmails){
+  const gold='#c89a1a',green='#1d7a3a',navy='#1e3a5f',purple='#5a4fbf',red='#c0392b';
+  const avgDur=d.calls_made>0?Math.round(d.total_duration_sec/d.calls_made):0;
+  document.getElementById('rpt-kpis').innerHTML=[
+    rptKpiCard('Calls Made',              d.calls_made,              'Avg '+fmtDur(avgDur)+' per call',navy),
+    rptKpiCard('Hours on RC',             d.hours_on_rc+'h',         'Total '+fmtDur(d.total_duration_sec),navy),
+    rptKpiCard('Conversations >2min',     d.conversations_2min,      (d.calls_made?Math.round(d.conversations_2min/d.calls_made*100):0)+'% of calls',green),
+    rptKpiCard('Meaningful Interactions', d.meaningful_interactions,  'Connected/Interested/Meeting >2min',green),
+    rptKpiCard('Meetings Booked',         d.meetings_booked,         '',gold),
+    rptKpiCard('A-Grade Calls',           d.a_grade_calls,           'Interested or Meeting secured >2min',gold),
+    rptKpiCard('Follow-ups Set',          d.followups_set,           '',purple),
+    rptKpiCard('Promo Emails Sent',       promoEmails,               'Manually entered',purple),
+    rptKpiCard('Newsletter Sign-ups',     d.newsletter_signups,      '',green),
+    rptKpiCard('No Answer / Voicemail',   d.no_answer+d.voicemail,   d.no_answer+' no answer · '+d.voicemail+' voicemail',red),
+  ].join('');
+  const outcomes=d.outcome_breakdown||{};
+  const outTotal=Object.values(outcomes).reduce((a,b)=>a+b,0)||1;
+  document.getElementById('rpt-outcomes').innerHTML=Object.entries(outcomes)
+    .sort((a,b)=>b[1]-a[1]).map(([k,v])=>{
+      const pct=Math.round(v/outTotal*100);
+      return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span style="font-weight:600">'+esc(k||'(none)')+'</span><span>'+v+' <span style="color:var(--t3)">('+pct+'%)</span></span></div><div style="background:#eee;border-radius:4px;height:6px"><div style="background:var(--navy);border-radius:4px;height:6px;width:'+pct+'%"></div></div></div>';
+    }).join('')||'<div style="color:var(--t3);font-size:12px">No calls in this period.</div>';
+  document.getElementById('rpt-lists').innerHTML=(d.lists_used||[]).map(l=>
+    '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--bd);font-size:12px"><span style="font-weight:600">'+esc(l.list)+'</span><span style="color:var(--t3)">'+l.calls+' calls</span></div>'
+  ).join('')||'<div style="color:var(--t3);font-size:12px">No data.</div>';
+  document.getElementById('rpt-stages').innerHTML=(d.stage_totals||[]).map(s=>
+    '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--bd);font-size:12px"><span style="font-weight:600">'+esc(s.stage)+'</span><span style="color:var(--t3)">'+s.count+'</span></div>'
+  ).join('')||'<div style="color:var(--t3);font-size:12px">No stages set.</div>';
+  document.getElementById('rpt-summary-box').innerHTML=
+    '<div style="background:linear-gradient(135deg,#1e3a5f,#2d5a8f);border-radius:10px;padding:20px;color:#fff">'+
+    '<h3 style="font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;margin-bottom:16px;color:#e8b339">Period Summary</h3>'+
+    '<div style="font-size:13px;color:rgba(255,255,255,.8);margin-bottom:4px">📅 '+esc(d.period.from)+' → '+esc(d.period.to)+'</div>'+
+    '<div style="font-size:13px;color:rgba(255,255,255,.8);margin-bottom:14px">👤 '+esc(d.caller)+'</div>'+
+    '<div style="font-size:12px;line-height:2.1;color:rgba(255,255,255,.9)">'+
+    '📞 <b>'+d.calls_made+'</b> calls made<br>'+
+    '⏱ <b>'+d.hours_on_rc+'h</b> on RingCentral<br>'+
+    '💬 <b>'+d.conversations_2min+'</b> conversations &gt;2min<br>'+
+    '⭐ <b>'+d.meaningful_interactions+'</b> meaningful interactions<br>'+
+    '🤝 <b>'+d.meetings_booked+'</b> meetings booked<br>'+
+    '📅 <b>'+d.followups_set+'</b> follow-ups set<br>'+
+    '📧 <b>'+promoEmails+'</b> promo emails sent<br>'+
+    '📰 <b>'+d.newsletter_signups+'</b> newsletter sign-ups'+
+    '</div></div>';
+}
+
 // ── Nav ────────────────────────────────────────────────────────────────────────
 function switchTab(id,btn){
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
-  const tabs=['home','calling','prospects','search','new','late','old','milestones'];
+  const tabs=['home','calling','prospects','search','new','late','old','milestones','report'];
   if(btn)btn.classList.add('active');
   else document.querySelectorAll('.nav-btn')[tabs.indexOf(id)].classList.add('active');
   document.getElementById('tab-'+id).classList.add('active');
@@ -1440,6 +1595,7 @@ function switchTab(id,btn){
   if(id==='milestones'&&!msAll.length)loadMilestones();
   if(id==='prospects'&&!pLoaded)loadProspects();
   if(id==='search')loadSavedList();
+  if(id==='report'){ initReportDates(); initReportCallers(); loadReport(); }
   setTimeout(setupResizableTables,80);
 }
 function navTo(id){switchTab(id,null);window.scrollTo(0,0);}
