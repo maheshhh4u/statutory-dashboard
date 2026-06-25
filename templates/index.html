@@ -871,10 +871,18 @@ select:focus{outline:none;border-color:var(--green)}
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <label style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Caller</label>
-        <select id="rpt-caller" multiple size="4" style="padding:4px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:inherit;min-width:140px" title="Hold Ctrl to select multiple callers">
-          <option value="" selected>All callers</option>
-        </select>
-        <span style="font-size:10px;color:var(--t3)">Ctrl+click for multiple</span>
+        <div style="position:relative;display:inline-block" id="caller-dd-wrap">
+          <button type="button" id="caller-dd-btn" onclick="toggleCallerDd()" style="padding:6px 28px 6px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:inherit;background:#fff;cursor:pointer;min-width:160px;text-align:left;position:relative">
+            <span id="caller-dd-label">All callers</span>
+            <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%)">▾</span>
+          </button>
+          <div id="caller-dd-menu" style="display:none;position:absolute;top:calc(100% + 2px);left:0;min-width:180px;background:#fff;border:1px solid var(--bd);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.15);z-index:500;padding:6px 0">
+            <label style="display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--bd);margin-bottom:2px">
+              <input type="checkbox" id="caller-all-cb" checked onchange="callerAllToggle(this)"> All callers
+            </label>
+            <div id="caller-cb-list"></div>
+          </div>
+        </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <label style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Promo emails sent</label>
@@ -1511,18 +1519,52 @@ function initReportDates(){
   if(t&&!t.value) t.value=fmt(sun);
 }
 function initReportCallers(){
-  const sel=document.getElementById('rpt-caller'); if(!sel) return;
-  const cur=Array.from(sel.selectedOptions).map(o=>o.value);
-  while(sel.options.length>1) sel.remove(1);
-  (userList||[]).forEach(u=>{const o=document.createElement('option');o.value=u;o.textContent=u;if(cur.includes(u))o.selected=true;sel.appendChild(o);});
+  const list=document.getElementById('caller-cb-list'); if(!list) return;
+  list.innerHTML='';
+  (userList||[]).forEach(u=>{
+    const lbl=document.createElement('label');
+    lbl.style.cssText='display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;font-size:12px';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.value=u; cb.className='caller-item-cb';
+    cb.onchange=()=>{ updateCallerDdLabel(); };
+    lbl.appendChild(cb); lbl.appendChild(document.createTextNode(u));
+    list.appendChild(lbl);
+  });
+  updateCallerDdLabel();
+}
+function toggleCallerDd(){
+  const m=document.getElementById('caller-dd-menu');
+  if(!m) return;
+  m.style.display=m.style.display==='none'?'block':'none';
+}
+function callerAllToggle(cb){
+  document.querySelectorAll('.caller-item-cb').forEach(c=>{ c.checked=false; });
+  updateCallerDdLabel();
+}
+function updateCallerDdLabel(){
+  const all=document.getElementById('caller-all-cb');
+  const checked=[...document.querySelectorAll('.caller-item-cb:checked')].map(c=>c.value);
+  if(checked.length===0){ if(all) all.checked=true; document.getElementById('caller-dd-label').textContent='All callers'; }
+  else { if(all) all.checked=false; document.getElementById('caller-dd-label').textContent=checked.join(', '); }
+}
+// Close dropdown when clicking outside
+document.addEventListener('click',function(e){
+  const wrap=document.getElementById('caller-dd-wrap');
+  if(wrap && !wrap.contains(e.target)){
+    const m=document.getElementById('caller-dd-menu'); if(m) m.style.display='none';
+  }
+});
+function getSelectedCallers(){
+  const checked=[...document.querySelectorAll('.caller-item-cb:checked')].map(c=>c.value);
+  return checked; // empty = all callers
 }
 function loadReport(){
   const from=(document.getElementById('rpt-from')||{}).value||'';
   const to=(document.getElementById('rpt-to')||{}).value||'';
-  const callerSel=document.getElementById('rpt-caller');
-  const callers=callerSel?Array.from(callerSel.selectedOptions).map(o=>o.value).filter(v=>v):[];
+  const callers=getSelectedCallers();
   const promo=parseInt((document.getElementById('rpt-promo')||{}).value||'0')||0;
   if(!from||!to){ alert('Please select a date range.'); return; }
+  // Close dropdown
+  const m=document.getElementById('caller-dd-menu'); if(m) m.style.display='none';
   document.getElementById('rpt-kpis').innerHTML='<div style="color:var(--t3);font-size:13px;padding:20px 0">Loading…</div>';
   const callerParam=callers.length?callers.map(c=>'caller='+encodeURIComponent(c)).join('&'):'';
   fetch(`/api/report?from=${from}&to=${to}${callerParam?'&'+callerParam:''}`)

@@ -1026,18 +1026,33 @@ def api_report():
     outcome_rows = q(f"SELECT outcome, COUNT(*) {base} AND outcome IS NOT NULL AND outcome!='' GROUP BY outcome", bp)
     outcomes = {r[0]:r[1] for r in (outcome_rows or [])}
     # Lists used
-    list_rows = q(f"SELECT page, COUNT(*) {base} GROUP BY page ORDER BY COUNT(*) DESC", bp)
-    lists_used = [{"list": CALLING_CATEGORIES.get(r[0],r[0] or "Unknown"), "calls": r[1]} for r in (list_rows or [])]
+    # Lists used — join with calling_batch to get the real source category
+    # For calls made from Daily Calling (page='calling'), the source is in calling_batch.category
+    # For other pages (prospects, new, late etc.) page IS the source
+    list_rows = q(f"""SELECT
+        CASE WHEN cl.page='calling' THEN COALESCE(cb.category, 'calling') ELSE cl.page END as src,
+        COUNT(*)
+        FROM call_log cl
+        LEFT JOIN calling_batch cb ON cb.reg_number=cl.reg_number AND cb.active=1
+        WHERE cl.timestamp>=? AND cl.timestamp<=? {cal_filter}
+        GROUP BY src ORDER BY COUNT(*) DESC""", (ts_from, ts_to)+cal_params)
+    lists_used = [{"list": CALLING_CATEGORIES.get(r[0], r[0] or "Unknown"), "calls": r[1]} for r in (list_rows or [])]
 
     # Per-caller per-list breakdown for stacked bar chart
     callers_q = q(f"SELECT DISTINCT caller {base} AND caller IS NOT NULL AND caller!=''", bp) or []
     all_callers = [r[0] for r in callers_q]
-    list_caller_rows = q(f"SELECT page, caller, COUNT(*) {base} AND caller IS NOT NULL GROUP BY page, caller", bp) or []
+    list_caller_rows = q(f"""SELECT
+        CASE WHEN cl.page='calling' THEN COALESCE(cb.category, 'calling') ELSE cl.page END as src,
+        cl.caller, COUNT(*)
+        FROM call_log cl
+        LEFT JOIN calling_batch cb ON cb.reg_number=cl.reg_number AND cb.active=1
+        WHERE cl.timestamp>=? AND cl.timestamp<=? {cal_filter} AND cl.caller IS NOT NULL
+        GROUP BY src, cl.caller""", (ts_from, ts_to)+cal_params) or []
     list_caller = {}
     for row in list_caller_rows:
-        pg=CALLING_CATEGORIES.get(row[0], row[0] or "Unknown"); cr=row[1]; cnt=row[2]
-        if pg not in list_caller: list_caller[pg]={}
-        list_caller[pg][cr]=cnt
+        pg = CALLING_CATEGORIES.get(row[0], row[0] or "Unknown"); cr = row[1]; cnt = row[2]
+        if pg not in list_caller: list_caller[pg] = {}
+        list_caller[pg][cr] = cnt
     # ── Follow-ups ───────────────────────────────────────────────────────────
     followups = (q(f"SELECT COUNT(*) FROM follow_ups WHERE created_at>=? AND created_at<=? {cal_filter}",
                    (ts_from, ts_to)+cal_params) or [[0]])[0][0]
