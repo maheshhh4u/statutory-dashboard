@@ -302,6 +302,12 @@ select:focus{outline:none;border-color:var(--green)}
     <p>Live charity data from the Charity Commission for England &amp; Wales</p>
     <div class="home-tag">Calling as: <strong id="home-caller-name" style="color:var(--navy)">— not selected —</strong></div>
     <div class="home-grid">
+      <div class="home-card" style="background:linear-gradient(135deg,#1d7a3a,#2a9e50)" onclick="navTo('calling')">
+        <div class="home-card-icon" style="font-size:40px">📞</div>
+        <div class="home-card-title" style="color:#fff">Daily Calling</div>
+        <div class="home-card-desc" style="color:rgba(255,255,255,.85)">Your prioritised list of 100 charities to call today — scored by opportunity, urgency and freshness.</div>
+        <span class="home-card-count" style="background:#fff;color:#1d7a3a">Start Calling</span>
+      </div>
       <div class="home-card c1" onclick="navTo('prospects')">
         <div class="home-card-icon">📋</div>
         <div class="home-card-title">Prospect List</div>
@@ -857,7 +863,7 @@ select:focus{outline:none;border-color:var(--green)}
     <!-- Filters -->
     <div class="filter-bar" style="margin-bottom:24px;flex-wrap:wrap;gap:12px">
       <div style="display:flex;align-items:center;gap:8px">
-        <label style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Reporting week</label>
+        <label style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Reporting Period</label>
         <input type="date" id="rpt-from" style="padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:inherit">
         <span style="font-size:12px;color:var(--t3)">to</span>
         <input type="date" id="rpt-to" style="padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:inherit">
@@ -886,8 +892,8 @@ select:focus{outline:none;border-color:var(--green)}
         <div id="rpt-outcomes"></div>
       </div>
       <div>
-        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Lists Used This Period</h3>
-        <div id="rpt-lists"></div>
+        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Calls by List — Stacked by Caller</h3>
+        <canvas id="rpt-list-chart" style="max-height:220px"></canvas>
       </div>
     </div>
 
@@ -1074,6 +1080,7 @@ fetch('/api/state/bulk').then(r=>r.json()).then(d=>{
     });
   }
   if(typeof refreshCalled==='function') refreshCalled();
+  initReportCallers();
 }).catch(()=>{});
 
 // ── Editable contact cells (phone / email / website) ───────────────────────────
@@ -1557,9 +1564,34 @@ function renderReport(d, promoEmails){
       const pct=Math.round(v/outTotal*100);
       return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span style="font-weight:600">'+esc(k||'(none)')+'</span><span>'+v+' <span style="color:var(--t3)">('+pct+'%)</span></span></div><div style="background:#eee;border-radius:4px;height:6px"><div style="background:var(--navy);border-radius:4px;height:6px;width:'+pct+'%"></div></div></div>';
     }).join('')||'<div style="color:var(--t3);font-size:12px">No calls in this period.</div>';
-  document.getElementById('rpt-lists').innerHTML=(d.lists_used||[]).map(l=>
-    '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--bd);font-size:12px"><span style="font-weight:600">'+esc(l.list)+'</span><span style="color:var(--t3)">'+l.calls+' calls</span></div>'
-  ).join('')||'<div style="color:var(--t3);font-size:12px">No data.</div>';
+  document.getElementById('rpt-lists') && (document.getElementById('rpt-lists').innerHTML='');
+  // Draw stacked bar chart for lists by caller
+  const chartEl=document.getElementById('rpt-list-chart');
+  if(chartEl){
+    if(chartEl._chartInst){ chartEl._chartInst.destroy(); chartEl._chartInst=null; }
+    const listKeys=Object.keys(d.list_caller||{});
+    const callerList=d.all_callers||[];
+    const palette=['#1e3a5f','#e8b339','#1d7a3a','#c0392b','#5a4fbf','#2980b9','#8e44ad'];
+    if(listKeys.length){
+      const datasets=callerList.map((c,i)=>({
+        label:c, backgroundColor:palette[i%palette.length],
+        data:listKeys.map(l=>((d.list_caller[l]||{})[c])||0)
+      }));
+      if(!callerList.length && listKeys.length){
+        // no caller breakdown available — show simple totals
+        datasets.push({label:'Calls',backgroundColor:'#1e3a5f',data:listKeys.map(l=>Object.values(d.list_caller[l]||{}).reduce((a,b)=>a+b,0))});
+      }
+      import('https://cdn.jsdelivr.net/npm/chart.js@4/auto/auto.min.js').then(({default:Chart})=>{
+        chartEl._chartInst=new Chart(chartEl,{type:'bar',data:{labels:listKeys,datasets},
+          options:{responsive:true,plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
+            scales:{x:{stacked:true,ticks:{font:{size:10}}},y:{stacked:true,beginAtZero:true,ticks:{stepSize:1}}}}});
+      });
+    } else {
+      chartEl.style.display='none';
+      const p=document.createElement('p'); p.textContent='No call data for this period.'; p.style.color='var(--t3)'; p.style.fontSize='12px';
+      chartEl.parentNode.insertBefore(p,chartEl);
+    }
+  }
   document.getElementById('rpt-stages').innerHTML=(d.stage_totals||[]).map(s=>
     '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--bd);font-size:12px"><span style="font-weight:600">'+esc(s.stage)+'</span><span style="color:var(--t3)">'+s.count+'</span></div>'
   ).join('')||'<div style="color:var(--t3);font-size:12px">No stages set.</div>';

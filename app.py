@@ -1018,7 +1018,17 @@ def api_report():
     outcomes = {r[0]:r[1] for r in (outcome_rows or [])}
     # Lists used
     list_rows = q(f"SELECT page, COUNT(*) {base} GROUP BY page ORDER BY COUNT(*) DESC", bp)
-    lists_used = [{"list": CALLING_CATEGORIES.get(r[0],r[0]), "calls": r[1]} for r in (list_rows or [])]
+    lists_used = [{"list": CALLING_CATEGORIES.get(r[0],r[0] or "Unknown"), "calls": r[1]} for r in (list_rows or [])]
+
+    # Per-caller per-list breakdown for stacked bar chart
+    callers_q = q(f"SELECT DISTINCT caller {base} AND caller IS NOT NULL AND caller!=''", bp) or []
+    all_callers = [r[0] for r in callers_q]
+    list_caller_rows = q(f"SELECT page, caller, COUNT(*) {base} AND caller IS NOT NULL GROUP BY page, caller", bp) or []
+    list_caller = {}
+    for row in list_caller_rows:
+        pg=CALLING_CATEGORIES.get(row[0], row[0] or "Unknown"); cr=row[1]; cnt=row[2]
+        if pg not in list_caller: list_caller[pg]={}
+        list_caller[pg][cr]=cnt
     # ── Follow-ups ───────────────────────────────────────────────────────────
     fu_filter = "AND caller=?" if caller else ""
     fu_params = (caller,) if caller else ()
@@ -1054,6 +1064,8 @@ def api_report():
         "newsletter_signups": newsletter,
         "outcome_breakdown": outcomes,
         "lists_used": lists_used,
+        "all_callers": all_callers,
+        "list_caller": list_caller,
         "stage_totals": stages,
     })
 
