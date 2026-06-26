@@ -894,6 +894,7 @@ select:focus{outline:none;border-color:var(--green)}
         <span style="font-size:10px;color:var(--t3)">(enter manually)</span>
       </div>
       <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="loadReport()">Generate Report</button>
+      <button class="btn btn-sm" style="background:#1d7a3a;color:#fff" onclick="exportReportExcel()">⬇ Export to Excel</button>
     </div>
 
     <!-- View switcher -->
@@ -1784,7 +1785,28 @@ function renderReportTail(d, promoEmails){
   renderCeoView(d); renderCooView(d); renderFundraiserView(d);
 }
 
+function exportReportExcel(){
+  const from=(document.getElementById('rpt-from')||{}).value||'';
+  const to=(document.getElementById('rpt-to')||{}).value||'';
+  const callers=getSelectedCallers();
+  const promo=parseInt((document.getElementById('rpt-promo')||{}).value||'0')||0;
+  if(!from||!to){ alert('Please select a date range first.'); return; }
+  const viewMap={overview:'Overview',ceo:'Funnel & Pipeline',coo:'Efficiency',fundraiser:'Hot Leads'};
+  const view=viewMap[window._rptCurrentView||'overview']||'Overview';
+  fetch('/api/report/export',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({view,callers,from,to,promo})})
+    .then(r=>{ if(!r.ok) return r.json().then(e=>{throw new Error(e.error||'Export failed')}); return r.blob(); })
+    .then(blob=>{
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url; a.download=view.replace(/[^a-z0-9]/gi,'_')+'_report.xlsx';
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    })
+    .catch(e=>alert('Export failed: '+e.message));
+}
 function switchRptView(view, btn){
+  window._rptCurrentView=view;
   document.querySelectorAll('.rpt-view-btn').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
   document.querySelectorAll('.rpt-view').forEach(v=>v.style.display='none');
@@ -1985,7 +2007,7 @@ function switchTab(id,btn){
   if(id==='milestones'&&!msAll.length)loadMilestones();
   if(id==='prospects'&&!pLoaded)loadProspects();
   if(id==='search')loadSavedList();
-  if(id==='report'){ initReportDates(); initReportCallers(); loadReport(); }
+  if(id==='report'){ window._rptCurrentView='overview'; initReportDates(); initReportCallers(); loadReport(); }
   setTimeout(setupResizableTables,80);
 }
 function navTo(id){switchTab(id,null);window.scrollTo(0,0);}

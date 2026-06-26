@@ -1394,6 +1394,199 @@ def newsletter_set():
         db_exec("DELETE FROM newsletter_flags WHERE reg_number=?", (reg,))
     return jsonify({"ok": True, "on": on})
 
+@app.route("/api/report/export", methods=["POST"])
+def report_export():
+    """Export a dashboard view to a 2-sheet Excel file:
+    Sheet 1 = the dashboard summary (named after the view),
+    Sheet 2 = 'Called list' with every call in the date range."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except Exception:
+        return jsonify({"ok": False, "error": "openpyxl not installed. Add 'openpyxl' to requirements.txt and redeploy."}), 500
+
+    data = request.get_json(force=True) or {}
+    view = str(data.get("view", "Overview")).strip() or "Overview"
+    callers = [c.strip() for c in (data.get("callers") or []) if c.strip()]
+    date_from = str(data.get("from", "")).strip()
+    date_to   = str(data.get("to", "")).strip()
+    promo     = int(data.get("promo", 0) or 0)
+    if not date_from or not date_to:
+        return jsonify({"ok": False, "error": "Missing date range"}), 400
+    ts_from = date_from + " 00:00:00"; ts_to = date_to + " 23:59:59"
+
+    # Reuse the report logic by calling the same internal data via a fresh request context
+    # Simpler: re-query what each sheet needs directly.
+    if len(callers)==1:
+        cf="AND caller=?"; cp=(callers[0],)
+    elif len(callers)>1:
+        ph=','.join(['?']*len(callers)); cf=f"AND caller IN ({ph})"; cp=tuple(callers)
+    else:
+        cf=""; cp=()
+    who = ", ".join(callers) if callers else "All callers"
+    base = f"FROM call_log WHERE timestamp>=? AND timestamp<=? {cf}"
+    bp = (ts_from, ts_to) + cp
+    def one(sql, p=bp):
+        r = db_query(sql, p); return (r or [[0]])[0][0]
+
+    # ── Styling helpers ──
+    NAVY="1E3A5F"; GOLD="E8B339"; GREEN="1D7A3A"; LIGHT="F2F4F7"
+    thin=Side(style="thin", color="D5DAE0")
+    border=Border(left=thin,right=thin,top=thin,bottom=thin)
+    def style_header(cell):
+        cell.font=Font(name="Arial", bold=True, color="FFFFFF", size=11)
+        cell.fill=PatternFill("solid", fgColor=NAVY)
+        cell.alignment=Alignment(horizontal="left", vertical="center")
+        cell.border=border
+    def style_title(cell):
+        cell.font=Font(name="Arial", bold=True, color=NAVY, size=16)
+    def style_label(cell):
+        cell.font=Font(name="Arial", bold=True, color="555555", size=10)
+    def style_val(cell):
+        cell.font=Font(name="Arial", size=11, color="000000")
+
+    wb = Workbook()
+    ws = wb.active
+    # Sheet name max 31 chars, no special chars
+    safe_view = view.replace("&","and")[:31]
+    ws.title = safe_view
+
+    # ── SHEET 1: Dashboard summary ──
+    ws["A1"] = "9 Mountains — " + view
+    style_title(ws["A1"]); ws.merge_cells("A1:D1")
+    ws["A2"] = f"Period: {date_from} to {date_to}    |    Caller(s): {who}"
+    ws["A2"].font = Font(name="Arial", italic=True, color="777777", size=10)
+    ws.merge_cells("A2:D2")
+
+    row = 4
+    def kpi(label, value):
+        nonlocal row
+        ws.cell(row=row, column=1, value=label); style_label(ws.cell(row=row,column=1))
+        ws.cell(row=row, column=2, value=value); style_val(ws.cell(row=row,column=2))
+        row += 1
+
+    # Common metrics
+    total       = one(f"SELECT COUNT(*) {base}")
+    total_dur   = one(f"SELECT COALESCE(SUM(duration_sec),0) {base}")
+    conv2       = one(f"SELECT COUNT(*) {base} AND duration_sec>=120")
+    connected   = one(f"SELECT COUNT(*) {base} AND outcome IN ('Connected','Interested','Meeting secured','Not interested')")
+    meetings    = one(f"SELECT COUNT(*) {base} AND outcome='Meeting secured'")
+    interested  = one(f"SELECT COUNT(*) {base} AND outcome='Interested'")
+    voicemail   = one(f"SELECT COUNT(*) {base} AND outcome='Voicemail'")
+    noans       = one(f"SELECT COUNT(*) {base} AND outcome='No Answer'")
+    meaningful  = one(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Connected','Interested','Meeting secured')")
+    a_grade     = one(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Interested','Meeting secured')")
+    hours = round(total_dur/3600,2)
+    connect_rate = round(connected/total*100) if total else 0
+
+    ws.cell(row=row, column=1, value="KEY METRICS"); ws.cell(row=row,column=1).font=Font(name="Arial",bold=True,color=NAVY,size=12); row+=1
+    kpi("Calls Made", total)
+    kpi("Hours on RingCentral", hours)
+    kpi("Connect Rate", f"{connect_rate}%")
+    kpi("Conversations >2min", conv2)
+    kpi("Meaningful Interactions", meaningful)
+    kpi("A-Grade Calls", a_grade)
+    kpi("Meetings Booked", meetings)
+    kpi("Interested", interested)
+    kpi("Voicemail", voicemail)
+    kpi("No Answer", noans)
+    kpi("Promo Emails Sent (manual)", promo)
+    row += 1
+
+    # View-specific section
+    if view.lower().startswith("funnel") or "pipeline" in view.lower():
+        ws.cell(row=row,column=1,value="CONVERSION FUNNEL"); ws.cell(row=row,column=1).font=Font(name="Arial",bold=True,color=NAVY,size=12); row+=1
+        clients = one(f"SELECT COUNT(*) FROM statuses WHERE status='Client' {cf}", cp)
+        for stg,val in [("Calls Made",total),("Connected",connected),("Conversations >2min",conv2),
+                        ("Interested+",a_grade),("Meetings Booked",meetings),("Clients Won",clients)]:
+            kpi(stg, val)
+    elif view.lower().startswith("efficiency"):
+        ws.cell(row=row,column=1,value="EFFICIENCY"); ws.cell(row=row,column=1).font=Font(name="Arial",bold=True,color=NAVY,size=12); row+=1
+        cph = round(total/hours) if hours>0 else 0
+        kpi("Calls per Hour", cph)
+        fu_total=one(f"SELECT COUNT(*) FROM follow_ups WHERE 1=1 {cf}", cp)
+        fu_done=one(f"SELECT COUNT(*) FROM follow_ups WHERE done=1 {cf}", cp)
+        kpi("Follow-ups Total", fu_total)
+        kpi("Follow-ups Completed", fu_done)
+    elif view.lower().startswith("hot"):
+        ws.cell(row=row,column=1,value="HOT LEADS (Interested / Meeting secured)"); ws.cell(row=row,column=1).font=Font(name="Arial",bold=True,color=NAVY,size=12); row+=1
+        hdr=["Charity Reg","Stage","Last Updated"]
+        for ci,h in enumerate(hdr,1): style_header(ws.cell(row=row,column=ci,value=h))
+        row+=1
+        hl=db_query(f"SELECT key, status, updated_at FROM statuses WHERE status IN ('Interested','Meeting secured') {cf} ORDER BY updated_at DESC LIMIT 100", cp) or []
+        for k,st,ua in hl:
+            reg=k.split("|")[-1] if "|" in k else k
+            ws.cell(row=row,column=1,value=reg); ws.cell(row=row,column=2,value=st); ws.cell(row=row,column=3,value=(ua or "")[:16])
+            for ci in range(1,4): ws.cell(row=row,column=ci).border=border
+            row+=1
+
+    # Outcome breakdown table (all views)
+    row += 1
+    ws.cell(row=row,column=1,value="OUTCOME BREAKDOWN"); ws.cell(row=row,column=1).font=Font(name="Arial",bold=True,color=NAVY,size=12); row+=1
+    for ci,h in enumerate(["Outcome","Count"],1): style_header(ws.cell(row=row,column=ci,value=h))
+    row+=1
+    for oc,cnt in (db_query(f"SELECT outcome, COUNT(*) {base} AND outcome!='' GROUP BY outcome ORDER BY COUNT(*) DESC", bp) or []):
+        ws.cell(row=row,column=1,value=oc); ws.cell(row=row,column=2,value=cnt)
+        ws.cell(row=row,column=1).border=border; ws.cell(row=row,column=2).border=border
+        row+=1
+
+    ws.column_dimensions["A"].width=34
+    ws.column_dimensions["B"].width=22
+    ws.column_dimensions["C"].width=20
+    ws.column_dimensions["D"].width=18
+
+    # ── SHEET 2: Called list ──
+    ws2 = wb.create_sheet("Called list")
+    headers = ["Date/Time","Caller","Charity Name","Reg Number","Source List",
+               "Phone","Outcome","Duration","Stage","Notes"]
+    for ci,h in enumerate(headers,1): style_header(ws2.cell(row=1,column=ci,value=h))
+    # Pull every call in range, join calling_batch for source + name
+    call_rows = db_query(f"""SELECT cl.timestamp, cl.caller, cl.reg_number, cl.phone_used,
+        cl.outcome, cl.duration_sec, cl.notes,
+        CASE WHEN cl.page='calling' THEN COALESCE(cb.category,'calling') ELSE cl.page END as src,
+        cb.data
+        FROM call_log cl
+        LEFT JOIN calling_batch cb ON cb.reg_number=cl.reg_number AND cb.active=1
+        WHERE cl.timestamp>=? AND cl.timestamp<=? {cf}
+        ORDER BY cl.timestamp DESC""", (ts_from, ts_to)+cp) or []
+    r2 = 2
+    for ts, caller_n, reg, phone, outcome, dur, notes, src, cbdata in call_rows:
+        name=""
+        try:
+            if cbdata:
+                o=json.loads(cbdata); name=o.get("name") or o.get("charity_name") or ""
+        except Exception: pass
+        key=f"calling|{reg}"
+        stage=_statuses.get(key,"")
+        dn=int(dur or 0)
+        ws2.cell(row=r2,column=1,value=(ts or "")[:16])
+        ws2.cell(row=r2,column=2,value=caller_n or "")
+        ws2.cell(row=r2,column=3,value=name)
+        ws2.cell(row=r2,column=4,value=reg)
+        ws2.cell(row=r2,column=5,value=CALLING_CATEGORIES.get(src, src or ""))
+        ws2.cell(row=r2,column=6,value=phone or "")
+        ws2.cell(row=r2,column=7,value=outcome or "")
+        ws2.cell(row=r2,column=8,value=f"{dn//60}:{dn%60:02d}")
+        ws2.cell(row=r2,column=9,value=stage)
+        ws2.cell(row=r2,column=10,value=(notes or "")[:500])
+        for ci in range(1,11): ws2.cell(row=r2,column=ci).font=Font(name="Arial",size=10)
+        r2+=1
+    widths=[18,14,30,12,18,16,16,10,16,50]
+    for ci,w in enumerate(widths,1):
+        ws2.column_dimensions[get_column_letter(ci)].width=w
+    ws2.freeze_panes="A2"
+    ws.freeze_panes="A4"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    tstamp = datetime.utcnow().strftime("%Y%m%d_%H%M")
+    fname = f"{safe_view.replace(' ','_')}_report_{tstamp}.xlsx"
+    return Response(buf.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"})
+
 @app.route("/api/calling/export", methods=["POST"])
 def calling_export():
     """Export the active Daily Calling list to CSV — all fields, status, and full history."""
