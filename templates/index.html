@@ -1570,7 +1570,22 @@ function saveCall(pg,reg,ccPhone){
           .catch(()=>{});
         window._lastRingOut=null;
       }
-      if(document.getElementById('tab-calling').classList.contains('active')) loadCalling();
+      // Mark this row as called in-place + refresh state WITHOUT reloading the whole
+      // table (reloading jumps scroll to top). Preserve current scroll position.
+      const _sc=document.getElementById('callingScroll');
+      const _scPos=_sc?_sc.scrollTop:null;
+      if(document.getElementById('tab-calling').classList.contains('active')){
+        // Ensure this charity is marked called in memory + UI
+        const k=pg+'|'+reg;
+        if(!called[k]){
+          called[k]={pg,reg,name:(window._callCtx&&window._callCtx.name)||'',caller,ts:new Date().toLocaleString('en-GB')};
+        }
+        refreshCalled();
+        // Update the Stage dropdown + caller cell for this row if present
+        const cc=document.getElementById('cc-col-'+pg+'-'+reg);
+        if(cc) cc.innerHTML='<span class="tag tag-green" style="font-size:10px">'+esc(caller)+'</span>';
+        if(_sc&&_scPos!=null) requestAnimationFrame(()=>{ _sc.scrollTop=_scPos; });
+      }
       const ok=d.synced_to_maximizer;
       const msg = ok ? '✓ Call saved & synced to Maximizer'
                      : '✓ Call saved · ⚠ Maximizer sync issue'+(d.sync_error?': '+d.sync_error:'');
@@ -3866,9 +3881,10 @@ function _onCallEnded(call){
     if(td) td.textContent='⏱ Timer: '+m+':'+String(s).padStart(2,'0');
   }
   window._rcCallStartMs=null;
-  // Auto-mark called if call had duration
+  // Auto-mark called: a call was actually placed via the widget, so mark it called
+  // regardless of whether we captured a duration (RC events don't always report it).
   const ctx=window._callCtx;
-  if(ctx && durSec>0) autoMarkCalled(ctx.pg, ctx.reg, ctx.name);
+  if(ctx) autoMarkCalled(ctx.pg, ctx.reg, ctx.name);
 }
 
 function _rcWidgetDial(phone, reg, pg, name){
