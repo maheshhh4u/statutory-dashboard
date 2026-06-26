@@ -902,7 +902,7 @@ def ai_coach():
         return jsonify({"ok": False, "error": "No calls found for this caller and date range."}), 400
     total_dur   = one(f"SELECT COALESCE(SUM(duration_sec),0) {base}")
     conv2       = one(f"SELECT COUNT(*) {base} AND duration_sec>=120")
-    connected   = one(f"SELECT COUNT(*) {base} AND outcome IN ('Connected','Interested','Meeting secured','Not interested')")
+    connected   = one(f"SELECT COUNT(*) {base} AND outcome IN ('Connected','Engaged','Interested','Meeting secured','Not interested')")
     meetings    = one(f"SELECT COUNT(*) {base} AND outcome='Meeting secured'")
     interested  = one(f"SELECT COUNT(*) {base} AND outcome='Interested'")
     notint      = one(f"SELECT COUNT(*) {base} AND outcome='Not interested'")
@@ -928,7 +928,7 @@ def ai_coach():
     # ── Charity-TYPE success analysis (what/who/how → outcome) ─────────────────
     # For every call, look up the charity's classification, then tally positive outcomes
     # by charity "what" category to see which types convert best.
-    POSITIVE = ('Connected','Interested','Meeting secured')
+    POSITIVE = ('Connected','Engaged','Interested','Meeting secured')
     type_stats = {}  # what-category → {calls, positive, meetings}
     try:
         call_regs = db_query(f"SELECT reg_number, outcome {base}", bp) or []
@@ -1171,7 +1171,7 @@ def api_report():
     calls_made      = (q(f"SELECT COUNT(*) {base}", bp) or [[0]])[0][0]
     total_dur_sec   = (q(f"SELECT COALESCE(SUM(duration_sec),0) {base}", bp) or [[0]])[0][0]
     conv_2min       = (q(f"SELECT COUNT(*) {base} AND duration_sec>=120", bp) or [[0]])[0][0]
-    meaningful      = (q(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Connected','Interested','Meeting secured')", bp) or [[0]])[0][0]
+    meaningful      = (q(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Connected','Engaged','Interested','Meeting secured')", bp) or [[0]])[0][0]
     meetings        = (q(f"SELECT COUNT(*) {base} AND outcome='Meeting secured'", bp) or [[0]])[0][0]
     a_grade         = (q(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Interested','Meeting secured')", bp) or [[0]])[0][0]
     voicemail       = (q(f"SELECT COUNT(*) {base} AND outcome='Voicemail'", bp) or [[0]])[0][0]
@@ -1221,7 +1221,7 @@ def api_report():
     hours_on_rc = round(total_dur_sec / 3600, 2)
 
     # ══ CEO: CONVERSION FUNNEL ════════════════════════════════════════════════
-    connected = (q(f"SELECT COUNT(*) {base} AND outcome IN ('Connected','Interested','Meeting secured','Not interested')", bp) or [[0]])[0][0]
+    connected = (q(f"SELECT COUNT(*) {base} AND outcome IN ('Connected','Engaged','Interested','Meeting secured','Not interested')", bp) or [[0]])[0][0]
     interested = (q(f"SELECT COUNT(*) {base} AND outcome IN ('Interested','Meeting secured')", bp) or [[0]])[0][0]
     clients_won = (q(f"SELECT COUNT(*) FROM statuses WHERE status='Client' {cal_filter}", cal_params) or [[0]])[0][0]
     funnel = [
@@ -1265,7 +1265,7 @@ def api_report():
 
     # ══ COO: WEEKLY TRENDS (calls + connect rate per day) ═════════════════════
     trend_rows = q(f"""SELECT substr(timestamp,1,10) as day, COUNT(*),
-        SUM(CASE WHEN outcome IN ('Connected','Interested','Meeting secured','Not interested') THEN 1 ELSE 0 END),
+        SUM(CASE WHEN outcome IN ('Connected','Engaged','Interested','Meeting secured','Not interested') THEN 1 ELSE 0 END),
         COALESCE(SUM(duration_sec),0)
         {base} GROUP BY day ORDER BY day ASC""", bp) or []
     daily_trend = [{"day":r[0], "calls":r[1], "connected":r[2],
@@ -1274,7 +1274,7 @@ def api_report():
 
     # ══ COO: BEST TIME OF DAY (connect rate by hour) ══════════════════════════
     hour_rows = q(f"""SELECT substr(timestamp,12,2) as hr, COUNT(*),
-        SUM(CASE WHEN outcome IN ('Connected','Interested','Meeting secured','Not interested') THEN 1 ELSE 0 END)
+        SUM(CASE WHEN outcome IN ('Connected','Engaged','Interested','Meeting secured','Not interested') THEN 1 ELSE 0 END)
         {base} GROUP BY hr ORDER BY hr ASC""", bp) or []
     by_hour = [{"hour":r[0], "calls":r[1], "connected":r[2],
                 "connect_rate": round(r[2]/r[1]*100) if r[1] else 0} for r in hour_rows if r[0]]
@@ -1470,12 +1470,12 @@ def report_export():
     total       = one(f"SELECT COUNT(*) {base}")
     total_dur   = one(f"SELECT COALESCE(SUM(duration_sec),0) {base}")
     conv2       = one(f"SELECT COUNT(*) {base} AND duration_sec>=120")
-    connected   = one(f"SELECT COUNT(*) {base} AND outcome IN ('Connected','Interested','Meeting secured','Not interested')")
+    connected   = one(f"SELECT COUNT(*) {base} AND outcome IN ('Connected','Engaged','Interested','Meeting secured','Not interested')")
     meetings    = one(f"SELECT COUNT(*) {base} AND outcome='Meeting secured'")
     interested  = one(f"SELECT COUNT(*) {base} AND outcome='Interested'")
     voicemail   = one(f"SELECT COUNT(*) {base} AND outcome='Voicemail'")
     noans       = one(f"SELECT COUNT(*) {base} AND outcome='No Answer'")
-    meaningful  = one(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Connected','Interested','Meeting secured')")
+    meaningful  = one(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Connected','Engaged','Interested','Meeting secured')")
     a_grade     = one(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Interested','Meeting secured')")
     hours = round(total_dur/3600,2)
     connect_rate = round(connected/total*100) if total else 0
@@ -2305,6 +2305,9 @@ def mark_called_by():
         if key in _called_log:
             del _called_log[key]
             db_exec("DELETE FROM called_log WHERE key=?", (key,))
+        try:
+            db_exec("UPDATE calling_batch SET completed=0 WHERE active=1 AND reg_number=?", (reg,))
+        except Exception: pass
         return jsonify({"ok":True,"marked":False})
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     _called_log[key] = {
@@ -2313,6 +2316,12 @@ def mark_called_by():
     }
     db_exec("INSERT OR REPLACE INTO called_log(key,reg_number,page,name,called_by,timestamp,data) VALUES(?,?,?,?,?,?,?)",
             (key, reg, page, name, caller, ts, "{}"))
+    # Also flag the active Daily-Calling batch row as completed so the X/100 progress
+    # count and the "✓ done" chip stay consistent with the green called-row state.
+    try:
+        db_exec("UPDATE calling_batch SET completed=1 WHERE active=1 AND reg_number=?", (reg,))
+    except Exception as e:
+        print(f"  mark_called_by batch-complete error: {e}")
     return jsonify({"ok":True,"marked":True,"caller":caller})
 
 # ── Milestone charities (approaching age anniversary with zero statutory) ──────

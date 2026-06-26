@@ -1424,6 +1424,7 @@ function openCallModal(pg,reg,name,ccPhone){
     <select id="call-outcome" style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;margin-bottom:10px">
       <option value="">— Select outcome —</option>
       <option value="Connected">✓ Connected</option>
+      <option value="Engaged">💬 Engaged</option>
       <option value="Voicemail">📧 Voicemail</option>
       <option value="No Answer">📵 No Answer</option>
       <option value="Wrong Number">⚠ Wrong Number</option>
@@ -1560,7 +1561,7 @@ function saveCall(pg,reg,ccPhone){
       refreshCalled();
       // Kick off call transcription (recording → Whisper → comment + Maximizer) for calls
       // where a conversation happened. Runs in the background; transcript appears in History.
-      const talked=['Connected','Interested','Not Interested'].includes(outcome);
+      const talked=['Connected','Engaged','Interested','Not Interested'].includes(outcome);
       const ro=window._lastRingOut;
       let transcribing=false;
       if(talked && ro && String(ro.reg)===String(reg) && ro.callId){
@@ -1713,7 +1714,7 @@ function renderReportCharts(d){
   if(ocEl && typeof Chart!=='undefined'){
     if(ocEl._ci){ocEl._ci.destroy();ocEl._ci=null;}
     const labels=Object.keys(outcomes), vals=Object.values(outcomes);
-    const ocolors={'Connected':'#1d7a3a','Interested':'#27ae60','Meeting secured':'#c89a1a',
+    const ocolors={'Connected':'#1d7a3a','Engaged':'#2ecc71','Interested':'#27ae60','Meeting secured':'#c89a1a',
       'Not interested':'#95a5a6','Voicemail':'#5a4fbf','No Answer':'#c0392b','Line Dropped':'#e67e22'};
     if(labels.length){
       ocEl._ci=new Chart(ocEl,{type:'doughnut',
@@ -2912,6 +2913,32 @@ function autoMarkCalled(pg, reg, name){
   if(btn){btn.textContent='✓ Called';btn.className='cbtn called';}
   const callerCell=document.getElementById('cc-col-'+pg+'-'+reg);
   if(callerCell && caller){callerCell.innerHTML='<span class="tag tag-green" style="font-size:10px">'+esc(caller)+'</span>';}
+  // For the Daily Calling list: paint the row green + add the "✓ done" chip immediately,
+  // and bump the X/100 progress counter — without waiting for a refresh.
+  if(pg==='calling'){
+    const tr=btn?btn.closest('tr'):null;
+    if(tr && !tr.classList.contains('called-today-row')){
+      tr.classList.add('called-today-row');
+      // Add the done chip next to the charity name if not already there
+      const nameCell=tr.querySelector('td[title]');
+      if(nameCell && !nameCell.querySelector('.called-chip')){
+        const chip=document.createElement('span');
+        chip.className='called-chip'; chip.textContent='✓ done';
+        nameCell.appendChild(chip);
+      }
+      // Update local data + the X/100 counter
+      const item=(typeof callingData!=='undefined')?callingData.find(c=>String(c.reg_number)===String(reg)):null;
+      if(item && !item.completed){
+        item.completed=true;
+        const doneEl=document.getElementById('callingDone');
+        const totEl=document.getElementById('callingTotal');
+        if(doneEl){ const n=(parseInt(doneEl.textContent)||0)+1; doneEl.textContent=n;
+          const tot=parseInt(totEl&&totEl.textContent)||100;
+          const fill=document.getElementById('callingFill'); if(fill) fill.style.width=Math.round(n/tot*100)+'%';
+        }
+      }
+    }
+  }
   refreshCalled();
   // Persist to server. If no caller selected we still mark it called (caller blank);
   // the call genuinely happened so it must not reappear for calling.
@@ -3169,6 +3196,9 @@ function renderCalendar(){
 }
 
 function loadCalling(){
+  // Preserve current scroll position across the refresh so the user stays put
+  const _sc=document.getElementById('callingScroll');
+  if(_sc && _sc.scrollTop>0) callingScroll=_sc.scrollTop;
   loadScheduledCalls();
   restoreExclusions();
   const body=document.getElementById('callingBody');
