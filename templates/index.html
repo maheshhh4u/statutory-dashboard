@@ -2900,20 +2900,29 @@ function removeUser(name){
 
 // ── Called tracking with caller name ─────────────────────────────────────────
 function autoMarkCalled(pg, reg, name){
-  // Automatically mark Called + Caller after a real call (duration > 0). No toggle-off.
-  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
-  if(!caller) return;
+  // Automatically mark Called + Caller after a real call. No toggle-off.
+  let caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
   const k=pg+'|'+reg;
-  if(called[k]) return;                       // already marked — leave it
-  called[k]={pg,reg,name,caller,ts:new Date().toLocaleString('en-GB')};
+  const alreadyMarked=!!called[k];
+  if(!alreadyMarked){
+    called[k]={pg,reg,name,caller:caller||'Unknown',ts:new Date().toLocaleString('en-GB')};
+  }
+  // Always repaint the row UI (even if already marked) so Muhanna's screen updates
   const btn=document.getElementById('cb-'+pg+'-'+reg);
   if(btn){btn.textContent='✓ Called';btn.className='cbtn called';}
   const callerCell=document.getElementById('cc-col-'+pg+'-'+reg);
-  if(callerCell){callerCell.innerHTML='<span class="tag tag-green" style="font-size:10px">'+esc(caller)+'</span>';}
+  if(callerCell && caller){callerCell.innerHTML='<span class="tag tag-green" style="font-size:10px">'+esc(caller)+'</span>';}
   refreshCalled();
+  // Persist to server. If no caller selected we still mark it called (caller blank);
+  // the call genuinely happened so it must not reappear for calling.
   fetch('/api/mark_called_by',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({reg_number:reg,page:pg,name:name,caller:caller,toggle:false,called:true})})
+    body:JSON.stringify({reg_number:reg,page:pg,name:name,caller:caller||'',toggle:false,called:true})})
     .then(r=>r.json()).then(d=>{if(!d.ok)console.warn('auto-mark error',d);}).catch(()=>{});
+  // Gentle reminder if no caller was selected (so the Caller column can be filled)
+  if(!caller){
+    const cs=document.getElementById('call-status');
+    if(cs){ cs.innerHTML+='<br><span style="color:#b8860b;font-size:11px">⚠ Tip: select your name in "Calling as" so calls are attributed to you.</span>'; }
+  }
 }
 
 function toggleCalled(pg,reg,name){
@@ -3881,10 +3890,56 @@ function _onCallEnded(call){
     if(td) td.textContent='⏱ Timer: '+m+':'+String(s).padStart(2,'0');
   }
   window._rcCallStartMs=null;
-  // Auto-mark called: a call was actually placed via the widget, so mark it called
-  // regardless of whether we captured a duration (RC events don't always report it).
-  const ctx=window._callCtx;
+  // ── Determine WHICH charity this call was for ──────────────────────────────
+  // Primary: the call context set when the dashboard Call button was clicked.
+  // Fallback: match the dialled number from the RC event to a charity row by phone
+  // (handles redials from the RC widget where _callCtx may be stale).
+  let ctx=window._callCtx;
+  const dialled=_extractDialledNumber(call);
+  if(dialled){
+    const matched=_findCharityByPhone(dialled);
+    if(matched){
+      // If the dialled number doesn't match the current context, trust the dialled number
+      if(!ctx || String(ctx.reg)!==String(matched.reg)){
+        ctx={pg:matched.pg, reg:matched.reg, name:matched.name};
+      }
+    }
+  }
   if(ctx) autoMarkCalled(ctx.pg, ctx.reg, ctx.name);
+}
+
+// Pull the dialled phone number out of an RC call event object
+function _extractDialledNumber(call){
+  if(!call) return '';
+  let n='';
+  if(call.to){
+    n = (typeof call.to==='string') ? call.to : (call.to.phoneNumber||call.to.phoneNo||'');
+  }
+  if(!n && call.toNumber) n=call.toNumber;
+  if(!n && window._lastRingOut && window._lastRingOut.to) n=window._lastRingOut.to;
+  return n;
+}
+
+// Normalise a phone number to its last 9 digits for matching
+function _normPhone(p){ return String(p||'').replace(/\D/g,'').slice(-9); }
+
+// Find a charity in the current calling list by phone number
+function _findCharityByPhone(phone){
+  const want=_normPhone(phone);
+  if(!want || want.length<6) return null;
+  const rows=(typeof callingData!=='undefined')?callingData:[];
+  for(const c of rows){
+    // check main phone + any contact-phone override
+    const cands=[c.phone];
+    const ov=(typeof contactOverrides!=='undefined')?contactOverrides[c.reg_number]:null;
+    if(ov){ cands.push(ov.cphone); cands.push(ov.phone); }
+    for(const cand of cands){
+      if(cand && _normPhone(cand)===want){
+        return {pg:'calling', reg:String(c.reg_number), name:c.name||''};
+      }
+    }
+  }
+  return null;
 }
 
 function _rcWidgetDial(phone, reg, pg, name){
