@@ -93,6 +93,10 @@ h1,h2,h3,h4,.brand-font{font-family:'Montserrat','Inter',sans-serif;letter-spaci
 .criteria-box{background:var(--s2);border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:var(--radius);padding:10px 14px;margin-bottom:11px;font-size:11px;color:var(--t2);line-height:1.7}
 /* FILTER BAR */
 .filter-bar{display:flex;gap:7px;flex-wrap:wrap;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:9px 13px;margin-bottom:11px}
+.rpt-view-btn{background:none;border:none;padding:10px 16px;font-size:13px;font-weight:600;color:var(--t3);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;font-family:inherit;white-space:nowrap}
+.rpt-view-btn:hover{color:var(--navy)}
+.rpt-view-btn.active{color:var(--navy);border-bottom-color:var(--gold)}
+@media print{.nav,.filter-bar,.rpt-view-btn,.ctrl-right,.btn{display:none !important}.rpt-view{display:block !important}#rpt-view-overview,#rpt-view-ceo,#rpt-view-coo,#rpt-view-fundraiser{display:none !important}#rpt-view-client{display:block !important}}
 .filter-bar input,.filter-bar select{font-family:inherit;font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text)}
 .filter-bar input:focus,.filter-bar select:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(30,58,95,.10)}
 .filter-label{font-size:11px;color:var(--t3);font-weight:600;white-space:nowrap}
@@ -892,6 +896,17 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="loadReport()">Generate Report</button>
     </div>
 
+    <!-- View switcher -->
+    <div style="display:flex;gap:6px;margin-bottom:20px;border-bottom:2px solid var(--bd);flex-wrap:wrap">
+      <button class="rpt-view-btn active" data-view="overview" onclick="switchRptView('overview',this)">📊 Overview</button>
+      <button class="rpt-view-btn" data-view="ceo" onclick="switchRptView('ceo',this)">👔 CEO — Funnel &amp; Pipeline</button>
+      <button class="rpt-view-btn" data-view="coo" onclick="switchRptView('coo',this)">⚙️ COO — Efficiency</button>
+      <button class="rpt-view-btn" data-view="fundraiser" onclick="switchRptView('fundraiser',this)">🎯 Fundraiser — Hot Leads</button>
+      <button class="rpt-view-btn" data-view="client" onclick="switchRptView('client',this)">🤝 Client Summary</button>
+    </div>
+
+    <!-- ===== OVERVIEW VIEW ===== -->
+    <div class="rpt-view" id="rpt-view-overview">
     <!-- KPI cards -->
     <div id="rpt-kpis" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px;margin-bottom:28px"></div>
 
@@ -913,6 +928,57 @@ select:focus{outline:none;border-color:var(--green)}
         <div id="rpt-stages"></div>
       </div>
       <div id="rpt-summary-box"></div>
+    </div>
+    </div>
+
+    <!-- ===== CEO VIEW ===== -->
+    <div class="rpt-view" id="rpt-view-ceo" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px">
+        <div>
+          <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Conversion Funnel</h3>
+          <div id="rpt-funnel"></div>
+        </div>
+        <div>
+          <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Pipeline Value by Stage</h3>
+          <div id="rpt-pipeline"></div>
+        </div>
+      </div>
+      <div id="rpt-ceo-headline"></div>
+    </div>
+
+    <!-- ===== COO VIEW ===== -->
+    <div class="rpt-view" id="rpt-view-coo" style="display:none">
+      <div id="rpt-coo-kpis" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px;margin-bottom:24px"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+        <div>
+          <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Daily Activity Trend</h3>
+          <canvas id="rpt-trend-chart" style="max-height:240px"></canvas>
+        </div>
+        <div>
+          <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Best Time to Call (Connect Rate by Hour)</h3>
+          <canvas id="rpt-hour-chart" style="max-height:240px"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== FUNDRAISER VIEW ===== -->
+    <div class="rpt-view" id="rpt-view-fundraiser" style="display:none">
+      <div style="margin-bottom:28px">
+        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">🔥 Hot Leads — Interested &amp; Meetings (act on these first)</h3>
+        <div id="rpt-hot-leads"></div>
+      </div>
+      <div>
+        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">📅 Follow-ups Due (overdue shown in red)</h3>
+        <div id="rpt-followups-due"></div>
+      </div>
+    </div>
+
+    <!-- ===== CLIENT VIEW ===== -->
+    <div class="rpt-view" id="rpt-view-client" style="display:none">
+      <div id="rpt-client-summary"></div>
+      <div style="text-align:center;margin-top:20px">
+        <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="window.print()">🖨️ Print / Save as PDF</button>
+      </div>
     </div>
 
   </div>
@@ -1609,6 +1675,10 @@ function renderReport(d, promoEmails){
       const pct=Math.round(v/outTotal*100);
       return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span style="font-weight:600">'+esc(k||'(none)')+'</span><span>'+v+' <span style="color:var(--t3)">('+pct+'%)</span></span></div><div style="background:#eee;border-radius:4px;height:6px"><div style="background:var(--navy);border-radius:4px;height:6px;width:'+pct+'%"></div></div></div>';
     }).join('')||'<div style="color:var(--t3);font-size:12px">No calls in this period.</div>';
+  renderReportCharts(d);
+  renderReportTail(d, promoEmails);
+}
+function renderReportCharts(d){
   // Draw stacked bar chart for lists by caller
   const chartEl=document.getElementById('rpt-list-chart');
   if(chartEl){
@@ -1645,6 +1715,8 @@ function renderReport(d, promoEmails){
       chartEl.parentNode.insertBefore(p,chartEl);
     }
   }
+}
+function renderReportTail(d, promoEmails){
   document.getElementById('rpt-stages').innerHTML=(d.stage_totals||[]).map(s=>
     '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--bd);font-size:12px"><span style="font-weight:600">'+esc(s.stage)+'</span><span style="color:var(--t3)">'+s.count+'</span></div>'
   ).join('')||'<div style="color:var(--t3);font-size:12px">No stages set.</div>';
@@ -1663,6 +1735,153 @@ function renderReport(d, promoEmails){
     '📧 <b>'+promoEmails+'</b> promo emails sent<br>'+
     '📰 <b>'+d.newsletter_signups+'</b> newsletter sign-ups'+
     '</div></div>';
+  // Store for view switching + render the currently-active view's extra dashboards
+  window._lastReport=d; window._lastPromo=promoEmails;
+  renderCeoView(d); renderCooView(d); renderFundraiserView(d); renderClientView(d, promoEmails);
+}
+
+function switchRptView(view, btn){
+  document.querySelectorAll('.rpt-view-btn').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  document.querySelectorAll('.rpt-view').forEach(v=>v.style.display='none');
+  const el=document.getElementById('rpt-view-'+view);
+  if(el) el.style.display='block';
+  // Charts need a re-draw when their container becomes visible
+  if(window._lastReport){
+    if(view==='coo') renderCooView(window._lastReport);
+    if(view==='overview') renderReportCharts(window._lastReport);
+  }
+}
+
+// ══ CEO VIEW ══════════════════════════════════════════════════════════════════
+function renderCeoView(d){
+  const funnel=d.funnel||[];
+  const maxC=Math.max(1,...funnel.map(f=>f.count));
+  const colors=['#1e3a5f','#27496d','#2d5a8f','#1d7a3a','#c89a1a','#9b59b6'];
+  document.getElementById('rpt-funnel').innerHTML=funnel.map((f,i)=>{
+    const w=Math.round(f.count/maxC*100);
+    const prev=i>0?funnel[i-1].count:f.count;
+    const conv=prev>0?Math.round(f.count/prev*100):100;
+    return '<div style="margin-bottom:10px">'+
+      '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">'+
+      '<span style="font-weight:600">'+esc(f.stage)+'</span>'+
+      '<span>'+f.count+(i>0?' <span style="color:var(--t3)">('+conv+'% of prev)</span>':'')+'</span></div>'+
+      '<div style="background:#eee;border-radius:4px;height:22px;position:relative">'+
+      '<div style="background:'+colors[i%colors.length]+';border-radius:4px;height:22px;width:'+Math.max(w,3)+'%"></div>'+
+      '</div></div>';
+  }).join('')||'<div style="color:var(--t3);font-size:12px">No data.</div>';
+
+  const pl=d.pipeline||{};
+  const fmtGBP=n=>'£'+Math.round(n).toLocaleString();
+  document.getElementById('rpt-pipeline').innerHTML=
+    '<div style="font-size:11px;color:var(--t3);margin-bottom:12px">Estimated value = '+Math.round((d.pipeline_pct||0.02)*100)+'% of each charity\'s annual income</div>'+
+    ['Interested','Meeting secured','Client'].map(s=>{
+      const p=pl[s]||{count:0,value:0,income:0};
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:8px">'+
+        '<div><div style="font-weight:700;font-size:13px">'+s+'</div><div style="font-size:11px;color:var(--t3)">'+p.count+' charities</div></div>'+
+        '<div style="text-align:right"><div style="font-weight:800;font-size:18px;color:#1d7a3a">'+fmtGBP(p.value)+'</div><div style="font-size:10px;color:var(--t3)">from '+fmtGBP(p.income)+' income</div></div>'+
+        '</div>';
+    }).join('');
+  document.getElementById('rpt-ceo-headline').innerHTML=
+    '<div style="background:linear-gradient(135deg,#1d7a3a,#2a9e50);border-radius:12px;padding:24px;color:#fff;text-align:center">'+
+    '<div style="font-size:13px;text-transform:uppercase;letter-spacing:.08em;opacity:.85;margin-bottom:6px">Total Pipeline Value</div>'+
+    '<div style="font-size:42px;font-weight:800;line-height:1">'+fmtGBP(d.pipeline_total_value||0)+'</div>'+
+    '<div style="font-size:13px;opacity:.85;margin-top:8px">'+d.meetings_booked+' meetings booked · '+d.interested+' interested · '+d.clients_won+' clients won</div>'+
+    '</div>';
+}
+
+// ══ COO VIEW ══════════════════════════════════════════════════════════════════
+function renderCooView(d){
+  const callsPerHr=d.hours_on_rc>0?Math.round(d.calls_made/d.hours_on_rc):0;
+  const connRate=d.calls_made>0?Math.round(d.connected/d.calls_made*100):0;
+  document.getElementById('rpt-coo-kpis').innerHTML=[
+    rptKpiCard('Calls / Hour', callsPerHr, 'Productivity rate', '#1e3a5f'),
+    rptKpiCard('Connect Rate', connRate+'%', d.connected+' of '+d.calls_made+' reached', '#1d7a3a'),
+    rptKpiCard('Follow-up Completion', d.followup_completion+'%', d.followup_done+' of '+d.followup_total+' done', '#5a4fbf'),
+    rptKpiCard('Overdue Follow-ups', d.followup_overdue, d.followup_overdue>0?'⚠ Need attention':'All on track', d.followup_overdue>0?'#c0392b':'#1d7a3a'),
+  ].join('');
+  // Daily trend chart
+  const tEl=document.getElementById('rpt-trend-chart');
+  if(tEl && typeof Chart!=='undefined'){
+    if(tEl._ci){tEl._ci.destroy();tEl._ci=null;}
+    const t=d.daily_trend||[];
+    if(t.length){
+      tEl._ci=new Chart(tEl,{type:'line',data:{labels:t.map(x=>x.day.slice(5)),
+        datasets:[
+          {label:'Calls',data:t.map(x=>x.calls),borderColor:'#1e3a5f',backgroundColor:'rgba(30,58,95,.1)',tension:.3,yAxisID:'y'},
+          {label:'Connect %',data:t.map(x=>x.connect_rate),borderColor:'#1d7a3a',backgroundColor:'rgba(29,122,58,.1)',tension:.3,yAxisID:'y1'}
+        ]},
+        options:{responsive:true,plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
+          scales:{y:{beginAtZero:true,position:'left',title:{display:true,text:'Calls'}},
+                  y1:{beginAtZero:true,max:100,position:'right',grid:{drawOnChartArea:false},title:{display:true,text:'Connect %'}}}}});
+    }
+  }
+  // Best time of day chart
+  const hEl=document.getElementById('rpt-hour-chart');
+  if(hEl && typeof Chart!=='undefined'){
+    if(hEl._ci){hEl._ci.destroy();hEl._ci=null;}
+    const h=d.by_hour||[];
+    if(h.length){
+      hEl._ci=new Chart(hEl,{type:'bar',data:{labels:h.map(x=>x.hour+':00'),
+        datasets:[{label:'Connect Rate %',data:h.map(x=>x.connect_rate),
+          backgroundColor:h.map(x=>x.connect_rate>=50?'#1d7a3a':x.connect_rate>=30?'#e8b339':'#c0392b')}]},
+        options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{afterLabel:c=>h[c.dataIndex].calls+' calls'}}},
+          scales:{y:{beginAtZero:true,max:100,title:{display:true,text:'Connect %'}}}}});
+    }
+  }
+}
+
+// ══ FUNDRAISER VIEW ═══════════════════════════════════════════════════════════
+function renderFundraiserView(d){
+  const fmtGBP=n=>'£'+Math.round(n||0).toLocaleString();
+  const hot=d.hot_leads||[];
+  document.getElementById('rpt-hot-leads').innerHTML=hot.length?
+    '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'+
+    '<thead><tr style="background:var(--s2);text-align:left">'+
+    '<th style="padding:8px">Charity</th><th style="padding:8px">Stage</th><th style="padding:8px">Phone</th><th style="padding:8px">Income</th><th style="padding:8px">Last Updated</th></tr></thead><tbody>'+
+    hot.map(h=>'<tr style="border-bottom:1px solid var(--bd)">'+
+      '<td style="padding:8px;font-weight:600">'+esc(h.name||h.reg)+'</td>'+
+      '<td style="padding:8px"><span style="background:'+(h.stage==='Meeting secured'?'#e8f5e9':'#fff8e1')+';padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">'+esc(h.stage)+'</span></td>'+
+      '<td style="padding:8px;font-family:monospace">'+esc(h.phone||'—')+'</td>'+
+      '<td style="padding:8px">'+fmtGBP(h.income)+'</td>'+
+      '<td style="padding:8px;color:var(--t3)">'+esc((h.updated||'').slice(0,16))+'</td></tr>').join('')+
+    '</tbody></table></div>'
+    :'<div style="color:var(--t3);font-size:12px">No hot leads in this period. As charities reach Interested/Meeting secured stage, they\'ll appear here.</div>';
+
+  const due=d.followups_due||[];
+  document.getElementById('rpt-followups-due').innerHTML=due.length?
+    due.map(f=>'<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:'+(f.overdue?'#fdecec':'#fff')+';border:1px solid '+(f.overdue?'#f5b7b1':'var(--bd)')+';border-radius:8px;margin-bottom:6px">'+
+      '<div><div style="font-weight:600;font-size:13px">'+esc(f.name||f.reg)+(f.overdue?' <span style="color:#c0392b;font-size:11px">⚠ OVERDUE</span>':'')+'</div>'+
+      (f.notes?'<div style="font-size:11px;color:var(--t3);margin-top:2px">'+esc(f.notes.slice(0,80))+'</div>':'')+'</div>'+
+      '<div style="text-align:right;font-size:12px"><div style="font-weight:600">'+esc((f.at||'').slice(0,16))+'</div><div style="font-size:10px;color:var(--t3)">'+esc(f.caller||'')+'</div></div>'+
+      '</div>').join('')
+    :'<div style="color:var(--t3);font-size:12px">No follow-ups scheduled.</div>';
+}
+
+// ══ CLIENT VIEW ═══════════════════════════════════════════════════════════════
+function renderClientView(d, promoEmails){
+  const fmtGBP=n=>'£'+Math.round(n||0).toLocaleString();
+  document.getElementById('rpt-client-summary').innerHTML=
+    '<div style="max-width:780px;margin:0 auto;background:#fff;border-radius:12px;padding:40px;box-shadow:0 2px 16px rgba(0,0,0,.08)">'+
+    '<div style="text-align:center;border-bottom:3px solid #e8b339;padding-bottom:20px;margin-bottom:28px">'+
+    '<div style="font-size:22px;font-weight:800;color:#1e3a5f">9 Mountains</div>'+
+    '<div style="font-size:13px;color:var(--t3);margin-top:4px">Prospecting Activity Report</div>'+
+    '<div style="font-size:12px;color:var(--t3);margin-top:8px">'+esc(d.period.from)+' to '+esc(d.period.to)+'</div></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:28px">'+
+    [['Calls Made',d.calls_made],['Conversations',d.conversations_2min],['Meaningful Interactions',d.meaningful_interactions],
+     ['Meetings Secured',d.meetings_booked],['Follow-ups Arranged',d.followups_set],['Newsletter Sign-ups',d.newsletter_signups]]
+      .map(([l,v])=>'<div style="text-align:center;padding:18px;background:#f8f9fb;border-radius:10px">'+
+        '<div style="font-size:34px;font-weight:800;color:#1e3a5f">'+v+'</div>'+
+        '<div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-top:4px">'+l+'</div></div>').join('')+
+    '</div>'+
+    '<div style="background:linear-gradient(135deg,#1d7a3a,#2a9e50);border-radius:10px;padding:24px;color:#fff;text-align:center;margin-bottom:24px">'+
+    '<div style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;opacity:.85">Qualified Pipeline Generated</div>'+
+    '<div style="font-size:38px;font-weight:800;margin-top:4px">'+fmtGBP(d.pipeline_total_value||0)+'</div>'+
+    '<div style="font-size:12px;opacity:.85;margin-top:4px">'+d.interested+' interested prospects · '+d.meetings_booked+' meetings booked</div></div>'+
+    '<div style="font-size:11px;color:var(--t3);text-align:center;line-height:1.6">'+
+    'This report summarises outbound prospecting activity carried out on your behalf during the period shown. '+
+    'Pipeline value is an indicative estimate based on prospect organisation size.</div>'+
+    '</div>';
 }
 
 // ── Nav ────────────────────────────────────────────────────────────────────────

@@ -1065,6 +1065,103 @@ def api_report():
     stages = [{"stage":r[0],"count":r[1]} for r in (stage_rows or [])]
     # ── RC call time (hours) ──────────────────────────────────────────────────
     hours_on_rc = round(total_dur_sec / 3600, 2)
+
+    # ══ CEO: CONVERSION FUNNEL ════════════════════════════════════════════════
+    connected = (q(f"SELECT COUNT(*) {base} AND outcome IN ('Connected','Interested','Meeting secured','Not interested')", bp) or [[0]])[0][0]
+    interested = (q(f"SELECT COUNT(*) {base} AND outcome IN ('Interested','Meeting secured')", bp) or [[0]])[0][0]
+    clients_won = (q(f"SELECT COUNT(*) FROM statuses WHERE status='Client' {cal_filter}", cal_params) or [[0]])[0][0]
+    funnel = [
+        {"stage":"Calls Made",          "count": calls_made},
+        {"stage":"Connected",           "count": connected},
+        {"stage":"Conversations >2min", "count": conv_2min},
+        {"stage":"Interested+",         "count": interested},
+        {"stage":"Meetings Booked",     "count": meetings},
+        {"stage":"Clients Won",         "count": clients_won},
+    ]
+
+    # ══ CEO: PIPELINE £ VALUE (by stage) ══════════════════════════════════════
+    # Pull income from calling_batch.data JSON for charities at each warm stage.
+    # Estimated fundraising value = 2% of total income (rough heuristic; configurable).
+    PIPELINE_PCT = 0.02
+    pipeline = {"Interested":{"count":0,"income":0.0,"value":0.0},
+                "Meeting secured":{"count":0,"income":0.0,"value":0.0},
+                "Client":{"count":0,"income":0.0,"value":0.0}}
+    try:
+        st_rows = q(f"SELECT key, status FROM statuses WHERE status IN ('Interested','Meeting secured','Client') {cal_filter}", cal_params) or []
+        # Build reg→income map from calling_batch data
+        inc_rows = q("SELECT reg_number, data FROM calling_batch WHERE active=1") or []
+        inc_map = {}
+        for r in inc_rows:
+            try:
+                obj = json.loads(r[1] or "{}")
+                inc = obj.get("total_income") or obj.get("latest_income") or 0
+                inc_map[r[0]] = float(inc) if inc else 0.0
+            except: pass
+        for r in st_rows:
+            key = r[0]; status = r[1]
+            reg = key.split("|")[-1] if "|" in key else key
+            inc = inc_map.get(reg, 0.0)
+            if status in pipeline:
+                pipeline[status]["count"] += 1
+                pipeline[status]["income"] += inc
+                pipeline[status]["value"] += inc * PIPELINE_PCT
+    except Exception as e:
+        print(f"  pipeline calc error: {e}")
+    pipeline_total_value = round(sum(p["value"] for p in pipeline.values()), 0)
+
+    # ══ COO: WEEKLY TRENDS (calls + connect rate per day) ═════════════════════
+    trend_rows = q(f"""SELECT substr(timestamp,1,10) as day, COUNT(*),
+        SUM(CASE WHEN outcome IN ('Connected','Interested','Meeting secured','Not interested') THEN 1 ELSE 0 END),
+        COALESCE(SUM(duration_sec),0)
+        {base} GROUP BY day ORDER BY day ASC""", bp) or []
+    daily_trend = [{"day":r[0], "calls":r[1], "connected":r[2],
+                    "connect_rate": round(r[2]/r[1]*100) if r[1] else 0,
+                    "hours": round(r[3]/3600,1)} for r in trend_rows]
+
+    # ══ COO: BEST TIME OF DAY (connect rate by hour) ══════════════════════════
+    hour_rows = q(f"""SELECT substr(timestamp,12,2) as hr, COUNT(*),
+        SUM(CASE WHEN outcome IN ('Connected','Interested','Meeting secured','Not interested') THEN 1 ELSE 0 END)
+        {base} GROUP BY hr ORDER BY hr ASC""", bp) or []
+    by_hour = [{"hour":r[0], "calls":r[1], "connected":r[2],
+                "connect_rate": round(r[2]/r[1]*100) if r[1] else 0} for r in hour_rows if r[0]]
+
+    # ══ COO: FOLLOW-UP DISCIPLINE ═════════════════════════════════════════════
+    today = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    fu_total = (q(f"SELECT COUNT(*) FROM follow_ups WHERE 1=1 {cal_filter}", cal_params) or [[0]])[0][0]
+    fu_done  = (q(f"SELECT COUNT(*) FROM follow_ups WHERE done=1 {cal_filter}", cal_params) or [[0]])[0][0]
+    fu_overdue = (q(f"SELECT COUNT(*) FROM follow_ups WHERE done=0 AND follow_up_at<? {cal_filter}",
+                    (today,)+cal_params) or [[0]])[0][0]
+    fu_completion = round(fu_done/fu_total*100) if fu_total else 0
+
+    # ══ FUNDRAISER: HOT LEADS (Interested / Meeting secured) ══════════════════
+    hot_leads = []
+    try:
+        hl_rows = q(f"SELECT key, status, updated_at FROM statuses WHERE status IN ('Interested','Meeting secured') {cal_filter} ORDER BY updated_at DESC LIMIT 50", cal_params) or []
+        # reg→name/phone from calling_batch data
+        meta_rows = q("SELECT reg_number, data FROM calling_batch WHERE active=1") or []
+        meta = {}
+        for r in meta_rows:
+            try:
+                o = json.loads(r[1] or "{}")
+                meta[r[0]] = {"name": o.get("name") or o.get("charity_name") or "",
+                              "phone": o.get("phone") or o.get("contact_phone") or "",
+                              "income": o.get("total_income") or o.get("latest_income") or 0}
+            except: pass
+        for r in hl_rows:
+            key=r[0]; reg=key.split("|")[-1] if "|" in key else key
+            m=meta.get(reg,{})
+            hot_leads.append({"reg":reg, "name":m.get("name",""), "phone":m.get("phone",""),
+                              "income":m.get("income",0), "stage":r[1], "updated":r[2]})
+    except Exception as e:
+        print(f"  hot leads error: {e}")
+
+    # ══ FUNDRAISER: FOLLOW-UPS DUE (next 7 days + overdue) ════════════════════
+    due_rows = q(f"""SELECT reg_number, name, follow_up_at, caller, notes
+        FROM follow_ups WHERE done=0 {cal_filter}
+        ORDER BY follow_up_at ASC LIMIT 50""", cal_params) or []
+    followups_due = [{"reg":r[0], "name":r[1], "at":r[2], "caller":r[3], "notes":r[4] or "",
+                      "overdue": (r[2] or "") < today} for r in due_rows]
+
     return jsonify({
         "ok": True,
         "period": {"from": date_from, "to": date_to},
@@ -1078,6 +1175,9 @@ def api_report():
         "a_grade_calls": a_grade,
         "voicemail": voicemail,
         "no_answer": no_answer,
+        "connected": connected,
+        "interested": interested,
+        "clients_won": clients_won,
         "followups_set": followups,
         "newsletter_signups": newsletter,
         "outcome_breakdown": outcomes,
@@ -1085,6 +1185,21 @@ def api_report():
         "all_callers": all_callers,
         "list_caller": list_caller,
         "stage_totals": stages,
+        # CEO
+        "funnel": funnel,
+        "pipeline": pipeline,
+        "pipeline_total_value": pipeline_total_value,
+        "pipeline_pct": PIPELINE_PCT,
+        # COO
+        "daily_trend": daily_trend,
+        "by_hour": by_hour,
+        "followup_total": fu_total,
+        "followup_done": fu_done,
+        "followup_overdue": fu_overdue,
+        "followup_completion": fu_completion,
+        # Fundraiser
+        "hot_leads": hot_leads,
+        "followups_due": followups_due,
     })
 
 @app.route("/api/newsletter/bulk", methods=["GET"])
