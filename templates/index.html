@@ -907,7 +907,19 @@ select:focus{outline:none;border-color:var(--green)}
     <!-- ===== OVERVIEW VIEW ===== -->
     <div class="rpt-view" id="rpt-view-overview">
     <!-- KPI cards -->
-    <div id="rpt-kpis" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:14px;margin-bottom:28px"></div>
+    <div id="rpt-kpis" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:14px;margin-bottom:24px"></div>
+
+    <!-- AI Coaching (prominent, on overview) -->
+    <div style="margin-bottom:24px;background:linear-gradient(135deg,#f5f0ff,#eef4ff);border-radius:12px;padding:22px;border:1px solid #d9d0f0">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:6px">
+        <div>
+          <h3 style="font-size:16px;font-weight:800;color:#5a4fbf;margin-bottom:2px">🧠 AI Performance Coach</h3>
+          <p style="font-size:12px;color:var(--t3);margin:0">AI coaching for the selected caller(s) &amp; date range — strengths, fixes, and which charity types convert best.</p>
+        </div>
+        <button class="btn btn-sm" style="background:#5a4fbf;color:#fff;font-size:14px;padding:9px 18px" onclick="runAiCoach()">✨ Generate Coaching</button>
+      </div>
+      <div id="rpt-coach-output" style="font-size:13px;line-height:1.6"></div>
+    </div>
 
     <!-- Charts row 1 -->
     <div style="display:grid;grid-template-columns:1fr 1.4fr;gap:24px;margin-bottom:24px">
@@ -967,18 +979,6 @@ select:focus{outline:none;border-color:var(--green)}
       <div style="margin-top:28px">
         <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">⏰ Follow-up Timeliness</h3>
         <div id="rpt-fu-timeliness"></div>
-      </div>
-
-      <!-- AI Coaching -->
-      <div style="margin-top:28px;background:linear-gradient(135deg,#f5f0ff,#eef4ff);border-radius:12px;padding:24px;border:1px solid #d9d0f0">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px">
-          <div>
-            <h3 style="font-size:15px;font-weight:800;color:#5a4fbf;margin-bottom:2px">🧠 AI Performance Coach</h3>
-            <p style="font-size:12px;color:var(--t3);margin:0">Get AI-generated coaching for the selected caller(s) and date range — strengths, areas to improve, and concrete actions.</p>
-          </div>
-          <button class="btn btn-sm" style="background:#5a4fbf;color:#fff" onclick="runAiCoach()">✨ Generate Coaching</button>
-        </div>
-        <div id="rpt-coach-output" style="font-size:13px;line-height:1.6"></div>
       </div>
     </div>
 
@@ -1890,10 +1890,27 @@ function runAiCoach(){
     body:JSON.stringify({callers,from,to})})
     .then(r=>r.json()).then(d=>{
       if(!d.ok){ out.innerHTML='<div style="color:#c0392b;padding:12px 0">⚠ '+esc(d.error||'Coaching failed')+'</div>'; return; }
+      let typeHtml='';
+      const types=d.charity_types||[];
+      if(types.length){
+        typeHtml='<div style="background:#fff;border-radius:8px;padding:16px;margin-top:12px">'+
+          '<div style="font-size:12px;font-weight:800;color:#5a4fbf;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">📊 Which Charity Types Convert Best</div>'+
+          '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'+
+          '<thead><tr style="text-align:left;color:var(--t3)"><th style="padding:5px 8px">Charity Type</th><th style="padding:5px 8px">Calls</th><th style="padding:5px 8px">Positive %</th><th style="padding:5px 8px">Meetings</th></tr></thead><tbody>'+
+          types.map(t=>{
+            const barColor=t.rate>=50?'#1d7a3a':t.rate>=30?'#e8b339':'#c0392b';
+            return '<tr style="border-top:1px solid var(--bd)">'+
+              '<td style="padding:5px 8px;font-weight:600">'+esc(t.type)+'</td>'+
+              '<td style="padding:5px 8px">'+t.calls+'</td>'+
+              '<td style="padding:5px 8px"><span style="display:inline-block;min-width:36px">'+t.rate+'%</span>'+
+              '<span style="display:inline-block;width:60px;height:6px;background:#eee;border-radius:3px;vertical-align:middle;margin-left:4px"><span style="display:inline-block;height:6px;border-radius:3px;background:'+barColor+';width:'+t.rate+'%"></span></span></td>'+
+              '<td style="padding:5px 8px">'+t.meetings+'</td></tr>';
+          }).join('')+'</tbody></table></div></div>';
+      }
       out.innerHTML='<div style="background:#fff;border-radius:8px;padding:20px;margin-top:8px">'+
         '<div style="font-size:12px;color:var(--t3);margin-bottom:12px">Coaching for <b>'+esc(d.who)+'</b> · '+
         d.stats.total+' calls · '+d.stats.connect_rate+'% connect rate · '+d.stats.meetings+' meetings</div>'+
-        mdToHtml(d.coaching)+'</div>';
+        mdToHtml(d.coaching)+'</div>'+typeHtml;
     }).catch(e=>{ out.innerHTML='<div style="color:#c0392b;padding:12px 0">⚠ '+esc(e.message)+'</div>'; });
 }
 // Lightweight markdown → HTML (bold, headings, lists)

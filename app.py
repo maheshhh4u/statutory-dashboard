@@ -919,11 +919,40 @@ def ai_coach():
     meeting_rate = round(meetings/total*100) if total else 0
 
     # Sample recent call notes (for qualitative insight, trimmed)
-    note_rows = db_query(f"SELECT outcome, duration_sec, notes {base} AND notes!='' ORDER BY id DESC LIMIT 15", bp) or []
+    note_rows = db_query(f"SELECT outcome, duration_sec, notes {base} AND notes!='' ORDER BY id DESC LIMIT 12", bp) or []
     note_lines = []
     for r in note_rows:
         dur = f"{int((r[1] or 0)//60)}m{int((r[1] or 0)%60)}s"
-        note_lines.append(f"  [{r[0]}, {dur}] {str(r[2])[:200]}")
+        note_lines.append(f"  [{r[0]}, {dur}] {str(r[2])[:160]}")
+
+    # ── Charity-TYPE success analysis (what/who/how → outcome) ─────────────────
+    # For every call, look up the charity's classification, then tally positive outcomes
+    # by charity "what" category to see which types convert best.
+    POSITIVE = ('Connected','Interested','Meeting secured')
+    type_stats = {}  # what-category → {calls, positive, meetings}
+    try:
+        call_regs = db_query(f"SELECT reg_number, outcome {base}", bp) or []
+        for reg, oc in call_regs:
+            cls = get_charity_classification(str(reg))
+            whats = [w.strip() for w in (cls.get("what","") or "").split(",") if w.strip()]
+            if not whats: whats = ["(unclassified)"]
+            for w in whats:
+                if w not in type_stats: type_stats[w] = {"calls":0,"positive":0,"meetings":0}
+                type_stats[w]["calls"] += 1
+                if oc in POSITIVE: type_stats[w]["positive"] += 1
+                if oc == "Meeting secured": type_stats[w]["meetings"] += 1
+    except Exception as e:
+        print(f"  charity-type analysis error: {e}")
+    # Build a ranked summary (only types with >=2 calls, sorted by positive rate)
+    type_ranked = []
+    for w, s in type_stats.items():
+        if s["calls"] >= 2:
+            rate = round(s["positive"]/s["calls"]*100)
+            type_ranked.append({"type":w, "calls":s["calls"], "positive":s["positive"],
+                                "meetings":s["meetings"], "rate":rate})
+    type_ranked.sort(key=lambda x: (-x["rate"], -x["calls"]))
+    type_lines = [f"  {t['type']}: {t['calls']} calls, {t['rate']}% positive, {t['meetings']} meetings"
+                  for t in type_ranked[:12]]
 
     stats_block = (
         f"CALLER(S): {who}\n"
@@ -942,28 +971,29 @@ def ai_coach():
         f"  Voicemail: {voicemail}\n"
         f"  No answer: {noans}\n"
         + "\n".join(outcome_lines) + "\n\n"
+        + ("CHARITY-TYPE SUCCESS (which charity categories respond best — ranked by positive rate):\n"
+           + "\n".join(type_lines) + "\n\n" if type_lines else "")
         + ("RECENT CALL NOTES (sample):\n" + "\n".join(note_lines) if note_lines else "")
     )
 
     system_prompt = (
-        "You are an experienced sales coach and call-centre performance analyst specialising in "
-        "charity-sector fundraising and outbound prospecting. " + NINEM_PITCH + " "
-        "You are reviewing a caller's outbound calling performance to help them improve. "
-        "Be specific, constructive, encouraging and practical — like a supportive manager doing a 1:1. "
-        "Base every observation on the actual numbers and notes provided; do not invent data. "
-        "Where the data suggests a problem, explain the likely cause and give a concrete, actionable fix. "
-        "Use UK English. Keep it scannable."
+        "You are an experienced sales coach for charity-sector outbound prospecting. " + NINEM_PITCH + " "
+        "You are reviewing a caller's performance to help them improve. "
+        "Be specific, constructive and practical — like a supportive manager. "
+        "Base every observation on the actual numbers provided; do not invent data. "
+        "Be CONCISE — short punchy sentences, no padding. Use UK English."
     )
     user_prompt = (
-        "Review this caller's performance data and write a coaching report.\n\n"
+        "Review this performance data and write a SHORT, scannable coaching report. "
+        "Keep the whole thing tight — aim for brevity over completeness.\n\n"
         f"{stats_block}\n\n"
-        "Structure it with these exact headings:\n"
-        "**Overall summary** — 2-3 sentences: how are they doing overall, headline strengths and the single biggest opportunity.\n"
-        "**What's working well** — 2-4 specific positives grounded in the numbers.\n"
-        "**Areas to improve** — 2-4 specific issues the data reveals (e.g. low connect rate, many very-short calls, low conversation-to-meeting ratio), each with the likely cause.\n"
-        "**Concrete actions for next week** — 3-5 specific, practical things to do differently, tied to the issues above.\n"
-        "**Benchmark context** — briefly note where these numbers sit vs typical outbound charity prospecting (e.g. a healthy connect rate is ~25-40%, a good conversation length is 3-5min) so they have context.\n"
-        "**Encouragement** — one genuine, motivating closing line.\n"
+        "Use these exact headings, each with 1-3 short bullet points (not paragraphs):\n"
+        "**Summary** — 1-2 sentences: overall verdict + biggest opportunity.\n"
+        "**Strengths** — up to 3 bullets, grounded in numbers.\n"
+        "**Improve** — up to 3 bullets: the key issues + a one-line fix each.\n"
+        "**Best charity types** — 1-2 bullets: which charity categories convert best for this caller (from the charity-type data) and what to call more of.\n"
+        "**Do next week** — up to 3 concrete bullet actions.\n"
+        "Keep each bullet under 20 words.\n"
     )
 
     try:
@@ -973,7 +1003,7 @@ def ai_coach():
             json={"model": OPENAI_MODEL,
                   "messages": [{"role": "system", "content": system_prompt},
                                {"role": "user", "content": user_prompt}],
-                  "temperature": 0.7, "max_tokens": 1100},
+                  "temperature": 0.6, "max_tokens": 650},
             timeout=60)
         if resp.status_code != 200:
             return jsonify({"ok": False, "error": f"OpenAI error {resp.status_code}: {resp.text[:200]}"}), 502
@@ -982,6 +1012,7 @@ def ai_coach():
         if not coaching:
             return jsonify({"ok": False, "error": "Empty response from OpenAI"}), 502
         return jsonify({"ok": True, "coaching": coaching, "who": who,
+                        "charity_types": type_ranked[:8],
                         "stats": {"total": total, "connect_rate": connect_rate,
                                   "conv_rate": conv_rate, "meetings": meetings, "avg_dur": avg_dur}})
     except Exception as e:
