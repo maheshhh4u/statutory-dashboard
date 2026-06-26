@@ -1430,6 +1430,7 @@ function openCallModal(pg,reg,name,ccPhone){
       <option value="Wrong Number">⚠ Wrong Number</option>
       <option value="Busy">⏱ Busy</option>
       <option value="Line Dropped">📴 Line Dropped</option>
+      <option value="Email Sent Follow Up">✉ Email Sent Follow Up</option>
       <option value="Not Interested">✗ Not Interested</option>
       <option value="Interested">★ Interested — Follow Up</option>
     </select>
@@ -2197,18 +2198,64 @@ function showCommentHistory(reg){
           ?'<span style="background:#dcfce7;color:#166534;font-size:10px;padding:2px 6px;border-radius:3px;font-weight:600">📒 MAXIMIZER</span>'
           :'<span style="background:#dbeafe;color:#1e40af;font-size:10px;padding:2px 6px;border-radius:3px;font-weight:600">💻 DASHBOARD</span>';
         const syncStatus=isMx?'':(h.synced?'<span style="color:var(--green);font-size:10px;margin-left:6px">✓ Synced</span>':'<span style="color:var(--t3);font-size:10px;margin-left:6px">⊘ Not synced</span>');
-        html+=`<div style="border:1px solid var(--bd);border-radius:6px;padding:10px;margin-bottom:8px;background:#fafafa">
+        // Dashboard notes (with an id) are editable; Maximizer notes are not.
+        const editBtn=(!isMx && h.id)
+          ?`<button onclick="editNote(${h.id},'${esc(reg)}',this)" title="Edit this note" style="background:none;border:none;cursor:pointer;color:#1e40af;font-size:11px;padding:2px 4px">✏️ Edit</button>`
+          :'';
+        html+=`<div style="border:1px solid var(--bd);border-radius:6px;padding:10px;margin-bottom:8px;background:#fafafa" data-note-id="${h.id||''}">
           <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--t3);margin-bottom:5px;gap:8px;flex-wrap:wrap">
             <span><strong>${esc(h.caller||'Unknown')}</strong> · ${esc(h.timestamp||'')}</span>
-            <span>${badge}${syncStatus}</span>
+            <span>${badge}${syncStatus}${editBtn}</span>
           </div>
-          <div style="font-size:13px;color:var(--t1);white-space:pre-wrap">${esc(h.text||'')}</div>
+          <div class="note-text" style="font-size:13px;color:var(--t1);white-space:pre-wrap">${esc(h.text||'')}</div>
         </div>`;
       });
     }
     html+=`</div>`;
     showModal('📜 History — Reg '+esc(reg), html);
   });
+}
+
+function editNote(noteId, reg, btn){
+  const card=btn.closest('[data-note-id]');
+  if(!card) return;
+  const textDiv=card.querySelector('.note-text');
+  if(!textDiv) return;
+  const cur=textDiv.textContent;
+  // Replace the text with an editable textarea + Save/Cancel
+  const wrap=document.createElement('div');
+  wrap.innerHTML=`
+    <textarea class="note-edit-ta" style="width:100%;min-height:60px;padding:7px;border:1px solid var(--gold);border-radius:4px;font-family:inherit;font-size:13px;box-sizing:border-box">${esc(cur)}</textarea>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="note-save-btn" style="background:var(--green);color:#fff;border:none;border-radius:4px;padding:4px 12px;font-size:12px;cursor:pointer">Save</button>
+      <button class="note-cancel-btn" style="background:#fff;border:1px solid var(--bd);border-radius:4px;padding:4px 12px;font-size:12px;cursor:pointer">Cancel</button>
+    </div>`;
+  textDiv.style.display='none';
+  textDiv.after(wrap);
+  btn.style.display='none';
+  const ta=wrap.querySelector('.note-edit-ta');
+  ta.focus();
+  wrap.querySelector('.note-cancel-btn').onclick=()=>{
+    wrap.remove(); textDiv.style.display=''; btn.style.display='';
+  };
+  wrap.querySelector('.note-save-btn').onclick=()=>{
+    const newText=ta.value.trim();
+    if(!newText){ alert('Note cannot be empty.'); return; }
+    const saveBtn=wrap.querySelector('.note-save-btn');
+    saveBtn.disabled=true; saveBtn.textContent='Saving…';
+    fetch('/api/comment/edit',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:noteId,text:newText})})
+      .then(r=>r.json()).then(d=>{
+        if(!d.ok){ alert('Edit failed: '+(d.error||'unknown')); saveBtn.disabled=false; saveBtn.textContent='Save'; return; }
+        textDiv.textContent=newText;
+        wrap.remove(); textDiv.style.display=''; btn.style.display='';
+        // Update the in-memory current comment if this charity's box is showing
+        const k='calling|'+reg;
+        if(typeof comments!=='undefined' && comments[k]!==undefined){
+          // don't overwrite the live comment box; just refresh state silently
+        }
+      }).catch(e=>{ alert('Edit failed: '+e.message); saveBtn.disabled=false; saveBtn.textContent='Save'; });
+  };
 }
 
 function minimizeCallWindow(){

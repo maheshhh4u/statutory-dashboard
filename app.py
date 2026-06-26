@@ -1995,18 +1995,35 @@ def call_history():
         for r in rows
     ]})
 
+@app.route("/api/comment/edit", methods=["POST"])
+def comment_edit():
+    """Edit an existing dashboard comment_history note. Maximizer notes cannot be edited."""
+    data = request.json or {}
+    note_id = data.get("id")
+    new_text = str(data.get("text", "")).strip()
+    if not note_id:
+        return jsonify({"ok": False, "error": "Missing note id"}), 400
+    if not new_text:
+        return jsonify({"ok": False, "error": "Note text cannot be empty"}), 400
+    # Verify the note exists and is a dashboard note (has an id in our table)
+    row = db_query("SELECT reg_number FROM comment_history WHERE id=?", (note_id,))
+    if not row:
+        return jsonify({"ok": False, "error": "Note not found"}), 404
+    # Mark as not-synced since the text changed (so it re-syncs to Maximizer)
+    db_exec("UPDATE comment_history SET text=?, synced_to_maximizer=0 WHERE id=?", (new_text[:2000], note_id))
+    return jsonify({"ok": True})
+
 @app.route("/api/comment/history")
 def comment_history():
-    """Get all past comments for a charity from both dashboard DB and Maximizer Notes."""
     import re as _re
     reg = str(request.args.get("reg","")).strip()
     if not reg: return jsonify({"history": []})
 
     # Local DB history
-    rows = db_query("SELECT text, caller, timestamp, synced_to_maximizer FROM comment_history WHERE reg_number=? ORDER BY id DESC", (reg,))
+    rows = db_query("SELECT id, text, caller, timestamp, synced_to_maximizer FROM comment_history WHERE reg_number=? ORDER BY id DESC", (reg,))
     local = [
-        {"text": r[0], "caller": r[1], "timestamp": r[2],
-         "synced": bool(r[3]), "source": "dashboard"}
+        {"id": r[0], "text": r[1], "caller": r[2], "timestamp": r[3],
+         "synced": bool(r[4]), "source": "dashboard"}
         for r in rows
     ]
 
