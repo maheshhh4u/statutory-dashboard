@@ -107,8 +107,11 @@ def db_init():
             follow_up_at TEXT,
             caller TEXT, notes TEXT,
             created_at TEXT,
-            done INTEGER DEFAULT 0
+            done INTEGER DEFAULT 0,
+            completed_at TEXT
         )""")
+        try: client.execute("ALTER TABLE follow_ups ADD COLUMN completed_at TEXT")
+        except Exception: pass
         client.execute("CREATE INDEX IF NOT EXISTS idx_fu_at ON follow_ups(follow_up_at)")
         # Persisted Daily Calling batch (a fixed set of 100, stable until regenerated)
         client.execute("""CREATE TABLE IF NOT EXISTS calling_batch (
@@ -1162,6 +1165,13 @@ def api_report():
     followups_due = [{"reg":r[0], "name":r[1], "at":r[2], "caller":r[3], "notes":r[4] or "",
                       "overdue": (r[2] or "") < today} for r in due_rows]
 
+    # ══ FUNDRAISER: COMPLETED FOLLOW-UPS (successful) ═════════════════════════
+    done_rows = q(f"""SELECT reg_number, name, follow_up_at, caller, notes, completed_at
+        FROM follow_ups WHERE done=1 {cal_filter}
+        ORDER BY completed_at DESC LIMIT 50""", cal_params) or []
+    followups_completed = [{"reg":r[0], "name":r[1], "at":r[2], "caller":r[3],
+                            "notes":r[4] or "", "completed_at": r[5] or ""} for r in done_rows]
+
     return jsonify({
         "ok": True,
         "period": {"from": date_from, "to": date_to},
@@ -1200,6 +1210,7 @@ def api_report():
         # Fundraiser
         "hot_leads": hot_leads,
         "followups_due": followups_due,
+        "followups_completed": followups_completed,
     })
 
 @app.route("/api/newsletter/bulk", methods=["GET"])
@@ -1489,8 +1500,22 @@ def followup_done():
     """Mark a follow-up as completed (so it drops off the scheduled list)."""
     data = request.json or {}
     fid = data.get("id")
+    done = data.get("done", True)
     if not fid: return jsonify({"ok": False}), 400
-    db_exec("UPDATE follow_ups SET done=1 WHERE id=?", (fid,))
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    if done:
+        db_exec("UPDATE follow_ups SET done=1, completed_at=? WHERE id=?", (ts, fid))
+    else:
+        db_exec("UPDATE follow_ups SET done=0, completed_at=NULL WHERE id=?", (fid,))
+    return jsonify({"ok": True})
+
+@app.route("/api/followup/delete", methods=["POST"])
+def followup_delete():
+    """Permanently delete a follow-up (e.g. created during testing)."""
+    data = request.json or {}
+    fid = data.get("id")
+    if not fid: return jsonify({"ok": False, "error": "Missing id"}), 400
+    db_exec("DELETE FROM follow_ups WHERE id=?", (fid,))
     return jsonify({"ok": True})
 
 # ── Email sending (SMTP) ──────────────────────────────────────────────────────

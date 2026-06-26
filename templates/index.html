@@ -96,7 +96,7 @@ h1,h2,h3,h4,.brand-font{font-family:'Montserrat','Inter',sans-serif;letter-spaci
 .rpt-view-btn{background:none;border:none;padding:10px 16px;font-size:13px;font-weight:600;color:var(--t3);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;font-family:inherit;white-space:nowrap}
 .rpt-view-btn:hover{color:var(--navy)}
 .rpt-view-btn.active{color:var(--navy);border-bottom-color:var(--gold)}
-@media print{.nav,.filter-bar,.rpt-view-btn,.ctrl-right,.btn{display:none !important}.rpt-view{display:block !important}#rpt-view-overview,#rpt-view-ceo,#rpt-view-coo,#rpt-view-fundraiser{display:none !important}#rpt-view-client{display:block !important}}
+@media print{.nav,.filter-bar,.rpt-view-btn,.ctrl-right,.btn{display:none !important}}
 .filter-bar input,.filter-bar select{font-family:inherit;font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text)}
 .filter-bar input:focus,.filter-bar select:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(30,58,95,.10)}
 .filter-label{font-size:11px;color:var(--t3);font-weight:600;white-space:nowrap}
@@ -899,10 +899,9 @@ select:focus{outline:none;border-color:var(--green)}
     <!-- View switcher -->
     <div style="display:flex;gap:6px;margin-bottom:20px;border-bottom:2px solid var(--bd);flex-wrap:wrap">
       <button class="rpt-view-btn active" data-view="overview" onclick="switchRptView('overview',this)">📊 Overview</button>
-      <button class="rpt-view-btn" data-view="ceo" onclick="switchRptView('ceo',this)">👔 CEO — Funnel &amp; Pipeline</button>
-      <button class="rpt-view-btn" data-view="coo" onclick="switchRptView('coo',this)">⚙️ COO — Efficiency</button>
-      <button class="rpt-view-btn" data-view="fundraiser" onclick="switchRptView('fundraiser',this)">🎯 Fundraiser — Hot Leads</button>
-      <button class="rpt-view-btn" data-view="client" onclick="switchRptView('client',this)">🤝 Client Summary</button>
+      <button class="rpt-view-btn" data-view="ceo" onclick="switchRptView('ceo',this)">📈 Funnel &amp; Pipeline</button>
+      <button class="rpt-view-btn" data-view="coo" onclick="switchRptView('coo',this)">⚙️ Efficiency</button>
+      <button class="rpt-view-btn" data-view="fundraiser" onclick="switchRptView('fundraiser',this)">🎯 Hot Leads</button>
     </div>
 
     <!-- ===== OVERVIEW VIEW ===== -->
@@ -967,17 +966,13 @@ select:focus{outline:none;border-color:var(--green)}
         <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">🔥 Hot Leads — Interested &amp; Meetings (act on these first)</h3>
         <div id="rpt-hot-leads"></div>
       </div>
-      <div>
+      <div style="margin-bottom:28px">
         <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">📅 Follow-ups Due (overdue shown in red)</h3>
         <div id="rpt-followups-due"></div>
       </div>
-    </div>
-
-    <!-- ===== CLIENT VIEW ===== -->
-    <div class="rpt-view" id="rpt-view-client" style="display:none">
-      <div id="rpt-client-summary"></div>
-      <div style="text-align:center;margin-top:20px">
-        <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="window.print()">🖨️ Print / Save as PDF</button>
+      <div>
+        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">✅ Completed Follow-ups (successful)</h3>
+        <div id="rpt-followups-completed"></div>
       </div>
     </div>
 
@@ -1737,7 +1732,7 @@ function renderReportTail(d, promoEmails){
     '</div></div>';
   // Store for view switching + render the currently-active view's extra dashboards
   window._lastReport=d; window._lastPromo=promoEmails;
-  renderCeoView(d); renderCooView(d); renderFundraiserView(d); renderClientView(d, promoEmails);
+  renderCeoView(d); renderCooView(d); renderFundraiserView(d);
 }
 
 function switchRptView(view, btn){
@@ -1856,32 +1851,15 @@ function renderFundraiserView(d){
       '<div style="text-align:right;font-size:12px"><div style="font-weight:600">'+esc((f.at||'').slice(0,16))+'</div><div style="font-size:10px;color:var(--t3)">'+esc(f.caller||'')+'</div></div>'+
       '</div>').join('')
     :'<div style="color:var(--t3);font-size:12px">No follow-ups scheduled.</div>';
-}
 
-// ══ CLIENT VIEW ═══════════════════════════════════════════════════════════════
-function renderClientView(d, promoEmails){
-  const fmtGBP=n=>'£'+Math.round(n||0).toLocaleString();
-  document.getElementById('rpt-client-summary').innerHTML=
-    '<div style="max-width:780px;margin:0 auto;background:#fff;border-radius:12px;padding:40px;box-shadow:0 2px 16px rgba(0,0,0,.08)">'+
-    '<div style="text-align:center;border-bottom:3px solid #e8b339;padding-bottom:20px;margin-bottom:28px">'+
-    '<div style="font-size:22px;font-weight:800;color:#1e3a5f">9 Mountains</div>'+
-    '<div style="font-size:13px;color:var(--t3);margin-top:4px">Prospecting Activity Report</div>'+
-    '<div style="font-size:12px;color:var(--t3);margin-top:8px">'+esc(d.period.from)+' to '+esc(d.period.to)+'</div></div>'+
-    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:28px">'+
-    [['Calls Made',d.calls_made],['Conversations',d.conversations_2min],['Meaningful Interactions',d.meaningful_interactions],
-     ['Meetings Secured',d.meetings_booked],['Follow-ups Arranged',d.followups_set],['Newsletter Sign-ups',d.newsletter_signups]]
-      .map(([l,v])=>'<div style="text-align:center;padding:18px;background:#f8f9fb;border-radius:10px">'+
-        '<div style="font-size:34px;font-weight:800;color:#1e3a5f">'+v+'</div>'+
-        '<div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-top:4px">'+l+'</div></div>').join('')+
-    '</div>'+
-    '<div style="background:linear-gradient(135deg,#1d7a3a,#2a9e50);border-radius:10px;padding:24px;color:#fff;text-align:center;margin-bottom:24px">'+
-    '<div style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;opacity:.85">Qualified Pipeline Generated</div>'+
-    '<div style="font-size:38px;font-weight:800;margin-top:4px">'+fmtGBP(d.pipeline_total_value||0)+'</div>'+
-    '<div style="font-size:12px;opacity:.85;margin-top:4px">'+d.interested+' interested prospects · '+d.meetings_booked+' meetings booked</div></div>'+
-    '<div style="font-size:11px;color:var(--t3);text-align:center;line-height:1.6">'+
-    'This report summarises outbound prospecting activity carried out on your behalf during the period shown. '+
-    'Pipeline value is an indicative estimate based on prospect organisation size.</div>'+
-    '</div>';
+  const done=d.followups_completed||[];
+  document.getElementById('rpt-followups-completed').innerHTML=done.length?
+    done.map(f=>'<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#eef9f1;border:1px solid #b8e0c2;border-radius:8px;margin-bottom:6px">'+
+      '<div><div style="font-weight:600;font-size:13px">✓ '+esc(f.name||f.reg)+'</div>'+
+      (f.notes?'<div style="font-size:11px;color:var(--t3);margin-top:2px">'+esc(f.notes.slice(0,80))+'</div>':'')+'</div>'+
+      '<div style="text-align:right;font-size:12px"><div style="font-weight:600;color:#1d7a3a">Done '+esc((f.completed_at||'').slice(0,16))+'</div><div style="font-size:10px;color:var(--t3)">'+esc(f.caller||'')+'</div></div>'+
+      '</div>').join('')
+    :'<div style="color:var(--t3);font-size:12px">No completed follow-ups in this period.</div>';
 }
 
 // ── Nav ────────────────────────────────────────────────────────────────────────
@@ -2916,13 +2894,22 @@ function loadScheduledCalls(){
         </span>
         <button class="btn btn-green btn-sm" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','')">📞 Call</button>
         <button class="btn btn-outline btn-sm" onclick="markFollowupDone(${f.id},this)">✓ Done</button>
+        <button class="btn btn-sm" style="background:#fff;border:1px solid #e0a0a0;color:#c0392b" onclick="deleteFollowup(${f.id})" title="Delete this follow-up">🗑</button>
       </div>`;
     }).join('');
   }).catch(()=>{ wrap.style.display='none'; });
 }
 function markFollowupDone(id,btn){
   fetch('/api/followup/done',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({id})}).then(()=>{ loadScheduledCalls(); if(document.getElementById('cal-grid')) renderCalendar(); });
+    body:JSON.stringify({id,done:true})}).then(()=>{ loadScheduledCalls(); if(document.getElementById('cal-grid')) renderCalendar(); });
+}
+function deleteFollowup(id){
+  if(!confirm('Delete this follow-up call permanently? This cannot be undone.')) return;
+  fetch('/api/followup/delete',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id})}).then(r=>r.json()).then(d=>{
+      if(d.ok){ loadScheduledCalls(); if(document.getElementById('cal-grid')) renderCalendar(); }
+      else alert('Delete failed: '+(d.error||'unknown'));
+    }).catch(e=>alert('Delete failed: '+e.message));
 }
 
 // ── Call History viewer (date range + filters) ──────────────────────────────
@@ -3016,7 +3003,7 @@ function renderCalendar(){
       const dateStr=`${y}-${String(m+1).padStart(2,'0')}-${ds}`;
       const items=byDay[ds]||[];
       const isToday=dateStr===todayStr;
-      const evs=items.slice(0,3).map(f=>`<div title="${esc((f.name||'')+' '+(f.follow_up_at||''))}" style="font-size:9px;background:#e8b339;color:#1e3a5f;border-radius:3px;padding:1px 3px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','')">${esc((f.follow_up_at||'').slice(11,16))} ${esc((f.name||'').slice(0,12))}</div>`).join('');
+      const evs=items.slice(0,3).map(f=>`<div title="${esc((f.name||'')+' '+(f.follow_up_at||''))}" style="font-size:9px;background:#e8b339;color:#1e3a5f;border-radius:3px;padding:1px 3px;margin-top:2px;white-space:nowrap;display:flex;align-items:center;gap:2px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','')">${esc((f.follow_up_at||'').slice(11,16))} ${esc((f.name||'').slice(0,10))}</span><span style="cursor:pointer;color:#c0392b;font-weight:700;padding:0 2px" title="Delete" onclick="event.stopPropagation();deleteFollowup(${f.id})">✕</span></div>`).join('');
       const more=items.length>3?`<div style="font-size:9px;color:var(--t3)">+${items.length-3} more</div>`:'';
       cells+=`<div style="min-height:64px;border:1px solid var(--bd);padding:2px 3px;${isToday?'background:#fff8e6;border-color:#e8b339':''}">
         <div style="font-size:11px;font-weight:600;color:${isToday?'#b8860b':'var(--t2)'}">${day}</div>${evs}${more}</div>`;
