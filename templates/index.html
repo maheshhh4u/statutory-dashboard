@@ -907,27 +907,31 @@ select:focus{outline:none;border-color:var(--green)}
     <!-- ===== OVERVIEW VIEW ===== -->
     <div class="rpt-view" id="rpt-view-overview">
     <!-- KPI cards -->
-    <div id="rpt-kpis" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px;margin-bottom:28px"></div>
+    <div id="rpt-kpis" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:14px;margin-bottom:28px"></div>
 
-    <!-- Two-column detail -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
-      <div>
-        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Outcome Breakdown</h3>
-        <div id="rpt-outcomes"></div>
+    <!-- Charts row 1 -->
+    <div style="display:grid;grid-template-columns:1fr 1.4fr;gap:24px;margin-bottom:24px">
+      <div style="background:#fff;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.06)">
+        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:16px">Outcome Mix</h3>
+        <canvas id="rpt-outcome-chart" style="max-height:260px"></canvas>
       </div>
-      <div>
-        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Calls by List — Stacked by Caller</h3>
-        <canvas id="rpt-list-chart" style="max-height:220px"></canvas>
+      <div style="background:#fff;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.06)">
+        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:16px">Calls by List — Stacked by Caller</h3>
+        <canvas id="rpt-list-chart" style="max-height:260px"></canvas>
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px">
-      <div>
-        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Stage Totals (All Time)</h3>
-        <div id="rpt-stages"></div>
+    <!-- Charts row 2 -->
+    <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:24px">
+      <div style="background:#fff;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.06)">
+        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:16px">Stage Pipeline (All Time)</h3>
+        <canvas id="rpt-stage-chart" style="max-height:240px"></canvas>
       </div>
       <div id="rpt-summary-box"></div>
     </div>
+    <!-- hidden legacy containers (kept so JS refs don't break) -->
+    <div id="rpt-outcomes" style="display:none"></div>
+    <div id="rpt-stages" style="display:none"></div>
     </div>
 
     <!-- ===== CEO VIEW ===== -->
@@ -957,6 +961,24 @@ select:focus{outline:none;border-color:var(--green)}
           <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Best Time to Call (Connect Rate by Hour)</h3>
           <canvas id="rpt-hour-chart" style="max-height:240px"></canvas>
         </div>
+      </div>
+
+      <!-- Follow-up timeliness -->
+      <div style="margin-top:28px">
+        <h3 style="font-size:13px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">⏰ Follow-up Timeliness</h3>
+        <div id="rpt-fu-timeliness"></div>
+      </div>
+
+      <!-- AI Coaching -->
+      <div style="margin-top:28px;background:linear-gradient(135deg,#f5f0ff,#eef4ff);border-radius:12px;padding:24px;border:1px solid #d9d0f0">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+          <div>
+            <h3 style="font-size:15px;font-weight:800;color:#5a4fbf;margin-bottom:2px">🧠 AI Performance Coach</h3>
+            <p style="font-size:12px;color:var(--t3);margin:0">Get AI-generated coaching for the selected caller(s) and date range — strengths, areas to improve, and concrete actions.</p>
+          </div>
+          <button class="btn btn-sm" style="background:#5a4fbf;color:#fff" onclick="runAiCoach()">✨ Generate Coaching</button>
+        </div>
+        <div id="rpt-coach-output" style="font-size:13px;line-height:1.6"></div>
       </div>
     </div>
 
@@ -1664,16 +1686,26 @@ function renderReport(d, promoEmails){
     rptKpiCard('No Answer / Voicemail',   d.no_answer+d.voicemail,   d.no_answer+' no answer · '+d.voicemail+' voicemail',red),
   ].join('');
   const outcomes=d.outcome_breakdown||{};
-  const outTotal=Object.values(outcomes).reduce((a,b)=>a+b,0)||1;
-  document.getElementById('rpt-outcomes').innerHTML=Object.entries(outcomes)
-    .sort((a,b)=>b[1]-a[1]).map(([k,v])=>{
-      const pct=Math.round(v/outTotal*100);
-      return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span style="font-weight:600">'+esc(k||'(none)')+'</span><span>'+v+' <span style="color:var(--t3)">('+pct+'%)</span></span></div><div style="background:#eee;border-radius:4px;height:6px"><div style="background:var(--navy);border-radius:4px;height:6px;width:'+pct+'%"></div></div></div>';
-    }).join('')||'<div style="color:var(--t3);font-size:12px">No calls in this period.</div>';
+  // Outcome doughnut chart
   renderReportCharts(d);
   renderReportTail(d, promoEmails);
 }
 function renderReportCharts(d){
+  // Outcome doughnut chart
+  const outcomes=d.outcome_breakdown||{};
+  const ocEl=document.getElementById('rpt-outcome-chart');
+  if(ocEl && typeof Chart!=='undefined'){
+    if(ocEl._ci){ocEl._ci.destroy();ocEl._ci=null;}
+    const labels=Object.keys(outcomes), vals=Object.values(outcomes);
+    const ocolors={'Connected':'#1d7a3a','Interested':'#27ae60','Meeting secured':'#c89a1a',
+      'Not interested':'#95a5a6','Voicemail':'#5a4fbf','No Answer':'#c0392b','Line Dropped':'#e67e22'};
+    if(labels.length){
+      ocEl._ci=new Chart(ocEl,{type:'doughnut',
+        data:{labels,datasets:[{data:vals,backgroundColor:labels.map(l=>ocolors[l]||'#7f8c8d'),borderWidth:2,borderColor:'#fff'}]},
+        options:{responsive:true,cutout:'58%',plugins:{legend:{position:'right',labels:{boxWidth:12,font:{size:11},padding:8}},
+          tooltip:{callbacks:{label:c=>c.label+': '+c.parsed+' ('+Math.round(c.parsed/vals.reduce((a,b)=>a+b,0)*100)+'%)'}}}}});
+    }
+  }
   // Draw stacked bar chart for lists by caller
   const chartEl=document.getElementById('rpt-list-chart');
   if(chartEl){
@@ -1712,6 +1744,23 @@ function renderReportCharts(d){
   }
 }
 function renderReportTail(d, promoEmails){
+  // Stage pipeline bar chart
+  const stEl=document.getElementById('rpt-stage-chart');
+  if(stEl && typeof Chart!=='undefined'){
+    if(stEl._ci){stEl._ci.destroy();stEl._ci=null;}
+    const stages=d.stage_totals||[];
+    const order=['Contacted','Call back','Interested','Meeting secured','Not interested','Client'];
+    const scolors={'Contacted':'#3498db','Call back':'#9b59b6','Interested':'#27ae60',
+      'Meeting secured':'#c89a1a','Not interested':'#95a5a6','Client':'#1d7a3a'};
+    const sorted=stages.slice().sort((a,b)=>{const ia=order.indexOf(a.stage),ib=order.indexOf(b.stage);return (ia<0?99:ia)-(ib<0?99:ib);});
+    if(sorted.length){
+      stEl._ci=new Chart(stEl,{type:'bar',
+        data:{labels:sorted.map(s=>s.stage),datasets:[{label:'Charities',data:sorted.map(s=>s.count),
+          backgroundColor:sorted.map(s=>scolors[s.stage]||'#7f8c8d'),borderRadius:6}]},
+        options:{responsive:true,indexAxis:'y',plugins:{legend:{display:false}},
+          scales:{x:{beginAtZero:true,ticks:{stepSize:1,precision:0}}}}});
+    }
+  }
   document.getElementById('rpt-stages').innerHTML=(d.stage_totals||[]).map(s=>
     '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--bd);font-size:12px"><span style="font-weight:600">'+esc(s.stage)+'</span><span style="color:var(--t3)">'+s.count+'</span></div>'
   ).join('')||'<div style="color:var(--t3);font-size:12px">No stages set.</div>';
@@ -1744,7 +1793,8 @@ function switchRptView(view, btn){
   // Charts need a re-draw when their container becomes visible
   if(window._lastReport){
     if(view==='coo') renderCooView(window._lastReport);
-    if(view==='overview') renderReportCharts(window._lastReport);
+    if(view==='overview'){ renderReportCharts(window._lastReport); renderReportTail(window._lastReport, window._lastPromo); }
+    if(view==='ceo') renderCeoView(window._lastReport);
   }
 }
 
@@ -1811,20 +1861,57 @@ function renderCooView(d){
                   y1:{beginAtZero:true,max:100,position:'right',grid:{drawOnChartArea:false},title:{display:true,text:'Connect %'}}}}});
     }
   }
-  // Best time of day chart
-  const hEl=document.getElementById('rpt-hour-chart');
-  if(hEl && typeof Chart!=='undefined'){
-    if(hEl._ci){hEl._ci.destroy();hEl._ci=null;}
-    const h=d.by_hour||[];
-    if(h.length){
-      hEl._ci=new Chart(hEl,{type:'bar',data:{labels:h.map(x=>x.hour+':00'),
-        datasets:[{label:'Connect Rate %',data:h.map(x=>x.connect_rate),
-          backgroundColor:h.map(x=>x.connect_rate>=50?'#1d7a3a':x.connect_rate>=30?'#e8b339':'#c0392b')}]},
-        options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{afterLabel:c=>h[c.dataIndex].calls+' calls'}}},
-          scales:{y:{beginAtZero:true,max:100,title:{display:true,text:'Connect %'}}}}});
+  // Follow-up timeliness
+  const te=document.getElementById('rpt-fu-timeliness');
+  if(te){
+    const onTime=d.fu_ontime||0, late=d.fu_late||0, avgLate=d.fu_avg_late||0, tot=onTime+late;
+    if(tot>0){
+      const pctOnTime=Math.round(onTime/tot*100);
+      te.innerHTML='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">'+
+        rptKpiCard('On-time Follow-ups', onTime+' ('+pctOnTime+'%)', 'Called on or before due date', '#1d7a3a')+
+        rptKpiCard('Late Follow-ups', late, 'Called after the due date', late>0?'#c0392b':'#1d7a3a')+
+        rptKpiCard('Avg Days Late', avgLate, 'Across completed follow-ups', avgLate>2?'#c0392b':avgLate>0?'#e8b339':'#1d7a3a')+
+        '</div>';
+    } else {
+      te.innerHTML='<div style="color:var(--t3);font-size:12px">No completed follow-ups yet in this period.</div>';
     }
   }
 }
+
+// ══ AI PERFORMANCE COACH ══════════════════════════════════════════════════════
+function runAiCoach(){
+  const from=(document.getElementById('rpt-from')||{}).value||'';
+  const to=(document.getElementById('rpt-to')||{}).value||'';
+  const callers=getSelectedCallers();
+  if(!from||!to){ alert('Please select a date range first.'); return; }
+  const out=document.getElementById('rpt-coach-output');
+  out.innerHTML='<div style="color:#5a4fbf;padding:16px 0">🧠 Analysing call performance… this may take 10-20 seconds.</div>';
+  fetch('/api/ai/coach',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({callers,from,to})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ out.innerHTML='<div style="color:#c0392b;padding:12px 0">⚠ '+esc(d.error||'Coaching failed')+'</div>'; return; }
+      out.innerHTML='<div style="background:#fff;border-radius:8px;padding:20px;margin-top:8px">'+
+        '<div style="font-size:12px;color:var(--t3);margin-bottom:12px">Coaching for <b>'+esc(d.who)+'</b> · '+
+        d.stats.total+' calls · '+d.stats.connect_rate+'% connect rate · '+d.stats.meetings+' meetings</div>'+
+        mdToHtml(d.coaching)+'</div>';
+    }).catch(e=>{ out.innerHTML='<div style="color:#c0392b;padding:12px 0">⚠ '+esc(e.message)+'</div>'; });
+}
+// Lightweight markdown → HTML (bold, headings, lists)
+function mdToHtml(md){
+  if(!md) return '';
+  let h=esc(md);
+  h=h.replace(/\*\*(.+?)\*\*/g,'<strong style="color:#1e3a5f">$1</strong>');
+  h=h.replace(/^### (.+)$/gm,'<h4 style="margin:14px 0 6px;color:#5a4fbf">$1</h4>');
+  h=h.replace(/^## (.+)$/gm,'<h3 style="margin:16px 0 8px;color:#5a4fbf">$1</h3>');
+  // bullet lists
+  h=h.replace(/^[-*] (.+)$/gm,'<li style="margin-bottom:4px">$1</li>');
+  h=h.replace(/(<li[\s\S]*?<\/li>)/g,m=>'<ul style="margin:6px 0 12px 18px;padding:0">'+m+'</ul>');
+  h=h.replace(/<\/ul>\s*<ul[^>]*>/g,'');
+  h=h.replace(/\n{2,}/g,'<br><br>').replace(/\n/g,'<br>');
+  h=h.replace(/<br>(<h[34]|<ul|<\/ul>)/g,'$1');
+  return h;
+}
+
 
 // ══ FUNDRAISER VIEW ═══════════════════════════════════════════════════════════
 function renderFundraiserView(d){
@@ -1854,11 +1941,15 @@ function renderFundraiserView(d){
 
   const done=d.followups_completed||[];
   document.getElementById('rpt-followups-completed').innerHTML=done.length?
-    done.map(f=>'<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#eef9f1;border:1px solid #b8e0c2;border-radius:8px;margin-bottom:6px">'+
-      '<div><div style="font-weight:600;font-size:13px">✓ '+esc(f.name||f.reg)+'</div>'+
+    done.map(f=>{
+      const dl=f.days_late||0;
+      const lateTag=dl>0?' <span style="color:#e67e22;font-size:11px">('+dl+' day'+(dl>1?'s':'')+' late)</span>':' <span style="color:#1d7a3a;font-size:11px">(on time)</span>';
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:'+(dl>0?'#fff8f0':'#eef9f1')+';border:1px solid '+(dl>0?'#f0d0a0':'#b8e0c2')+';border-radius:8px;margin-bottom:6px">'+
+      '<div><div style="font-weight:600;font-size:13px">✓ '+esc(f.name||f.reg)+lateTag+'</div>'+
       (f.notes?'<div style="font-size:11px;color:var(--t3);margin-top:2px">'+esc(f.notes.slice(0,80))+'</div>':'')+'</div>'+
-      '<div style="text-align:right;font-size:12px"><div style="font-weight:600;color:#1d7a3a">Done '+esc((f.completed_at||'').slice(0,16))+'</div><div style="font-size:10px;color:var(--t3)">'+esc(f.caller||'')+'</div></div>'+
-      '</div>').join('')
+      '<div style="text-align:right;font-size:12px"><div style="font-weight:600;color:#1d7a3a">Done '+esc((f.completed_at||'').slice(0,16))+'</div><div style="font-size:10px;color:var(--t3)">due '+esc((f.at||'').slice(0,10))+' · '+esc(f.caller||'')+'</div></div>'+
+      '</div>';
+    }).join('')
     :'<div style="color:var(--t3);font-size:12px">No completed follow-ups in this period.</div>';
 }
 

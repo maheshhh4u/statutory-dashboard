@@ -112,6 +112,8 @@ def db_init():
         )""")
         try: client.execute("ALTER TABLE follow_ups ADD COLUMN completed_at TEXT")
         except Exception: pass
+        try: client.execute("ALTER TABLE follow_ups ADD COLUMN days_late INTEGER")
+        except Exception: pass
         client.execute("CREATE INDEX IF NOT EXISTS idx_fu_at ON follow_ups(follow_up_at)")
         # Persisted Daily Calling batch (a fixed set of 100, stable until regenerated)
         client.execute("""CREATE TABLE IF NOT EXISTS calling_batch (
@@ -867,6 +869,124 @@ def _trim_transcript(text, limit=2200):
     tail = body[-1200:].split(" ", 1)[-1]
     return head + " …[middle of call omitted]… " + tail
 
+@app.route("/api/ai/coach", methods=["POST"])
+def ai_coach():
+    """Generate AI performance coaching for a caller based on their call history in a date range."""
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False,
+            "error": "AI is not configured. Add the OPENAI_API_KEY environment variable in Render."}), 400
+    data = request.json or {}
+    callers = [c.strip() for c in (data.get("callers") or []) if c.strip()]
+    date_from = str(data.get("from","")).strip()
+    date_to   = str(data.get("to","")).strip()
+    if not date_from or not date_to:
+        return jsonify({"ok": False, "error": "Missing date range"}), 400
+    ts_from = date_from + " 00:00:00"; ts_to = date_to + " 23:59:59"
+
+    # Build caller filter
+    if len(callers)==1:
+        cf = "AND caller=?"; cp = (callers[0],)
+    elif len(callers)>1:
+        ph=','.join(['?']*len(callers)); cf=f"AND caller IN ({ph})"; cp=tuple(callers)
+    else:
+        cf=""; cp=()
+    who = ", ".join(callers) if callers else "the team"
+
+    # Gather aggregate stats
+    base = f"FROM call_log WHERE timestamp>=? AND timestamp<=? {cf}"
+    bp = (ts_from, ts_to) + cp
+    def one(sql, p=bp):
+        r = db_query(sql, p); return (r or [[0]])[0][0]
+    total       = one(f"SELECT COUNT(*) {base}")
+    if not total:
+        return jsonify({"ok": False, "error": "No calls found for this caller and date range."}), 400
+    total_dur   = one(f"SELECT COALESCE(SUM(duration_sec),0) {base}")
+    conv2       = one(f"SELECT COUNT(*) {base} AND duration_sec>=120")
+    connected   = one(f"SELECT COUNT(*) {base} AND outcome IN ('Connected','Interested','Meeting secured','Not interested')")
+    meetings    = one(f"SELECT COUNT(*) {base} AND outcome='Meeting secured'")
+    interested  = one(f"SELECT COUNT(*) {base} AND outcome='Interested'")
+    notint      = one(f"SELECT COUNT(*) {base} AND outcome='Not interested'")
+    voicemail   = one(f"SELECT COUNT(*) {base} AND outcome='Voicemail'")
+    noans       = one(f"SELECT COUNT(*) {base} AND outcome='No Answer'")
+    # Outcome breakdown
+    outcome_rows = db_query(f"SELECT outcome, COUNT(*), COALESCE(AVG(duration_sec),0) {base} AND outcome!='' GROUP BY outcome", bp) or []
+    outcome_lines = [f"  {r[0]}: {r[1]} calls, avg {int(r[2]//60)}m{int(r[2]%60)}s" for r in outcome_rows]
+    # Duration distribution
+    very_short = one(f"SELECT COUNT(*) {base} AND duration_sec>0 AND duration_sec<30")
+    avg_dur = round(total_dur/total) if total else 0
+    connect_rate = round(connected/total*100) if total else 0
+    conv_rate = round(conv2/total*100) if total else 0
+    meeting_rate = round(meetings/total*100) if total else 0
+
+    # Sample recent call notes (for qualitative insight, trimmed)
+    note_rows = db_query(f"SELECT outcome, duration_sec, notes {base} AND notes!='' ORDER BY id DESC LIMIT 15", bp) or []
+    note_lines = []
+    for r in note_rows:
+        dur = f"{int((r[1] or 0)//60)}m{int((r[1] or 0)%60)}s"
+        note_lines.append(f"  [{r[0]}, {dur}] {str(r[2])[:200]}")
+
+    stats_block = (
+        f"CALLER(S): {who}\n"
+        f"PERIOD: {date_from} to {date_to}\n\n"
+        f"VOLUME & EFFICIENCY:\n"
+        f"  Total calls: {total}\n"
+        f"  Total talk time: {int(total_dur//3600)}h {int((total_dur%3600)//60)}m\n"
+        f"  Average call length: {avg_dur//60}m {avg_dur%60}s\n"
+        f"  Connect rate (someone answered): {connect_rate}% ({connected}/{total})\n"
+        f"  Conversations >2min: {conv_rate}% ({conv2}/{total})\n"
+        f"  Very short calls (<30s): {very_short}\n\n"
+        f"OUTCOMES:\n"
+        f"  Meetings secured: {meetings} ({meeting_rate}% of all calls)\n"
+        f"  Interested: {interested}\n"
+        f"  Not interested: {notint}\n"
+        f"  Voicemail: {voicemail}\n"
+        f"  No answer: {noans}\n"
+        + "\n".join(outcome_lines) + "\n\n"
+        + ("RECENT CALL NOTES (sample):\n" + "\n".join(note_lines) if note_lines else "")
+    )
+
+    system_prompt = (
+        "You are an experienced sales coach and call-centre performance analyst specialising in "
+        "charity-sector fundraising and outbound prospecting. " + NINEM_PITCH + " "
+        "You are reviewing a caller's outbound calling performance to help them improve. "
+        "Be specific, constructive, encouraging and practical — like a supportive manager doing a 1:1. "
+        "Base every observation on the actual numbers and notes provided; do not invent data. "
+        "Where the data suggests a problem, explain the likely cause and give a concrete, actionable fix. "
+        "Use UK English. Keep it scannable."
+    )
+    user_prompt = (
+        "Review this caller's performance data and write a coaching report.\n\n"
+        f"{stats_block}\n\n"
+        "Structure it with these exact headings:\n"
+        "**Overall summary** — 2-3 sentences: how are they doing overall, headline strengths and the single biggest opportunity.\n"
+        "**What's working well** — 2-4 specific positives grounded in the numbers.\n"
+        "**Areas to improve** — 2-4 specific issues the data reveals (e.g. low connect rate, many very-short calls, low conversation-to-meeting ratio), each with the likely cause.\n"
+        "**Concrete actions for next week** — 3-5 specific, practical things to do differently, tied to the issues above.\n"
+        "**Benchmark context** — briefly note where these numbers sit vs typical outbound charity prospecting (e.g. a healthy connect rate is ~25-40%, a good conversation length is 3-5min) so they have context.\n"
+        "**Encouragement** — one genuine, motivating closing line.\n"
+    )
+
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={"model": OPENAI_MODEL,
+                  "messages": [{"role": "system", "content": system_prompt},
+                               {"role": "user", "content": user_prompt}],
+                  "temperature": 0.7, "max_tokens": 1100},
+            timeout=60)
+        if resp.status_code != 200:
+            return jsonify({"ok": False, "error": f"OpenAI error {resp.status_code}: {resp.text[:200]}"}), 502
+        out = resp.json()
+        coaching = (out.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        if not coaching:
+            return jsonify({"ok": False, "error": "Empty response from OpenAI"}), 502
+        return jsonify({"ok": True, "coaching": coaching, "who": who,
+                        "stats": {"total": total, "connect_rate": connect_rate,
+                                  "conv_rate": conv_rate, "meetings": meetings, "avg_dur": avg_dur}})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"AI request failed: {str(e)[:200]}"}), 500
+
 @app.route("/api/ai/analyze", methods=["POST"])
 def ai_analyze():
     """Generate a pre-call sales briefing for a charity using OpenAI."""
@@ -1166,11 +1286,16 @@ def api_report():
                       "overdue": (r[2] or "") < today} for r in due_rows]
 
     # ══ FUNDRAISER: COMPLETED FOLLOW-UPS (successful) ═════════════════════════
-    done_rows = q(f"""SELECT reg_number, name, follow_up_at, caller, notes, completed_at
+    done_rows = q(f"""SELECT reg_number, name, follow_up_at, caller, notes, completed_at, days_late
         FROM follow_ups WHERE done=1 {cal_filter}
         ORDER BY completed_at DESC LIMIT 50""", cal_params) or []
     followups_completed = [{"reg":r[0], "name":r[1], "at":r[2], "caller":r[3],
-                            "notes":r[4] or "", "completed_at": r[5] or ""} for r in done_rows]
+                            "notes":r[4] or "", "completed_at": r[5] or "",
+                            "days_late": r[6] if r[6] is not None else 0} for r in done_rows]
+    # On-time vs late stats
+    fu_ontime = sum(1 for f in followups_completed if (f["days_late"] or 0)==0)
+    fu_late   = sum(1 for f in followups_completed if (f["days_late"] or 0)>0)
+    fu_avg_late = round(sum(f["days_late"] or 0 for f in followups_completed)/len(followups_completed),1) if followups_completed else 0
 
     return jsonify({
         "ok": True,
@@ -1211,6 +1336,9 @@ def api_report():
         "hot_leads": hot_leads,
         "followups_due": followups_due,
         "followups_completed": followups_completed,
+        "fu_ontime": fu_ontime,
+        "fu_late": fu_late,
+        "fu_avg_late": fu_avg_late,
     })
 
 @app.route("/api/newsletter/bulk", methods=["GET"])
@@ -1497,17 +1625,31 @@ def followups_list():
 
 @app.route("/api/followup/done", methods=["POST"])
 def followup_done():
-    """Mark a follow-up as completed (so it drops off the scheduled list)."""
+    """Mark a follow-up as completed, recording when and how late vs the scheduled date."""
     data = request.json or {}
     fid = data.get("id")
     done = data.get("done", True)
     if not fid: return jsonify({"ok": False}), 400
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     if done:
-        db_exec("UPDATE follow_ups SET done=1, completed_at=? WHERE id=?", (ts, fid))
+        # Compute days late (completed date minus scheduled date)
+        days_late = 0
+        try:
+            row = db_query("SELECT follow_up_at FROM follow_ups WHERE id=?", (fid,))
+            if row and row[0][0]:
+                sched = str(row[0][0])[:10]
+                comp  = ts[:10]
+                from datetime import datetime as _dt
+                d1 = _dt.strptime(sched, "%Y-%m-%d")
+                d2 = _dt.strptime(comp, "%Y-%m-%d")
+                days_late = max(0, (d2 - d1).days)
+        except Exception as e:
+            print(f"  days_late calc error: {e}")
+        db_exec("UPDATE follow_ups SET done=1, completed_at=?, days_late=? WHERE id=?", (ts, days_late, fid))
+        return jsonify({"ok": True, "days_late": days_late})
     else:
-        db_exec("UPDATE follow_ups SET done=0, completed_at=NULL WHERE id=?", (fid,))
-    return jsonify({"ok": True})
+        db_exec("UPDATE follow_ups SET done=0, completed_at=NULL, days_late=NULL WHERE id=?", (fid,))
+        return jsonify({"ok": True})
 
 @app.route("/api/followup/delete", methods=["POST"])
 def followup_delete():
