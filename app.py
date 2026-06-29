@@ -2439,12 +2439,19 @@ def mark_called_by():
 
 # ── Milestone charities (approaching age anniversary with zero statutory) ──────
 def compute_milestones(milestone_years):
-    """Find charities that will reach milestone_years in the next 12 months."""
+    """Find charities reaching milestone_years around now.
+    Normally: anniversary in the next 12 months.
+    For the 1-year milestone we also include charities whose anniversary passed in the
+    last 7 days (so callers can catch 'just turned 1') — i.e. a small look-back window."""
     today      = datetime.utcnow().date()
-    # Target: charities whose registration anniversary = milestone_years
-    # i.e. registered between (today - milestone_years - 1yr) and (today - milestone_years)
+    # Upcoming window: registered between (today - years - 1yr) and (today - years)
     cutoff_hi = today.replace(year=today.year - milestone_years)
     cutoff_lo = today.replace(year=today.year - milestone_years - 1)
+    # Small look-back: also catch anniversaries that passed in the last 7 days.
+    # A charity that turned `years` exactly N days ago was registered `years` years
+    # before (today - N). So extend the high cutoff forward by 7 days.
+    from datetime import timedelta as _td
+    cutoff_hi = cutoff_hi + _td(days=7)
 
     PC={"registered_charity_number","income_from_government_grants",
         "income_from_government_contracts","total_gross_income","fin_period_end_date"}
@@ -2484,6 +2491,7 @@ def compute_milestones(milestone_years):
         except ValueError:
             anniversary = reg_date.replace(year=reg_date.year + milestone_years, day=28)
         months_to_go = round((anniversary - today).days / 30.4, 1)
+        days_to_go = (anniversary - today).days
         web = row.get("charity_contact_web","")
         results.append({
             "reg_number":   reg,
@@ -2498,6 +2506,9 @@ def compute_milestones(milestone_years):
             "milestone":    milestone_years,
             "anniversary_date": str(anniversary),
             "months_to_anniversary": months_to_go,
+            "days_to_anniversary": days_to_go,
+            "just_completed": (-7 <= days_to_go < 0),   # anniversary passed in last 7 days
+            "within_week":    (0 <= days_to_go <= 7),    # anniversary within next 7 days
             "total_income": ti,
             "fin_year":     fin.get("fin_period_end_date","")[:4],
         })
@@ -2595,6 +2606,9 @@ def _normalize_for_calling(c, source):
         "months_to_anniversary": c.get("months_to_anniversary",""),
         "milestone": c.get("milestone",""),
         "date_registered": c.get("date_registered",""),
+        "days_to_anniversary": c.get("days_to_anniversary",""),
+        "within_week": c.get("within_week", False),
+        "just_completed": c.get("just_completed", False),
         "spend_over_income": spend_over,
         "removed": bool(c.get("removed", False)),
         "source": source,
@@ -2624,11 +2638,16 @@ def _collect_from_cache():
     o = cache_get("old_charities", max_age=86400)
     if o and o.get("charities"):
         pools["40+ Yrs Zero Statutory"] = o["charities"]
-    # Anniversary Watch
-    for k in ("milestones_40","milestones_20","milestones_25","milestones_50"):
+    # Anniversary Watch — merge any cached milestone windows (incl. 1-year)
+    anniv = {}
+    for k in ("milestones_1","milestones_5","milestones_10","milestones_15","milestones_20",
+              "milestones_25","milestones_30","milestones_40","milestones_45","milestones_50"):
         m = cache_get(k, max_age=86400)
         if m and m.get("charities"):
-            pools["Anniversary Watch"] = m["charities"]; break
+            for c in m["charities"]:
+                anniv[c.get("reg_number")] = c
+    if anniv:
+        pools["Anniversary Watch"] = list(anniv.values())
     return pools
 
 CALLING_CATEGORIES = {
@@ -2817,8 +2836,18 @@ def api_calling_batch_generate():
             except: pass
         timing = filters.get("timing")
         if timing:
-            mta = _num(c.get("months_to_anniversary"), None)
-            if mta is None or mta > _num(timing, 999): return False
+            if timing == "within_week":
+                if not c.get("within_week"):
+                    # fallback to days_to_anniversary if flag not present
+                    dta = _num(c.get("days_to_anniversary"), None)
+                    if dta is None or not (0 <= dta <= 7): return False
+            elif timing == "just_completed":
+                if not c.get("just_completed"):
+                    dta = _num(c.get("days_to_anniversary"), None)
+                    if dta is None or not (-7 <= dta < 0): return False
+            else:
+                mta = _num(c.get("months_to_anniversary"), None)
+                if mta is None or mta > _num(timing, 999): return False
         # Late accounts: months_late bands
         latem = filters.get("latemonths")
         if latem:

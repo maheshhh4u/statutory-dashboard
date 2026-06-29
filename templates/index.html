@@ -795,6 +795,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="ctrl-right">
       <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
       <select id="milestone-years" onchange="loadMilestones()" style="font-size:12px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius)">
+        <option value="1">Turning 1 year old</option>
         <option value="5">Turning 5 years old</option>
         <option value="10">Turning 10 years old</option>
         <option value="15">Turning 15 years old</option>
@@ -812,7 +813,7 @@ select:focus{outline:none;border-color:var(--green)}
     </div>
   </div>
   <div class="info-box" style="margin-bottom:12px">
-    ℹ️ Showing charities reaching their selected milestone anniversary <strong>within the next 12 months</strong> with <strong>zero government grants or contracts</strong> — these organisations are entering a new chapter and may be receptive to statutory funding support for the first time.
+    ℹ️ Showing charities reaching their selected milestone anniversary <strong>within the next 12 months</strong> (and, for the 1-year milestone, those that just passed it in the last week) with <strong>zero government grants or contracts</strong> — these organisations are entering a new chapter and may be receptive to statutory funding support for the first time.
   </div>
   <div class="stats">
     <div class="stat"><div class="stat-label">Total Found</div><div class="stat-value" id="ms-total">—</div><div class="stat-sub" id="ms-sub">Select milestone above</div></div>
@@ -830,6 +831,8 @@ select:focus{outline:none;border-color:var(--green)}
       <input type="text" id="mf-reg" placeholder="Reg number…" oninput="applyMF()" style="width:90px">
       <select id="mf-timing" onchange="applyMF()">
         <option value="">All timings</option>
+        <option value="within_week">📅 Within a week (upcoming)</option>
+        <option value="just_completed">✅ Completed in last week</option>
         <option value="1">Due within 1 month</option>
         <option value="3">Due within 3 months</option>
         <option value="6">Due within 6 months</option>
@@ -1557,6 +1560,8 @@ function openCallModal(pg,reg,name,ccPhone){
       <option value="Line Dropped">📴 Line Dropped</option>
       <option value="Email Sent Follow Up">✉ Email Sent Follow Up</option>
       <option value="SLT Unavailable - Send Email">📩 SLT Unavailable - Send Email</option>
+      <option value="No Budget">💷 No Budget</option>
+      <option value="Info Requested - Will Reach Out">📨 Info Requested – Will Reach Out</option>
       <option value="Not Interested">✗ Not Interested</option>
       <option value="Interested">★ Interested — Follow Up</option>
     </select>
@@ -3411,13 +3416,21 @@ function loadCalling(retryCount){
   const body=document.getElementById('callingBody');
   const note=document.getElementById('callingNote');
   note.style.display='none';
-  body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">'+
-    (retryCount>0?'⏳ Reconnecting to the server… (attempt '+(retryCount+1)+')':'Loading your calling list…')+'</td></tr>';
-  fetch('/api/calling_batch')
-    .then(r=>{ if(!r.ok) throw new Error('Server responded '+r.status); return r.json(); })
+  // Only show the "loading" message on the first attempt; keep it calm on retries
+  if(retryCount===0){
+    body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">Loading your calling list…</td></tr>';
+  } else if(retryCount>=2){
+    // After a couple of silent retries, reassure the user it\'s waking up
+    body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">'+
+      '⏳ Connecting to the server… one moment<br><span style="font-size:11px">(this can take up to a minute after a quiet period)</span></td></tr>';
+  }
+  // Per-attempt timeout so a hung request doesn\'t block the retry chain
+  const ctrl=new AbortController();
+  const tmo=setTimeout(()=>ctrl.abort(), 25000);
+  fetch('/api/calling_batch',{signal:ctrl.signal})
+    .then(r=>{ clearTimeout(tmo); if(!r.ok) throw new Error('Server responded '+r.status); return r.json(); })
     .then(d=>{
       if(d.error && !d.has_batch && !(d.charities&&d.charities.length)){
-        // Backend reported an error building the list
         body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(d.error)+
           '<br><button class="btn btn-sm" style="margin-top:10px;background:#1e3a5f;color:#fff" onclick="loadCalling()">↻ Try again</button></div></td></tr>';
         return;
@@ -3432,16 +3445,16 @@ function loadCalling(retryCount){
       renderCalling(d);
     })
     .catch(e=>{
-      // "Failed to fetch" usually means the free-tier server is waking up — auto-retry a few times
-      const isNetwork = /failed to fetch|networkerror|load failed/i.test(e.message||'');
-      if(retryCount < 4){
-        const wait = isNetwork ? 4000 : 2000;
-        body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">'+
-          '⏳ The server is waking up — retrying in a moment…<br><span style="font-size:11px">(free hosting sleeps after inactivity; first load can take up to a minute)</span></td></tr>';
+      clearTimeout(tmo);
+      // Retry generously — a true cold start can take ~60s. First retry is near-instant
+      // (server may have just been a blip); later ones wait longer.
+      if(retryCount < 12){
+        const wait = retryCount===0 ? 800 : (retryCount<4 ? 3000 : 6000);
         setTimeout(()=>loadCalling(retryCount+1), wait);
         return;
       }
-      body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px"><div class="err-box">⚠ Couldn\'t reach the server: '+esc(e.message)+
+      body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px"><div class="err-box">⚠ Couldn\'t reach the server after several attempts.'+
+        '<br><span style="font-size:11px">The server may be restarting. Wait a moment and try again.</span>'+
         '<br><button class="btn btn-sm" style="margin-top:10px;background:#1e3a5f;color:#fff" onclick="loadCalling()">↻ Try again</button></div></td></tr>';
     });
 }
@@ -3450,11 +3463,11 @@ function loadCalling(retryCount){
 const SOURCE_FILTERS={
   milestones:[
     {id:'sf-years',label:'Anniversary milestone',type:'select',opts:[
-      {v:'',t:'All milestones'},{v:'5',t:'5 years'},{v:'10',t:'10 years'},{v:'15',t:'15 years'},
+      {v:'',t:'All milestones'},{v:'1',t:'1 year'},{v:'5',t:'5 years'},{v:'10',t:'10 years'},{v:'15',t:'15 years'},
       {v:'20',t:'20 years'},{v:'25',t:'25 years'},{v:'30',t:'30 years'},{v:'40',t:'40 years'},{v:'50',t:'50 years'}]},
     {id:'sf-timing',label:'Anniversary timing',type:'select',opts:[
-      {v:'',t:'All timing'},{v:'0.25',t:'Within a week'},{v:'1',t:'Within 1 month'},
-      {v:'2',t:'Within 2 months'},{v:'3',t:'Within 3 months'},{v:'6',t:'Within 6 months'}]},
+      {v:'',t:'All timing'},{v:'within_week',t:'📅 Within a week (upcoming)'},{v:'just_completed',t:'✅ Completed in last week'},
+      {v:'1',t:'Within 1 month'},{v:'2',t:'Within 2 months'},{v:'3',t:'Within 3 months'},{v:'6',t:'Within 6 months'}]},
   ],
   late:[
     {id:'sf-latemonths',label:'How late',type:'select',opts:[
@@ -3728,12 +3741,14 @@ function renderCalling(d){
 }
 function applyMF(){
   const n=(v('mf-name')||'').toLowerCase(),r=(v('mf-reg')||'').toLowerCase();
-  const timing=parseFloat(v('mf-timing'))||0;
+  const timingRaw=v('mf-timing')||'';
   const sf=v('mf-status'),cf=v('mf-called');
   let data=msAll;
   if(n) data=data.filter(c=>(c.name||'').toLowerCase().includes(n));
   if(r) data=data.filter(c=>String(c.reg_number||'').includes(r));
-  if(timing) data=data.filter(c=>c.months_to_anniversary<=timing);
+  if(timingRaw==='within_week') data=data.filter(c=>c.within_week);
+  else if(timingRaw==='just_completed') data=data.filter(c=>c.just_completed);
+  else { const timing=parseFloat(timingRaw)||0; if(timing) data=data.filter(c=>c.months_to_anniversary<=timing); }
   if(sf) data=data.filter(c=>(statuses['milestones|'+c.reg_number]||'')==sf);
   if(cf==='yes') data=data.filter(c=>isCalled('milestones',c.reg_number));
   if(cf==='no')  data=data.filter(c=>!isCalled('milestones',c.reg_number));
