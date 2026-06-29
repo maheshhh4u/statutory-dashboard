@@ -1223,13 +1223,9 @@ function findContact(reg, btn){
      contactOverrides[reg]=ov;
      if(d.phone) phoneOverrides[reg]=phoneOverrides[reg]||d.phone;
      updateContactCells(reg);
-     // If 2+ contacts, re-render the name cell to show them stacked
+     // If 2+ contacts, re-render all contact columns so they stack aligned
      if(d.contacts && d.contacts.length>1){
-       document.querySelectorAll('td.ct-cell[data-reg="'+reg+'"][data-field="name"]').forEach(td=>{
-         const fresh=ctCell(reg,'name','');
-         const tmp=document.createElement('tbody'); tmp.innerHTML='<tr>'+fresh+'</tr>';
-         td.replaceWith(tmp.querySelector('td'));
-       });
+       rerenderContactCols(reg);
      }
      // If AI found multiple contacts, show them all in a popup so Muhanna can pick
      const contacts=d.contacts||[];
@@ -1267,22 +1263,28 @@ function updateContactCells(reg){
 function ctCell(reg, field, ccVal){
   const ov=(contactOverrides[reg]||{})[field]||'';
   const val=ov||ccVal||'';
-  // Special: 'name' field — if multiple AI contacts exist, stack them vertically
-  if(field==='name'){
-    const list=(contactOverrides[reg]||{}).contacts||[];
-    if(list.length>1){
-      const stacked=list.map((c,i)=>{
-        const phoneL=c.phone?`<a href="tel:${esc(c.phone)}" onclick="event.stopPropagation()" style="color:#1e40af">☎</a>`:'';
-        const emailL=c.email?`<a href="mailto:${esc(c.email)}" onclick="event.stopPropagation()" style="color:#1e40af">✉</a>`:'';
-        return `<div style="padding:3px 0;${i>0?'border-top:1px dashed var(--bd)':''}">
-          <div style="font-weight:${i===0?'700':'500'};font-size:11px">${i===0?'⭐ ':''}${esc(c.name||'(no name)')}</div>
-          ${c.role?`<div style="font-size:10px;color:var(--t3)">${esc(c.role)}</div>`:''}
-          <div style="font-size:10px;display:flex;gap:8px">${phoneL}${c.phone?`<span style="font-family:monospace">${esc(c.phone)}</span>`:''}</div>
-          <div style="font-size:10px">${emailL} ${c.email?`<span>${esc(c.email)}</span>`:''}</div>
-        </div>`;
-      }).join('');
-      return `<td class="ct-cell ct-multi" data-reg="${esc(reg)}" data-field="name" style="min-width:160px;vertical-align:top">${stacked}<span class="ct-ico" onclick="event.stopPropagation();editContacts('${esc(reg)}')" style="font-size:10px" title="Edit contacts">✎</span></td>`;
-    }
+  // Special: contact columns — when multiple AI contacts exist, stack each
+  // column's value per contact so the row lines up (name | role | phone | email).
+  const multiList=(contactOverrides[reg]||{}).contacts||[];
+  if(multiList.length>1 && ['name','role','cphone','cemail'].includes(field)){
+    const fieldKey={name:'name',role:'role',cphone:'phone',cemail:'email'}[field];
+    const stacked=multiList.map((c,i)=>{
+      const v=c[fieldKey]||'';
+      let inner='';
+      if(field==='name'){
+        inner=`<div style="font-weight:${i===0?'700':'500'};font-size:11px">${i===0?'⭐ ':''}${esc(v||'(no name)')}</div>`;
+      } else if(field==='role'){
+        inner=`<div style="font-size:11px;color:var(--t2)">${esc(v||'—')}</div>`;
+      } else if(field==='cphone'){
+        inner = v ? `<a href="tel:${esc(v)}" onclick="event.stopPropagation()" style="color:#1e40af;font-family:monospace;font-size:11px">☎ ${esc(v)}</a>` : '<span style="font-size:11px;color:var(--t3)">—</span>';
+      } else if(field==='cemail'){
+        inner = v ? `<a href="mailto:${esc(v)}" onclick="event.stopPropagation()" style="color:#1e40af;font-size:11px">✉ ${esc(v)}</a>` : '<span style="font-size:11px;color:var(--t3)">—</span>';
+      }
+      // Each contact block uses a fixed min-height so the 4 columns align row-by-row
+      return `<div style="padding:4px 0;min-height:34px;display:flex;flex-direction:column;justify-content:center;${i>0?'border-top:1px dashed var(--bd)':''}">${inner}</div>`;
+    }).join('');
+    const editIco = field==='name' ? `<span class="ct-ico" onclick="event.stopPropagation();editContacts('${esc(reg)}')" style="font-size:10px" title="Edit contacts">✎</span>` : '';
+    return `<td class="ct-cell ct-multi" data-reg="${esc(reg)}" data-field="${field}" style="min-width:${field==='name'?'150':'120'}px;vertical-align:top" onclick="editContacts('${esc(reg)}')">${stacked}${editIco}</td>`;
   }
   const edited=!!ov && ov!==(ccVal||'');
   const cls='ct-cell'+(edited?' ct-edited':'')+(!val?' ct-empty':'');
@@ -1350,15 +1352,21 @@ function saveContacts(reg){
       if(out[0]){ ov.name=out[0].name; ov.role=out[0].role; ov.cphone=out[0].phone; ov.cemail=out[0].email; }
       contactOverrides[reg]=ov;
       closeGenericModal(true);
-      // Re-render the name cell(s)
-      document.querySelectorAll('td.ct-cell[data-reg="'+reg+'"][data-field="name"]').forEach(td=>{
-        const fresh=ctCell(reg,'name','');
-        const tmp=document.createElement('tbody'); tmp.innerHTML='<tr>'+fresh+'</tr>';
-        td.replaceWith(tmp.querySelector('td'));
-      });
+      rerenderContactCols(reg);
       updateContactCells(reg);
       cToast('✓ Contacts saved');
     }).catch(e=>alert('Save failed: '+e.message));
+}
+// Re-render all four contact columns for a charity (name/role/cphone/cemail)
+function rerenderContactCols(reg){
+  ['name','role','cphone','cemail'].forEach(f=>{
+    document.querySelectorAll('td.ct-cell[data-reg="'+reg+'"][data-field="'+f+'"]').forEach(td=>{
+      const cc=td.dataset.cc||'';
+      const fresh=ctCell(reg,f,cc);
+      const tmp=document.createElement('tbody'); tmp.innerHTML='<tr>'+fresh+'</tr>';
+      td.replaceWith(tmp.querySelector('td'));
+    });
+  });
 }
 
 function ctEdit(td, ev){
