@@ -1073,6 +1073,23 @@ def ai_analyze():
         cat_block += ("\nThis is the SPECIFIC reason 9 Mountains is calling — make the "
                       "'Why they're a fit' and 'Talking points' sections speak directly to it.")
 
+    # Known contact person + their job role (so the briefing is tuned to who we're calling)
+    contact_block = ""
+    try:
+        cov = _contact_overrides.get(reg, {}) or {}
+        cname2 = cov.get("name") or ""
+        crole = cov.get("role") or ""
+        if cname2 or crole:
+            contact_block = (f"\n\nPERSON BEING CALLED: {cname2 or '(name unknown)'}"
+                             + (f" — {crole}" if crole else "")
+                             + ".\nTune the talking points and tone to this person's seniority and role: "
+                             "a CEO/Founder wants strategic, big-picture, outcome-focused conversation; "
+                             "a Fundraising/Development lead wants funding, donor and campaign specifics; "
+                             "an Operations/Finance lead wants efficiency, cost and process angles; "
+                             "a Chair/Trustee wants governance and mission alignment. "
+                             "Address what THIS role typically cares about most.")
+    except Exception: pass
+
     system_prompt = (
         "You are a sharp, concise sales-intelligence analyst preparing a caller from 9 Mountains "
         "for a phone call to a UK charity. " + NINEM_PITCH + " "
@@ -1084,7 +1101,8 @@ def ai_analyze():
     user_prompt = (
         "Prepare a pre-call briefing from the data below.\n\n"
         f"{profile}"
-        f"{cat_block}\n\n"
+        f"{cat_block}"
+        f"{contact_block}\n\n"
         "Structure it with these short sections (use the exact headings):\n"
         + ("**Last call recap** — what was discussed on the previous call(s) from the transcript: "
            "key points, any interest/objections/commitments, and what to follow up on now. "
@@ -1655,21 +1673,23 @@ def api_ai_find_contact():
 
     search_model = os.environ.get("OPENAI_SEARCH_MODEL", "gpt-4o-mini-search-preview")
     prompt = (
-        "You are helping a UK charity-fundraising team find the single best person to call at a charity.\n"
+        "You are helping a UK charity-fundraising team find the best people to call at a charity.\n"
         f"Charity name: {name}\n"
         f"Charity Commission registration number: {reg}\n\n"
-        "Find the single most senior contactable person, in this strict priority order: "
-        "1) CEO / Chief Executive (highest priority); 2) Executive Director / Managing Director; "
-        "3) Founder; 4) Director of Fundraising / Head of Fundraising; 5) other senior Directors or VPs; "
-        "6) Chair of Trustees; 7) the charity's main named contact. "
-        "Only move to the next option when the higher one genuinely does not exist. "
+        "Find up to THREE most senior contactable people, ranked by seniority (most senior first), "
+        "using this strict priority order: "
+        "1) CEO / Chief Executive (highest); 2) Founder; 3) COO / Chief Operating Officer; "
+        "4) Executive Director / Managing Director; 5) Director of Fundraising / Head of Fundraising; "
+        "6) other senior Directors or VPs; 7) Chair of Trustees; 8) the charity's main named contact. "
+        "List the highest job grade first and work downward. Only include people who genuinely exist. "
         "Check the charity's official website and the Charity Commission register "
         "(register-of-charities.charitycommission.gov.uk).\n\n"
-        "Return ONLY a compact JSON object, no prose, with exactly these keys: "
-        '"name", "role", "phone", "email". '
+        "Return ONLY a compact JSON object, no prose, with this exact shape: "
+        '{"contacts": [{"name":"", "role":"", "phone":"", "email":""}, ...]}. '
+        "Include 1 to 3 contacts in the contacts array, most senior first. "
         "Use an empty string for anything you cannot find on a real, current web page. "
-        "NEVER guess or invent a phone number or email address — only include them if they actually appear on a real page "
-        "(the charity's site or a directory). A general charity phone/email is acceptable if no personal one is published."
+        "NEVER guess or invent a phone number or email — only include them if they actually appear on a real page. "
+        "A general charity phone/email is acceptable if no personal one is published."
     )
     try:
         resp = requests.post(
@@ -1683,21 +1703,28 @@ def api_ai_find_contact():
         if resp.status_code != 200:
             return jsonify({"ok": False, "error": f"OpenAI error {resp.status_code}: {resp.text[:200]}"}), 502
         content = ((resp.json().get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
-        # Extract the JSON object from the response (strip code fences / surrounding text)
         m = re.search(r"\{.*\}", content, re.DOTALL)
         parsed = {}
         if m:
             try: parsed = json.loads(m.group(0))
             except Exception: parsed = {}
-        out = {"name":  str(parsed.get("name")  or "").strip()[:CONTACT_LIMITS["name"]],
-               "role":  str(parsed.get("role")  or "").strip()[:CONTACT_LIMITS["role"]],
-               "phone": str(parsed.get("phone") or "").strip()[:CONTACT_LIMITS["cphone"]],
-               "email": str(parsed.get("email") or "").strip()[:CONTACT_LIMITS["cemail"]]}
-        if not any(out.values()):
-            return jsonify({"ok": True, "found": False,
+        # Support both new {contacts:[...]} and legacy flat shape
+        raw_contacts = parsed.get("contacts") if isinstance(parsed.get("contacts"), list) else None
+        if raw_contacts is None:
+            raw_contacts = [parsed] if any(parsed.get(k) for k in ("name","role","phone","email")) else []
+        contacts = []
+        for c in raw_contacts[:3]:
+            cc = {"name":  str(c.get("name")  or "").strip()[:CONTACT_LIMITS["name"]],
+                  "role":  str(c.get("role")  or "").strip()[:CONTACT_LIMITS["role"]],
+                  "phone": str(c.get("phone") or "").strip()[:CONTACT_LIMITS["cphone"]],
+                  "email": str(c.get("email") or "").strip()[:CONTACT_LIMITS["cemail"]]}
+            if any(cc.values()): contacts.append(cc)
+        if not contacts:
+            return jsonify({"ok": True, "found": False, "contacts": [],
                             "note": "The AI couldn't find a verifiable contact for this charity.",
-                            **out})
-        # Persist all fields at once (DB + cache + a single Maximizer note)
+                            "name":"","role":"","phone":"","email":""})
+        # Top contact is stored in the row's contact fields
+        out = contacts[0]
         if reg:
             existing = db_query("SELECT phone,email,website,contact_name,contact_role,contact_phone,contact_email FROM phone_overrides WHERE reg_number=?", (reg,))
             e0 = existing[0] if existing else ("","","","","","","")
@@ -1716,14 +1743,17 @@ def api_ai_find_contact():
             try:
                 found = mx_find_by_org_number(reg)
                 if found and found.get("key"):
-                    parts = ["🤖 AI-suggested contact: " + (cur["name"] or "(name not found)") + (f" — {cur['role']}" if cur["role"] else "")]
-                    if cur["cphone"]: parts.append("☎ " + cur["cphone"])
-                    if cur["cemail"]: parts.append("✉ " + cur["cemail"])
-                    parts.append("(verify before use)")
-                    mx_create_note(found["key"], "  |  ".join(parts), caller, timestamp=ts)
+                    lines = ["🤖 AI-suggested contacts (most senior first):"]
+                    for i,c in enumerate(contacts,1):
+                        seg = f"{i}. {c['name'] or '(name not found)'}" + (f" — {c['role']}" if c['role'] else "")
+                        if c["phone"]: seg += f"  ☎ {c['phone']}"
+                        if c["email"]: seg += f"  ✉ {c['email']}"
+                        lines.append(seg)
+                    lines.append("(verify before use)")
+                    mx_create_note(found["key"], "  |  ".join(lines), caller, timestamp=ts)
             except Exception as e:
                 print(f"  find_contact→mx note error: {e}")
-        return jsonify({"ok": True, "found": True, **out})
+        return jsonify({"ok": True, "found": True, "contacts": contacts, **out})
     except Exception as e:
         return jsonify({"ok": False, "error": f"AI lookup failed: {str(e)[:200]}"}), 502
 
@@ -1874,6 +1904,17 @@ def followup_done():
     else:
         db_exec("UPDATE follow_ups SET done=0, completed_at=NULL, days_late=NULL WHERE id=?", (fid,))
         return jsonify({"ok": True})
+
+@app.route("/api/followup/reschedule", methods=["POST"])
+def followup_reschedule():
+    """Change the date/time of an existing follow-up."""
+    data = request.json or {}
+    fid = data.get("id")
+    new_at = str(data.get("follow_up_at", "")).strip()  # 'YYYY-MM-DD HH:MM'
+    if not fid or not new_at:
+        return jsonify({"ok": False, "error": "Missing id or date/time"}), 400
+    db_exec("UPDATE follow_ups SET follow_up_at=? WHERE id=?", (new_at, fid))
+    return jsonify({"ok": True, "follow_up_at": new_at})
 
 @app.route("/api/followup/delete", methods=["POST"])
 def followup_delete():
@@ -2670,6 +2711,11 @@ def api_calling_batch_generate():
         "colleges":  ["college"],
         "mens_shed": ["mens shed", "man shed"],
         "rotary":    ["rotary"],
+        "childcare": ["childcare", "child care", "nursery", "pre-school", "preschool", "playgroup", "play group"],
+        "churches":  ["church", "parochial", "parish", "chapel", "cathedral", "methodist", "baptist", "catholic"],
+        "trusts":    ["trust"],
+        "school_pta":["pta", "parent teacher", "friends of"],
+        "pfa":       ["pfa", "parents and friends", "parent and friends"],
     }
     exclude_keys = data.get("exclude") or []
     excl_kw = []

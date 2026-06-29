@@ -393,6 +393,11 @@ select:focus{outline:none;border-color:var(--green)}
       <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="colleges" checked onchange="saveExclusions()"> Colleges</label>
       <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="mens_shed" checked onchange="saveExclusions()"> Men's Shed</label>
       <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="rotary" checked onchange="saveExclusions()"> Rotary</label>
+      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="childcare" checked onchange="saveExclusions()"> Childcare Providers</label>
+      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="churches" checked onchange="saveExclusions()"> Churches</label>
+      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="trusts" checked onchange="saveExclusions()"> Trusts</label>
+      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="school_pta" checked onchange="saveExclusions()"> School PTA</label>
+      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="pfa" checked onchange="saveExclusions()"> PFA</label>
     </div>
     <div class="calling-progress">
       <div class="calling-progress-label"><span id="callingDone">0</span> / <span id="callingTotal">0</span> completed</div>
@@ -1213,7 +1218,25 @@ function findContact(reg, btn){
      contactOverrides[reg]=ov;
      if(d.phone) phoneOverrides[reg]=phoneOverrides[reg]||d.phone;
      updateContactCells(reg);
-     cToast('🤖 AI-suggested contact filled — please verify before calling');
+     // If AI found multiple contacts, show them all in a popup so Muhanna can pick
+     const contacts=d.contacts||[];
+     if(contacts.length>1){
+       let html='<div style="max-height:60vh;overflow-y:auto">'+
+         '<p style="font-size:12px;color:var(--t3);margin:0 0 12px">The top contact has been filled into the row. Here are all '+contacts.length+' contacts found (most senior first). Click a phone or email to use it.</p>';
+       contacts.forEach((c,i)=>{
+         html+='<div style="border:1px solid var(--bd);border-left:3px solid '+(i===0?'#1d7a3a':'#c89a1a')+';border-radius:6px;padding:12px;margin-bottom:8px">'+
+           '<div style="font-weight:700;font-size:14px">'+(i===0?'⭐ ':'')+esc(c.name||'(name not found)')+'</div>'+
+           (c.role?'<div style="font-size:12px;color:var(--t3);margin-bottom:6px">'+esc(c.role)+'</div>':'')+
+           '<div style="font-size:13px;display:flex;gap:16px;flex-wrap:wrap">'+
+           (c.phone?'<span>☎ <a href="tel:'+esc(c.phone)+'" style="color:#1e40af">'+esc(c.phone)+'</a></span>':'')+
+           (c.email?'<span>✉ <a href="mailto:'+esc(c.email)+'" style="color:#1e40af">'+esc(c.email)+'</a></span>':'')+
+           '</div></div>';
+       });
+       html+='<p style="font-size:11px;color:var(--t3);margin-top:8px">⚠ AI-suggested — please verify before calling. All contacts saved to the Maximizer note.</p></div>';
+       showModal('🤖 Contacts found for Reg '+esc(reg), html);
+     } else {
+       cToast('🤖 AI-suggested contact filled — please verify before calling');
+     }
    })
    .catch(e=>{ if(btn){ btn.disabled=false; btn.textContent=btn._old||'🔎'; } cToast('Lookup error: '+e.message,'err'); });
 }
@@ -1236,13 +1259,15 @@ function ctCell(reg, field, ccVal){
   const ph={phone:'+ Add phone',email:'+ Add email',website:'+ Add website',name:'+ Add contact',role:'+ Add job role',cphone:'+ Add direct phone',cemail:'+ Add direct email'}[field]||'+ Add';
   let disp='';
   if(!val) disp=`<span class="ct-add">${ph}</span>`;
-  else if(field==='email'||field==='cemail') disp=`<span class="ct-val" title="${esc(val)}">${esc(val)}</span>`;
+  else if(field==='email'||field==='cemail') disp=`<a href="mailto:${esc(val)}" class="ct-val ct-link" title="${esc(val)} — click to email" onclick="event.stopPropagation()" style="color:#1e40af;text-decoration:underline">${esc(val)}</a>`;
   else if(field==='website'){
     const clean=val.replace(/^https?:\/\//i,'').replace(/^www\./i,'');
-    disp=`<span class="ct-val" title="${esc(val)}">${esc(clean)}</span>`;
+    const href=/^https?:\/\//i.test(val)?val:'https://'+val;
+    disp=`<a href="${esc(href)}" target="_blank" rel="noopener" class="ct-val ct-link" title="${esc(val)} — click to open" onclick="event.stopPropagation()" style="color:#1e40af;text-decoration:underline">${esc(clean)}</a>`;
   } else disp=`<span class="ct-val">${esc(val)}</span>`;
-  return`<td class="${cls}" data-reg="${esc(reg)}" data-field="${field}" data-cc="${esc(ccVal||'')}" onclick="ctEdit(this,event)">${disp}<span class="ct-ico">✎</span></td>`;
+  return`<td class="${cls}" data-reg="${esc(reg)}" data-field="${field}" data-cc="${esc(ccVal||'')}" onclick="ctEdit(this,event)">${disp}<span class="ct-ico" onclick="event.stopPropagation();ctEditForce(this.closest('td'))">✎</span></td>`;
 }
+function ctEditForce(td){ ctEdit(td, null); }
 
 function ctEdit(td, ev){
   if(td.classList.contains('ct-editing')) return;
@@ -1431,6 +1456,7 @@ function openCallModal(pg,reg,name,ccPhone){
       <option value="Busy">⏱ Busy</option>
       <option value="Line Dropped">📴 Line Dropped</option>
       <option value="Email Sent Follow Up">✉ Email Sent Follow Up</option>
+      <option value="SLT Unavailable - Send Email">📩 SLT Unavailable - Send Email</option>
       <option value="Not Interested">✗ Not Interested</option>
       <option value="Interested">★ Interested — Follow Up</option>
     </select>
@@ -3121,6 +3147,7 @@ function loadScheduledCalls(){
           ${f.notes?`<div style="font-size:11px;color:var(--t3);margin-top:2px">${esc(f.notes).slice(0,140)}</div>`:''}
         </span>
         <button class="btn btn-green btn-sm" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','')">📞 Call</button>
+        <button class="btn btn-sm" style="background:#fff;border:1px solid var(--bd);color:#1e3a5f" onclick="rescheduleFollowup(${f.id},'${esc(f.follow_up_at||'')}')" title="Change date/time">✏ Reschedule</button>
         <button class="btn btn-outline btn-sm" onclick="markFollowupDone(${f.id},this)">✓ Done</button>
         <button class="btn btn-sm" style="background:#fff;border:1px solid #e0a0a0;color:#c0392b" onclick="deleteFollowup(${f.id})" title="Delete this follow-up">🗑</button>
       </div>`;
@@ -3130,6 +3157,38 @@ function loadScheduledCalls(){
 function markFollowupDone(id,btn){
   fetch('/api/followup/done',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({id,done:true})}).then(()=>{ loadScheduledCalls(); if(document.getElementById('cal-grid')) renderCalendar(); });
+}
+function rescheduleFollowup(id, currentAt){
+  // currentAt like '2026-06-30 14:30' — split into date + time for the prompt
+  const curDate=(currentAt||'').slice(0,10);
+  const curTime=(currentAt||'').slice(11,16)||'09:00';
+  const html=`<div style="padding:4px">
+    <p style="font-size:13px;margin:0 0 14px">Pick a new date and time for this follow-up call:</p>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
+      <input type="date" id="resch-date" value="${esc(curDate)}" style="padding:7px;border:1px solid var(--bd);border-radius:4px;font-family:inherit">
+      <input type="time" id="resch-time" value="${esc(curTime)}" style="padding:7px;border:1px solid var(--bd);border-radius:4px;font-family:inherit">
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-outline btn-sm" onclick="closeGenericModal(true)">Cancel</button>
+      <button class="btn btn-green btn-sm" onclick="saveReschedule(${id})">Save new time</button>
+    </div>
+  </div>`;
+  showModal('✏ Reschedule Follow-up', html);
+}
+function saveReschedule(id){
+  const date=(document.getElementById('resch-date')||{}).value||'';
+  const time=(document.getElementById('resch-time')||{}).value||'09:00';
+  if(!date){ alert('Please pick a date.'); return; }
+  const newAt=date+' '+time;
+  fetch('/api/followup/reschedule',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id,follow_up_at:newAt})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ alert('Reschedule failed: '+(d.error||'unknown')); return; }
+      closeGenericModal(true);
+      loadScheduledCalls();
+      if(document.getElementById('cal-grid')) renderCalendar();
+      cToast('✓ Follow-up rescheduled to '+newAt);
+    }).catch(e=>alert('Reschedule failed: '+e.message));
 }
 function deleteFollowup(id){
   if(!confirm('Delete this follow-up call permanently? This cannot be undone.')) return;
@@ -3231,7 +3290,7 @@ function renderCalendar(){
       const dateStr=`${y}-${String(m+1).padStart(2,'0')}-${ds}`;
       const items=byDay[ds]||[];
       const isToday=dateStr===todayStr;
-      const evs=items.slice(0,3).map(f=>`<div title="${esc((f.name||'')+' '+(f.follow_up_at||''))}" style="font-size:9px;background:#e8b339;color:#1e3a5f;border-radius:3px;padding:1px 3px;margin-top:2px;white-space:nowrap;display:flex;align-items:center;gap:2px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','')">${esc((f.follow_up_at||'').slice(11,16))} ${esc((f.name||'').slice(0,10))}</span><span style="cursor:pointer;color:#c0392b;font-weight:700;padding:0 2px" title="Delete" onclick="event.stopPropagation();deleteFollowup(${f.id})">✕</span></div>`).join('');
+      const evs=items.slice(0,3).map(f=>`<div title="${esc((f.name||'')+' '+(f.follow_up_at||''))}" style="font-size:9px;background:#e8b339;color:#1e3a5f;border-radius:3px;padding:1px 3px;margin-top:2px;white-space:nowrap;display:flex;align-items:center;gap:1px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','')">${esc((f.follow_up_at||'').slice(11,16))} ${esc((f.name||'').slice(0,9))}</span><span style="cursor:pointer;color:#1e3a5f;padding:0 1px" title="Reschedule" onclick="event.stopPropagation();rescheduleFollowup(${f.id},'${esc(f.follow_up_at||'')}')">✏</span><span style="cursor:pointer;color:#c0392b;font-weight:700;padding:0 1px" title="Delete" onclick="event.stopPropagation();deleteFollowup(${f.id})">✕</span></div>`).join('');
       const more=items.length>3?`<div style="font-size:9px;color:var(--t3)">+${items.length-3} more</div>`:'';
       cells+=`<div style="min-height:64px;border:1px solid var(--bd);padding:2px 3px;${isToday?'background:#fff8e6;border-color:#e8b339':''}">
         <div style="font-size:11px;font-weight:600;color:${isToday?'#b8860b':'var(--t2)'}">${day}</div>${evs}${more}</div>`;
