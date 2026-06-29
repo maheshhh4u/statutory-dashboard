@@ -3401,7 +3401,8 @@ function renderCalendar(){
   }).catch(e=>{ grid.innerHTML='<div class="err-box">⚠ '+esc(e.message)+'</div>'; });
 }
 
-function loadCalling(){
+function loadCalling(retryCount){
+  retryCount = retryCount || 0;
   // Preserve current scroll position across the refresh so the user stays put
   const _sc=document.getElementById('callingScroll');
   if(_sc && _sc.scrollTop>0) callingScroll=_sc.scrollTop;
@@ -3410,10 +3411,17 @@ function loadCalling(){
   const body=document.getElementById('callingBody');
   const note=document.getElementById('callingNote');
   note.style.display='none';
-  body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">Loading your calling list…</td></tr>';
+  body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">'+
+    (retryCount>0?'⏳ Reconnecting to the server… (attempt '+(retryCount+1)+')':'Loading your calling list…')+'</td></tr>';
   fetch('/api/calling_batch')
-    .then(r=>r.json())
+    .then(r=>{ if(!r.ok) throw new Error('Server responded '+r.status); return r.json(); })
     .then(d=>{
+      if(d.error && !d.has_batch && !(d.charities&&d.charities.length)){
+        // Backend reported an error building the list
+        body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(d.error)+
+          '<br><button class="btn btn-sm" style="margin-top:10px;background:#1e3a5f;color:#fff" onclick="loadCalling()">↻ Try again</button></div></td></tr>';
+        return;
+      }
       callingData=d.charities||[];
       if(!d.has_batch){
         note.innerHTML='ℹ️ '+esc(d.note||'No active calling list. Pick a source and click Generate List.');
@@ -3424,7 +3432,17 @@ function loadCalling(){
       renderCalling(d);
     })
     .catch(e=>{
-      body.innerHTML=`<tr><td colspan="23" style="text-align:center;padding:30px"><div class="err-box">⚠ ${esc(e.message)}</div></td></tr>`;
+      // "Failed to fetch" usually means the free-tier server is waking up — auto-retry a few times
+      const isNetwork = /failed to fetch|networkerror|load failed/i.test(e.message||'');
+      if(retryCount < 4){
+        const wait = isNetwork ? 4000 : 2000;
+        body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">'+
+          '⏳ The server is waking up — retrying in a moment…<br><span style="font-size:11px">(free hosting sleeps after inactivity; first load can take up to a minute)</span></td></tr>';
+        setTimeout(()=>loadCalling(retryCount+1), wait);
+        return;
+      }
+      body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px"><div class="err-box">⚠ Couldn\'t reach the server: '+esc(e.message)+
+        '<br><button class="btn btn-sm" style="margin-top:10px;background:#1e3a5f;color:#fff" onclick="loadCalling()">↻ Try again</button></div></td></tr>';
     });
 }
 

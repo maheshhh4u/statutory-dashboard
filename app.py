@@ -2726,19 +2726,25 @@ def _load_active_batch():
 @app.route("/api/calling_batch")
 def api_calling_batch():
     """Return the current active calling batch (persisted, stable until regenerated)."""
-    batch = _load_active_batch()
-    if not batch:
+    try:
+        batch = _load_active_batch()
+        if not batch:
+            return jsonify({"charities": [], "count": 0, "has_batch": False,
+                            "note": "No active calling list yet. Pick a source and generate your first 100."})
+        meta = db_query("SELECT batch_no,created_at,category FROM calling_batch WHERE active=1 LIMIT 1")
+        batch_no, created_at, category = (meta[0] if meta else (1, "", "all"))
+        done = sum(1 for c in batch if c["completed"])
+        return jsonify({
+            "charities": batch, "count": len(batch), "has_batch": True,
+            "batch_no": batch_no, "created_at": created_at, "category": category,
+            "completed": done, "remaining": len(batch) - done,
+            "category_label": CALLING_CATEGORIES.get(category, category),
+        })
+    except Exception as e:
+        print(f"  /api/calling_batch error: {e}")
+        import traceback; traceback.print_exc()
         return jsonify({"charities": [], "count": 0, "has_batch": False,
-                        "note": "No active calling list yet. Pick a source and generate your first 100."})
-    meta = db_query("SELECT batch_no,created_at,category FROM calling_batch WHERE active=1 LIMIT 1")
-    batch_no, created_at, category = (meta[0] if meta else (1, "", "all"))
-    done = sum(1 for c in batch if c["completed"])
-    return jsonify({
-        "charities": batch, "count": len(batch), "has_batch": True,
-        "batch_no": batch_no, "created_at": created_at, "category": category,
-        "completed": done, "remaining": len(batch) - done,
-        "category_label": CALLING_CATEGORIES.get(category, category),
-    })
+                        "error": f"Could not load calling list: {str(e)[:200]}"}), 200
 
 @app.route("/api/calling_batch/status")
 def api_calling_batch_status():
