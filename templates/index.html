@@ -3319,10 +3319,23 @@ function openCallHistory(){
       <div><label style="font-size:10px;color:var(--t3);display:block">Outcome</label>
         <select id="ch-outcome" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">All</option></select></div>
       <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="loadCallHistory()">🔍 Search</button>
+      <button class="btn btn-sm" style="background:#1d7a3a;color:#fff" onclick="exportCallHistoryCsv()">⬇ Export CSV</button>
     </div>
     <div id="ch-results" style="font-size:12px;color:var(--t3)">Loading…</div>`;
   showModal('📋 Call History', html);
   loadCallHistory(true);
+}
+function exportCallHistoryCsv(){
+  const from=(document.getElementById('ch-from')||{}).value||'';
+  const to=(document.getElementById('ch-to')||{}).value||'';
+  const caller=(document.getElementById('ch-caller')||{}).value||'';
+  const outcome=(document.getElementById('ch-outcome')||{}).value||'';
+  const qs='from='+from+'&to='+to+'&caller='+encodeURIComponent(caller)+'&outcome='+encodeURIComponent(outcome);
+  // Trigger a download from the CSV endpoint
+  const a=document.createElement('a');
+  a.href='/api/call_history_all/export?'+qs;
+  a.download='call_history.csv';
+  document.body.appendChild(a); a.click(); a.remove();
 }
 function loadCallHistory(initFilters){
   const from=document.getElementById('ch-from').value;

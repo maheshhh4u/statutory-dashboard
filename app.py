@@ -2077,6 +2077,92 @@ def call_history_all():
     outcomes=[r[0] for r in db_query("SELECT DISTINCT outcome FROM call_log WHERE outcome IS NOT NULL AND outcome<>'' ORDER BY outcome")]
     return jsonify({"calls":calls,"count":len(calls),"callers":callers,"outcomes":outcomes})
 
+@app.route("/api/call_history_all/export")
+def call_history_export():
+    """Export full call history as CSV, including all Daily Calling main-page fields
+    (charity details, contacts, income, source, stage) joined to each call."""
+    dfrom  = str(request.args.get("from","")).strip()
+    dto    = str(request.args.get("to","")).strip()
+    caller = str(request.args.get("caller","")).strip()
+    outcome= str(request.args.get("outcome","")).strip()
+    where=[]; params=[]
+    if dfrom:  where.append("cl.timestamp>=?"); params.append(dfrom+" 00:00:00")
+    if dto:    where.append("cl.timestamp<=?"); params.append(dto+" 23:59:59")
+    if caller: where.append("cl.caller=?"); params.append(caller)
+    if outcome:where.append("cl.outcome=?"); params.append(outcome)
+    sql = """SELECT cl.timestamp, cl.caller, cl.reg_number, cl.phone_used, cl.outcome,
+                    cl.notes, cl.duration_sec, cl.synced_to_maximizer,
+                    CASE WHEN cl.page='calling' THEN COALESCE(cb.category,'calling') ELSE cl.page END as src,
+                    cb.data
+             FROM call_log cl
+             LEFT JOIN calling_batch cb ON cb.reg_number=cl.reg_number AND cb.active=1"""
+    if where: sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY cl.timestamp DESC LIMIT 10000"
+    try:
+        rows = db_query(sql, tuple(params)) or []
+    except Exception as e:
+        return jsonify({"error": str(e)[:200]}), 500
+    # name lookup fallback from called_log
+    names = {}
+    for reg, nm in (db_query("SELECT reg_number,name FROM called_log") or []):
+        if nm: names[reg] = nm
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow([
+        "Call Date/Time","Caller","Charity Name","Reg Number","Source List","Stage",
+        "Main Phone","Main Email","Website",
+        "Contact Person","Job Role","Contact Phone","Contact Email",
+        "Total Income (£)","Statutory (£)",
+        "Call Outcome","Call Duration","Synced to Maximizer","Call Notes"
+    ])
+    for r in rows:
+        ts, cllr, reg, phone_used, oc, notes, dur, synced, src, cbdata = r
+        c = {}
+        try:
+            if cbdata: c = json.loads(cbdata)
+        except Exception: c = {}
+        name = c.get("name") or c.get("charity_name") or names.get(reg,"") or ""
+        ov = _contact_overrides.get(reg, {}) or {}
+        main_phone = ov.get("phone") or c.get("phone") or ""
+        main_email = ov.get("email") or c.get("email") or ""
+        website    = ov.get("website") or c.get("website") or ""
+        # primary contact (first of the 3 if present)
+        contacts = ov.get("contacts") or []
+        if contacts:
+            cp = contacts[0]
+            con_name, con_role = cp.get("name",""), cp.get("role","")
+            con_phone, con_email = cp.get("phone",""), cp.get("email","")
+            # append extra contacts inline
+            extras = []
+            for x in contacts[1:]:
+                seg = (x.get("name","") or "")
+                if x.get("role"): seg += f" ({x['role']})"
+                if x.get("phone"): seg += f" {x['phone']}"
+                if x.get("email"): seg += f" {x['email']}"
+                if seg.strip(): extras.append(seg.strip())
+            if extras:
+                con_name = con_name + "  ||  " + "  ||  ".join(extras)
+        else:
+            con_name  = ov.get("name","")
+            con_role  = ov.get("role","")
+            con_phone = ov.get("cphone","")
+            con_email = ov.get("cemail","")
+        stage = _statuses.get(f"calling|{reg}","") or _statuses.get(f"{src}|{reg}","")
+        income = c.get("total_income","") or c.get("latest_income","")
+        statutory = c.get("statutory","") or (c.get("financials",{}) or {}).get("statutory","")
+        dn = int(dur or 0)
+        w.writerow([
+            (ts or "")[:16], cllr or "", name, reg, CALLING_CATEGORIES.get(src, src or ""), stage,
+            main_phone, main_email, website,
+            con_name, con_role, con_phone, con_email,
+            income, statutory,
+            oc or "", f"{dn//60}:{dn%60:02d}", ("Yes" if synced else "No"), (notes or "")
+        ])
+    ts_now = datetime.utcnow().strftime("%Y%m%d_%H%M")
+    return Response(buf.getvalue(), mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=call_history_{ts_now}.csv"})
+
 @app.route("/api/call/history")
 def call_history():
     """Get all calls for a charity, most recent first."""
@@ -2752,7 +2838,19 @@ def api_calling_batch():
                             "note": "No active calling list yet. Pick a source and generate your first 100."})
         meta = db_query("SELECT batch_no,created_at,category FROM calling_batch WHERE active=1 LIMIT 1")
         batch_no, created_at, category = (meta[0] if meta else (1, "", "all"))
-        done = sum(1 for c in batch if c["completed"])
+        # A charity counts as "done" if it's been called in ANY way the row shows green:
+        # the batch completed flag, OR logged as called today, OR ever called.
+        # This keeps the X/100 counter in sync with the green "Called" marks.
+        done = sum(1 for c in batch if c.get("completed") or c.get("called_today") or c.get("ever_called"))
+        # Self-heal: if a row is called but its completed flag is unset, set it so the
+        # count is consistent on future loads and across users.
+        try:
+            for c in batch:
+                if (c.get("called_today") or c.get("ever_called")) and not c.get("completed"):
+                    db_exec("UPDATE calling_batch SET completed=1 WHERE active=1 AND reg_number=?", (c["reg_number"],))
+                    c["completed"] = 1
+        except Exception as _e:
+            print(f"  completed self-heal error: {_e}")
         return jsonify({
             "charities": batch, "count": len(batch), "has_batch": True,
             "batch_no": batch_no, "created_at": created_at, "category": category,
