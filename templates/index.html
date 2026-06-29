@@ -375,7 +375,7 @@ select:focus{outline:none;border-color:var(--green)}
   <div class="calling-bar">
     <div class="calling-cat">
       <label for="callingCat">Source list:</label>
-      <select id="callingCat">
+      <select id="callingCat" onchange="renderSourceFilters()">
         <option value="all">⭐ All combined</option>
         <option value="prospects">📋 Prospect Lists</option>
         <option value="new">🆕 Newly Registered</option>
@@ -385,6 +385,10 @@ select:focus{outline:none;border-color:var(--green)}
         <option value="search">🔍 Charity Search (saved)</option>
       </select>
       <button id="genListBtn" class="btn btn-sm" style="background:#1e3a5f;color:#fff;margin-left:8px" onclick="generateList()">✨ Generate List</button>
+    </div>
+    <div id="sourceFilters" style="display:none;margin-top:10px;padding:10px 14px;background:#f0f4f9;border:1px solid #d5dfeb;border-radius:8px;font-size:12px">
+      <span style="font-weight:700;color:#1e3a5f;margin-right:10px">🔎 Refine before generating:</span>
+      <span id="sourceFiltersInner" style="display:inline-flex;gap:16px;flex-wrap:wrap;align-items:center"></span>
     </div>
     <div class="calling-exclude" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--t2)">
       <span style="color:var(--t3);font-weight:600">Exclude from list:</span>
@@ -1215,9 +1219,18 @@ function findContact(reg, btn){
      if(d.role)  ov.role=d.role;
      if(d.phone) ov.cphone=d.phone;
      if(d.email) ov.cemail=d.email;
+     if(d.contacts && d.contacts.length) ov.contacts=d.contacts;
      contactOverrides[reg]=ov;
      if(d.phone) phoneOverrides[reg]=phoneOverrides[reg]||d.phone;
      updateContactCells(reg);
+     // If 2+ contacts, re-render the name cell to show them stacked
+     if(d.contacts && d.contacts.length>1){
+       document.querySelectorAll('td.ct-cell[data-reg="'+reg+'"][data-field="name"]').forEach(td=>{
+         const fresh=ctCell(reg,'name','');
+         const tmp=document.createElement('tbody'); tmp.innerHTML='<tr>'+fresh+'</tr>';
+         td.replaceWith(tmp.querySelector('td'));
+       });
+     }
      // If AI found multiple contacts, show them all in a popup so Muhanna can pick
      const contacts=d.contacts||[];
      if(contacts.length>1){
@@ -1254,6 +1267,23 @@ function updateContactCells(reg){
 function ctCell(reg, field, ccVal){
   const ov=(contactOverrides[reg]||{})[field]||'';
   const val=ov||ccVal||'';
+  // Special: 'name' field — if multiple AI contacts exist, stack them vertically
+  if(field==='name'){
+    const list=(contactOverrides[reg]||{}).contacts||[];
+    if(list.length>1){
+      const stacked=list.map((c,i)=>{
+        const phoneL=c.phone?`<a href="tel:${esc(c.phone)}" onclick="event.stopPropagation()" style="color:#1e40af">☎</a>`:'';
+        const emailL=c.email?`<a href="mailto:${esc(c.email)}" onclick="event.stopPropagation()" style="color:#1e40af">✉</a>`:'';
+        return `<div style="padding:3px 0;${i>0?'border-top:1px dashed var(--bd)':''}">
+          <div style="font-weight:${i===0?'700':'500'};font-size:11px">${i===0?'⭐ ':''}${esc(c.name||'(no name)')}</div>
+          ${c.role?`<div style="font-size:10px;color:var(--t3)">${esc(c.role)}</div>`:''}
+          <div style="font-size:10px;display:flex;gap:8px">${phoneL}${c.phone?`<span style="font-family:monospace">${esc(c.phone)}</span>`:''}</div>
+          <div style="font-size:10px">${emailL} ${c.email?`<span>${esc(c.email)}</span>`:''}</div>
+        </div>`;
+      }).join('');
+      return `<td class="ct-cell ct-multi" data-reg="${esc(reg)}" data-field="name" style="min-width:160px;vertical-align:top">${stacked}<span class="ct-ico" onclick="event.stopPropagation();editContacts('${esc(reg)}')" style="font-size:10px" title="Edit contacts">✎</span></td>`;
+    }
+  }
   const edited=!!ov && ov!==(ccVal||'');
   const cls='ct-cell'+(edited?' ct-edited':'')+(!val?' ct-empty':'');
   const ph={phone:'+ Add phone',email:'+ Add email',website:'+ Add website',name:'+ Add contact',role:'+ Add job role',cphone:'+ Add direct phone',cemail:'+ Add direct email'}[field]||'+ Add';
@@ -1265,9 +1295,71 @@ function ctCell(reg, field, ccVal){
     const href=/^https?:\/\//i.test(val)?val:'https://'+val;
     disp=`<a href="${esc(href)}" target="_blank" rel="noopener" class="ct-val ct-link" title="${esc(val)} — click to open" onclick="event.stopPropagation()" style="color:#1e40af;text-decoration:underline">${esc(clean)}</a>`;
   } else disp=`<span class="ct-val">${esc(val)}</span>`;
-  return`<td class="${cls}" data-reg="${esc(reg)}" data-field="${field}" data-cc="${esc(ccVal||'')}" onclick="ctEdit(this,event)">${disp}<span class="ct-ico" onclick="event.stopPropagation();ctEditForce(this.closest('td'))">✎</span></td>`;
+  const editAction = (field==='name') ? `editContacts('${esc(reg)}')` : `ctEditForce(this.closest('td'))`;
+  const cellClick = (field==='name') ? `editContacts('${esc(reg)}')` : `ctEdit(this,event)`;
+  return`<td class="${cls}" data-reg="${esc(reg)}" data-field="${field}" data-cc="${esc(ccVal||'')}" onclick="${cellClick}">${disp}<span class="ct-ico" onclick="event.stopPropagation();${editAction}">✎</span></td>`;
 }
 function ctEditForce(td){ ctEdit(td, null); }
+
+// Edit up to 3 contacts manually (name, role, phone, email each)
+function editContacts(reg){
+  const ov=contactOverrides[reg]||{};
+  let list=(ov.contacts&&ov.contacts.length)?ov.contacts.slice(0,3):[];
+  // Seed from single fields if no array yet
+  if(!list.length && (ov.name||ov.role||ov.cphone||ov.cemail)){
+    list=[{name:ov.name||'',role:ov.role||'',phone:ov.cphone||'',email:ov.cemail||''}];
+  }
+  while(list.length<3) list.push({name:'',role:'',phone:'',email:''});
+  const row=(c,i)=>`
+    <div style="border:1px solid var(--bd);border-left:3px solid ${i===0?'#1d7a3a':'#c89a1a'};border-radius:6px;padding:10px;margin-bottom:8px">
+      <div style="font-size:11px;font-weight:700;color:var(--t3);margin-bottom:6px">${i===0?'⭐ Primary contact':'Contact '+(i+1)}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <input id="ec-name-${i}" placeholder="Name" value="${esc(c.name||'')}" style="padding:6px;border:1px solid var(--bd);border-radius:4px;font-size:12px">
+        <input id="ec-role-${i}" placeholder="Job role" value="${esc(c.role||'')}" style="padding:6px;border:1px solid var(--bd);border-radius:4px;font-size:12px">
+        <input id="ec-phone-${i}" placeholder="Phone" value="${esc(c.phone||'')}" style="padding:6px;border:1px solid var(--bd);border-radius:4px;font-size:12px">
+        <input id="ec-email-${i}" placeholder="Email" value="${esc(c.email||'')}" style="padding:6px;border:1px solid var(--bd);border-radius:4px;font-size:12px">
+      </div>
+    </div>`;
+  const html=`<div style="max-height:60vh;overflow-y:auto">
+    <p style="font-size:12px;color:var(--t3);margin:0 0 12px">Add or edit up to 3 contacts (most senior first). Leave blank to skip.</p>
+    ${list.map(row).join('')}
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+      <button class="btn btn-outline btn-sm" onclick="closeGenericModal(true)">Cancel</button>
+      <button class="btn btn-green btn-sm" onclick="saveContacts('${esc(reg)}')">Save contacts</button>
+    </div></div>`;
+  showModal('👥 Edit Contacts — Reg '+esc(reg), html);
+}
+function saveContacts(reg){
+  const out=[];
+  for(let i=0;i<3;i++){
+    const c={
+      name:(document.getElementById('ec-name-'+i)||{}).value||'',
+      role:(document.getElementById('ec-role-'+i)||{}).value||'',
+      phone:(document.getElementById('ec-phone-'+i)||{}).value||'',
+      email:(document.getElementById('ec-email-'+i)||{}).value||''
+    };
+    if(c.name||c.role||c.phone||c.email) out.push(c);
+  }
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
+  fetch('/api/contacts/save',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({reg_number:reg,contacts:out,caller})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ alert('Save failed: '+(d.error||'unknown')); return; }
+      const ov=contactOverrides[reg]||{};
+      ov.contacts=out;
+      if(out[0]){ ov.name=out[0].name; ov.role=out[0].role; ov.cphone=out[0].phone; ov.cemail=out[0].email; }
+      contactOverrides[reg]=ov;
+      closeGenericModal(true);
+      // Re-render the name cell(s)
+      document.querySelectorAll('td.ct-cell[data-reg="'+reg+'"][data-field="name"]').forEach(td=>{
+        const fresh=ctCell(reg,'name','');
+        const tmp=document.createElement('tbody'); tmp.innerHTML='<tr>'+fresh+'</tr>';
+        td.replaceWith(tmp.querySelector('td'));
+      });
+      updateContactCells(reg);
+      cToast('✓ Contacts saved');
+    }).catch(e=>alert('Save failed: '+e.message));
+}
 
 function ctEdit(td, ev){
   if(td.classList.contains('ct-editing')) return;
@@ -3319,13 +3411,60 @@ function loadCalling(){
         note.innerHTML='ℹ️ '+esc(d.note||'No active calling list. Pick a source and click Generate List.');
         note.style.display='block';
       } else if(d.category){
-        const sel=document.getElementById('callingCat'); if(sel) sel.value=d.category;
+        const sel=document.getElementById('callingCat'); if(sel){ sel.value=d.category; renderSourceFilters(); }
       }
       renderCalling(d);
     })
     .catch(e=>{
       body.innerHTML=`<tr><td colspan="23" style="text-align:center;padding:30px"><div class="err-box">⚠ ${esc(e.message)}</div></td></tr>`;
     });
+}
+
+// ── Dynamic source filters (shown below the dropdown before generating) ─────────
+const SOURCE_FILTERS={
+  milestones:[
+    {id:'sf-years',label:'Anniversary milestone',type:'select',opts:[
+      {v:'',t:'All milestones'},{v:'5',t:'5 years'},{v:'10',t:'10 years'},{v:'15',t:'15 years'},
+      {v:'20',t:'20 years'},{v:'25',t:'25 years'},{v:'30',t:'30 years'},{v:'40',t:'40 years'},{v:'50',t:'50 years'}]},
+    {id:'sf-timing',label:'Anniversary timing',type:'select',opts:[
+      {v:'',t:'All timing'},{v:'0.25',t:'Within a week'},{v:'1',t:'Within 1 month'},
+      {v:'2',t:'Within 2 months'},{v:'3',t:'Within 3 months'},{v:'6',t:'Within 6 months'}]},
+  ],
+  late:[
+    {id:'sf-latemonths',label:'How late',type:'select',opts:[
+      {v:'',t:'All'},{v:'over12',t:'Over 12 months'},{v:'6to12',t:'6 to 12 months'},{v:'under6',t:'Under 6 months'}]},
+  ],
+  new:[
+    {id:'sf-newdays',label:'Registered in last',type:'select',opts:[
+      {v:'30',t:'30 days'},{v:'60',t:'60 days'},{v:'90',t:'90 days'}]},
+  ],
+};
+function renderSourceFilters(){
+  const cat=document.getElementById('callingCat').value;
+  const wrap=document.getElementById('sourceFilters');
+  const inner=document.getElementById('sourceFiltersInner');
+  const defs=SOURCE_FILTERS[cat];
+  if(!defs){ wrap.style.display='none'; inner.innerHTML=''; return; }
+  wrap.style.display='block';
+  inner.innerHTML=defs.map(f=>{
+    if(f.type==='select'){
+      return '<label style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--t3);font-weight:600">'+f.label+':</span>'+
+        '<select id="'+f.id+'" style="padding:4px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:inherit">'+
+        f.opts.map(o=>'<option value="'+o.v+'">'+o.t+'</option>').join('')+'</select></label>';
+    }
+    return '';
+  }).join('');
+}
+function getSourceFilters(){
+  const cat=document.getElementById('callingCat').value;
+  const defs=SOURCE_FILTERS[cat];
+  const out={};
+  if(!defs) return out;
+  defs.forEach(f=>{
+    const el=document.getElementById(f.id);
+    if(el && el.value) out[f.id.replace('sf-','')]=el.value;
+  });
+  return out;
 }
 
 function generateList(){
@@ -3376,7 +3515,7 @@ function warmEndpoint(url){
 }
 function runGenerate(cat, mode){
   return fetch('/api/calling_batch/generate',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({category:cat,mode,exclude:getExclusions()})}).then(r=>r.json());
+    body:JSON.stringify({category:cat,mode,exclude:getExclusions(),filters:getSourceFilters()})}).then(r=>r.json());
 }
 function autoLoadAndGenerate(cat, mode){
   const eps=sourceEndpoints(cat);

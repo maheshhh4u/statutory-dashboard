@@ -90,6 +90,8 @@ def db_init():
         for _col in ("email","website","contact_name","contact_role","contact_phone","contact_email"):
             try: client.execute(f"ALTER TABLE phone_overrides ADD COLUMN {_col} TEXT")
             except Exception: pass
+        try: client.execute("ALTER TABLE phone_overrides ADD COLUMN contacts_json TEXT")
+        except Exception: pass
         # Call log — every call made through dashboard
         client.execute("""CREATE TABLE IF NOT EXISTS call_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -244,7 +246,7 @@ def db_load_state():
 
         _contact_overrides.clear()
         try:
-            rows = db_query("SELECT reg_number, phone, email, website, contact_name, contact_role, contact_phone, contact_email FROM phone_overrides")
+            rows = db_query("SELECT reg_number, phone, email, website, contact_name, contact_role, contact_phone, contact_email, contacts_json FROM phone_overrides")
             for r in rows:
                 d = {}
                 if r[1]: d["phone"]   = r[1]
@@ -254,6 +256,9 @@ def db_load_state():
                 if len(r) > 5 and r[5]: d["role"]   = r[5]
                 if len(r) > 6 and r[6]: d["cphone"] = r[6]
                 if len(r) > 7 and r[7]: d["cemail"] = r[7]
+                if len(r) > 8 and r[8]:
+                    try: d["contacts"] = json.loads(r[8])
+                    except Exception: pass
                 if d: _contact_overrides[r[0]] = d
             print(f"[Turso] Loaded {len(_contact_overrides)} contact overrides")
         except Exception as e:
@@ -795,6 +800,54 @@ CONTACT_LIMITS   = {"phone": 30, "email": 100, "website": 200, "name": 80, "role
 def contacts_bulk():
     """All contact overrides as {reg: {phone,email,website}} for frontend bootstrap."""
     return jsonify(_contact_overrides)
+
+@app.route("/api/contacts/save", methods=["POST"])
+def contacts_save():
+    """Save up to 3 manually-entered contacts for a charity."""
+    data = request.json or {}
+    reg = str(data.get("reg_number","")).strip()
+    caller = str(data.get("caller","")).strip() or "Manual"
+    raw = data.get("contacts") or []
+    if not reg:
+        return jsonify({"ok": False, "error": "Missing reg_number"}), 400
+    contacts = []
+    for c in raw[:3]:
+        cc = {"name":  str(c.get("name") or "").strip()[:CONTACT_LIMITS["name"]],
+              "role":  str(c.get("role") or "").strip()[:CONTACT_LIMITS["role"]],
+              "phone": str(c.get("phone") or "").strip()[:CONTACT_LIMITS["cphone"]],
+              "email": str(c.get("email") or "").strip()[:CONTACT_LIMITS["cemail"]]}
+        if any(cc.values()): contacts.append(cc)
+    top = contacts[0] if contacts else {"name":"","role":"","phone":"","email":""}
+    existing = db_query("SELECT phone,email,website FROM phone_overrides WHERE reg_number=?", (reg,))
+    e0 = existing[0] if existing else ("","","")
+    def _g(i): return (e0[i] if len(e0)>i else "") or ""
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    db_exec("""INSERT OR REPLACE INTO phone_overrides
+               (reg_number,phone,email,website,contact_name,contact_role,contact_phone,contact_email,contacts_json,updated_by,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (reg, _g(0), _g(1), _g(2), top["name"], top["role"], top["phone"], top["email"],
+             json.dumps(contacts), caller, ts))
+    ov = _contact_overrides.get(reg, {}) or {}
+    if top["name"]:  ov["name"]   = top["name"]
+    if top["role"]:  ov["role"]   = top["role"]
+    if top["phone"]: ov["cphone"] = top["phone"]
+    if top["email"]: ov["cemail"] = top["email"]
+    ov["contacts"] = contacts
+    _contact_overrides[reg] = ov
+    # Sync a note to Maximizer listing all contacts
+    try:
+        found = mx_find_by_org_number(reg)
+        if found and found.get("key") and contacts:
+            lines = ["👥 Contacts (manual entry):"]
+            for i,c in enumerate(contacts,1):
+                seg = f"{i}. {c['name'] or '(no name)'}" + (f" — {c['role']}" if c['role'] else "")
+                if c["phone"]: seg += f"  ☎ {c['phone']}"
+                if c["email"]: seg += f"  ✉ {c['email']}"
+                lines.append(seg)
+            mx_create_note(found["key"], "  |  ".join(lines), caller, timestamp=ts)
+    except Exception as e:
+        print(f"  contacts_save→mx note error: {e}")
+    return jsonify({"ok": True, "contacts": contacts})
 
 @app.route("/api/state/bulk")
 def state_bulk():
@@ -1735,11 +1788,13 @@ def api_ai_find_contact():
             if out["phone"]: cur["cphone"] = out["phone"]
             if out["email"]: cur["cemail"] = out["email"]
             ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            contacts_json = json.dumps(contacts)
             db_exec("""INSERT OR REPLACE INTO phone_overrides
-                       (reg_number,phone,email,website,contact_name,contact_role,contact_phone,contact_email,updated_by,updated_at)
-                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                    (reg, cur["phone"], cur["email"], cur["website"], cur["name"], cur["role"], cur["cphone"], cur["cemail"], caller, ts))
+                       (reg_number,phone,email,website,contact_name,contact_role,contact_phone,contact_email,contacts_json,updated_by,updated_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                    (reg, cur["phone"], cur["email"], cur["website"], cur["name"], cur["role"], cur["cphone"], cur["cemail"], contacts_json, caller, ts))
             _contact_overrides[reg] = {k:v for k,v in cur.items() if v}
+            _contact_overrides[reg]["contacts"] = contacts
             try:
                 found = mx_find_by_org_number(reg)
                 if found and found.get("key"):
@@ -2538,6 +2593,8 @@ def _normalize_for_calling(c, source):
         "prev_statutory": pstat,
         "months_late": c.get("months_late",""),
         "months_to_anniversary": c.get("months_to_anniversary",""),
+        "milestone": c.get("milestone",""),
+        "date_registered": c.get("date_registered",""),
         "spend_over_income": spend_over,
         "removed": bool(c.get("removed", False)),
         "source": source,
@@ -2739,6 +2796,44 @@ def api_calling_batch_generate():
     leftover_regs = set(c["reg_number"] for c in leftovers)
 
     pool = [c for c in scored if not _ever_called(c["reg_number"]) and not _name_excluded(c) and c["reg_number"] not in _calling_excl]
+
+    # ── Source-specific filters (Anniversary milestone/timing, Late months, New days) ──
+    filters = data.get("filters") or {}
+    def _num(v, default=None):
+        try: return float(v)
+        except: return default
+    def _passes_filters(c):
+        # Anniversary milestone (exact years) + timing (months to anniversary)
+        yrs = filters.get("years")
+        if yrs:
+            try:
+                if int(c.get("milestone", 0) or 0) != int(yrs): return False
+            except: pass
+        timing = filters.get("timing")
+        if timing:
+            mta = _num(c.get("months_to_anniversary"), None)
+            if mta is None or mta > _num(timing, 999): return False
+        # Late accounts: months_late bands
+        latem = filters.get("latemonths")
+        if latem:
+            ml = _num(c.get("months_late"), None)
+            if ml is None: return False
+            if latem == "over12" and ml < 12: return False
+            if latem == "6to12" and not (6 <= ml < 12): return False
+            if latem == "under6" and ml >= 6: return False
+        # Newly registered: days since registration
+        newdays = filters.get("newdays")
+        if newdays:
+            dr = str(c.get("date_registered","") or "")[:10]
+            if not dr: return False
+            try:
+                from datetime import datetime as _dt
+                days = (_dt.utcnow().date() - _dt.strptime(dr, "%Y-%m-%d").date()).days
+                if days > int(newdays): return False
+            except: return False
+        return True
+    if filters:
+        pool = [c for c in pool if _passes_filters(c)]
 
     selected = []; used = set()
     if mode == "leftovers":
