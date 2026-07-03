@@ -2891,6 +2891,17 @@ def api_call_history_list_export():
         return jsonify({"error": "openpyxl not installed. Add 'openpyxl' to requirements.txt and redeploy."}), 500
     data = request.get_json(force=True) or {}
     regs = [str(r).strip() for r in (data.get("regs") or []) if str(r).strip()]
+    mode = str(data.get("mode","")).strip()  # "all" = use filters, else use regs
+    # "All items across all pages" → recompute the full filtered list from the same
+    # filters the History view is using, so the export isn't limited to the current page.
+    if mode == "all" or not regs:
+        flt = data.get("filters") or {}
+        full = _build_call_history_rows(
+            called_from=str(flt.get("called_from","")).strip(),
+            called_to=str(flt.get("called_to","")).strip(),
+            fu_from=str(flt.get("fu_from","")).strip(),
+            fu_to=str(flt.get("fu_to","")).strip())
+        regs = [r["reg_number"] for r in full]
     if not regs:
         return jsonify({"error": "No charities to export"}), 400
     regset = set(regs)
@@ -2970,11 +2981,72 @@ def api_call_history_list_export():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=call_history_{tstamp}.xlsx"})
 
+def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to=""):
+    """Return the full filtered + sorted list of previously-called charities (no paging)."""
+    # Last-called timestamp per charity
+    last_called = {}
+    for reg, ts in (db_query("SELECT reg_number, MAX(timestamp) FROM call_log GROUP BY reg_number") or []):
+        if reg and ts: last_called[reg] = str(ts)
+    for reg, ts in (db_query("SELECT reg_number, MAX(timestamp) FROM called_log GROUP BY reg_number") or []):
+        if reg and ts:
+            cur = last_called.get(reg, "")
+            if str(ts) > cur: last_called[reg] = str(ts)
+    # Follow-ups
+    followups = {}
+    for reg, fat, done in (db_query("SELECT reg_number, follow_up_at, done FROM follow_ups ORDER BY follow_up_at ASC") or []):
+        if not reg: continue
+        followups.setdefault(reg, {"next": None, "any": None})
+        followups[reg]["any"] = str(fat)
+        if not done and followups[reg]["next"] is None:
+            followups[reg]["next"] = str(fat)
+    regs = set(last_called.keys())
+    if not regs: return []
+    batch_data = {}
+    for reg, data in (db_query("SELECT reg_number, data FROM calling_batch") or []):
+        if reg in batch_data: continue
+        try:
+            o = json.loads(data) if data else {}
+            if o: batch_data[reg] = o
+        except Exception: pass
+    names = {}
+    for reg, nm in (db_query("SELECT reg_number, name FROM called_log") or []):
+        if nm: names[reg] = nm
+    rows = []
+    for reg in regs:
+        lc = last_called.get(reg, "")
+        fu = followups.get(reg, {})
+        fu_next = fu.get("next")
+        if called_from and (not lc or lc[:10] < called_from): continue
+        if called_to   and (not lc or lc[:10] > called_to):   continue
+        if fu_from or fu_to:
+            fdate = (fu_next or fu.get("any") or "")[:10]
+            if not fdate: continue
+            if fu_from and fdate < fu_from: continue
+            if fu_to   and fdate > fu_to:   continue
+        base = dict(batch_data.get(reg, {}))
+        base["reg_number"] = reg
+        if not base.get("name"): base["name"] = names.get(reg, reg)
+        ov = _contact_overrides.get(reg) or {}
+        if ov.get("phone"):   base["phone"]   = ov["phone"]
+        if ov.get("email"):   base["email"]   = ov["email"]
+        if ov.get("website"): base["website"] = ov["website"]
+        base["completed"]    = 1
+        base["called_today"] = _called_today(reg)
+        base["ever_called"]  = True
+        base["last_called"]  = lc
+        base["follow_up_at"] = fu_next or ""
+        base["latest_outcome"] = ""
+        if not base.get("source_detail"):
+            base["source_detail"] = "📞 Previously called"
+        rows.append(base)
+    rows.sort(key=lambda x: x.get("last_called",""), reverse=True)
+    return rows
+
 @app.route("/api/call_history_list")
 def api_call_history_list():
     """Charities that have EVER been called, in the same row shape as Daily Calling,
     so the History sub-tab can show them with full call functionality. Supports
-    optional date filters (last-called range, follow-up range) and a result limit."""
+    optional date filters (last-called range, follow-up range), a page size and offset."""
     try:
         called_from = str(request.args.get("called_from","")).strip()
         called_to   = str(request.args.get("called_to","")).strip()
@@ -2982,79 +3054,15 @@ def api_call_history_list():
         fu_to       = str(request.args.get("fu_to","")).strip()
         try: limit = min(1000, max(10, int(request.args.get("limit", "100"))))
         except: limit = 100
+        try: offset = max(0, int(request.args.get("offset", "0")))
+        except: offset = 0
 
-        # Last-called timestamp per charity, from call_log (calls with outcomes) and
-        # called_log (called marks). Take the most recent of either.
-        last_called = {}
-        for reg, ts in (db_query("SELECT reg_number, MAX(timestamp) FROM call_log GROUP BY reg_number") or []):
-            if reg and ts: last_called[reg] = str(ts)
-        for reg, ts in (db_query("SELECT reg_number, MAX(timestamp) FROM called_log GROUP BY reg_number") or []):
-            if reg and ts:
-                cur = last_called.get(reg, "")
-                if str(ts) > cur: last_called[reg] = str(ts)
-
-        # Next (or most recent) follow-up per charity
-        followups = {}
-        for reg, fat, done in (db_query("SELECT reg_number, follow_up_at, done FROM follow_ups ORDER BY follow_up_at ASC") or []):
-            if not reg: continue
-            followups.setdefault(reg, {"next": None, "any": None})
-            followups[reg]["any"] = str(fat)
-            if not done and followups[reg]["next"] is None:
-                followups[reg]["next"] = str(fat)
-
-        regs = set(last_called.keys())
-        if not regs:
-            return jsonify({"charities": [], "count": 0, "total_called": 0})
-
-        # Charity display data: prefer any calling_batch.data we have (active or not),
-        # then contact overrides, then a name from called_log.
-        batch_data = {}
-        for reg, data in (db_query("SELECT reg_number, data FROM calling_batch") or []):
-            if reg in batch_data: continue
-            try:
-                o = json.loads(data) if data else {}
-                if o: batch_data[reg] = o
-            except Exception: pass
-        names = {}
-        for reg, nm in (db_query("SELECT reg_number, name FROM called_log") or []):
-            if nm: names[reg] = nm
-
-        # Build rows
-        rows = []
-        for reg in regs:
-            lc = last_called.get(reg, "")
-            fu = followups.get(reg, {})
-            fu_next = fu.get("next")
-            # Apply filters
-            if called_from and (not lc or lc[:10] < called_from): continue
-            if called_to   and (not lc or lc[:10] > called_to):   continue
-            if fu_from or fu_to:
-                fdate = (fu_next or fu.get("any") or "")[:10]
-                if not fdate: continue
-                if fu_from and fdate < fu_from: continue
-                if fu_to   and fdate > fu_to:   continue
-            base = dict(batch_data.get(reg, {}))
-            base["reg_number"] = reg
-            if not base.get("name"): base["name"] = names.get(reg, reg)
-            ov = _contact_overrides.get(reg) or {}
-            if ov.get("phone"):   base["phone"]   = ov["phone"]
-            if ov.get("email"):   base["email"]   = ov["email"]
-            if ov.get("website"): base["website"] = ov["website"]
-            base["completed"]    = 1
-            base["called_today"] = _called_today(reg)
-            base["ever_called"]  = True
-            base["last_called"]  = lc
-            base["follow_up_at"] = fu_next or ""
-            if not base.get("source_detail"):
-                # provide a light detail so the column isn't empty
-                base["source_detail"] = "📞 Previously called"
-            rows.append(base)
-
-        # Sort by most recently called first
-        rows.sort(key=lambda x: x.get("last_called",""), reverse=True)
+        rows = _build_call_history_rows(called_from, called_to, fu_from, fu_to)
         total = len(rows)
-        rows = rows[:limit]
-        return jsonify({"charities": rows, "count": len(rows), "total_called": total})
+        page_rows = rows[offset:offset+limit]
+        return jsonify({"charities": page_rows, "count": len(page_rows),
+                        "total_called": total, "total_filtered": total,
+                        "offset": offset, "limit": limit})
     except Exception as e:
         print(f"  /api/call_history_list error: {e}")
         import traceback; traceback.print_exc()

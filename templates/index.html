@@ -498,11 +498,11 @@ select:focus{outline:none;border-color:var(--green)}
       <div><label style="font-size:11px;color:var(--t3);display:block">Follow-up to</label>
         <input type="date" id="ch2-fu-to" style="padding:6px;border:1px solid var(--bd);border-radius:4px"></div>
       <div><label style="font-size:11px;color:var(--t3);display:block">Show</label>
-        <select id="ch2-limit" style="padding:6px;border:1px solid var(--bd);border-radius:4px" onchange="loadCallHistoryList()">
+        <select id="ch2-limit" style="padding:6px;border:1px solid var(--bd);border-radius:4px" onchange="loadCallHistoryList(0)">
           <option value="50">50</option><option value="100" selected>100</option>
           <option value="200">200</option><option value="500">500</option>
         </select></div>
-      <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="loadCallHistoryList()">🔍 Apply</button>
+      <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="loadCallHistoryList(0)">🔍 Apply</button>
       <button class="btn btn-outline btn-sm" onclick="clearCallHistoryFilters()">Clear</button>
       <button class="btn btn-sm" style="background:#1d7a3a;color:#fff" onclick="exportHistoryExcel()">⬇ Export to Excel</button>
       <input type="text" id="ch2-search" placeholder="Filter name / reg…" oninput="filterHistoryTable()" style="width:160px;padding:6px;border:1px solid var(--bd);border-radius:4px">
@@ -2507,10 +2507,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.9";
+const APP_VERSION = "1.10";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.10", date:"2026-07", title:"Call History pagination",
+    changes:[
+      "Added First / Prev / Next / Last pagination to Call History so you can page through all called charities at the chosen page size (50 / 100 / 200 / 500).",
+      "The count now shows \u201CShowing 1\u201351 of 240 called\u201D and the page indicator shows the current and total pages.",
+      "The Call History Excel export \u201CAll items\u201D now covers every page of the filtered list (not just the visible page).",
+    ]},
   { v:"1.9", date:"2026-07", title:"Call History Excel export & green fix",
     changes:[
       "Added \u201CExport to Excel\u201D to the Call History view, with a choice of all items or only the ticked ones.",
@@ -3883,6 +3889,17 @@ function setupCallingScroll(){
   },40);
 }
 let historyData=[];
+let historyPage=0;      // 0-based current page
+let historyTotal=0;     // total filtered rows
+function getHistoryFilters(){
+  return {
+    called_from:(document.getElementById('ch2-called-from')||{}).value||'',
+    called_to:(document.getElementById('ch2-called-to')||{}).value||'',
+    fu_from:(document.getElementById('ch2-fu-from')||{}).value||'',
+    fu_to:(document.getElementById('ch2-fu-to')||{}).value||''
+  };
+}
+function getHistoryPageSize(){ return parseInt((document.getElementById('ch2-limit')||{}).value||'100')||100; }
 function switchCallingSub(which){
   const daily=document.getElementById('calling-view-daily');
   const hist=document.getElementById('calling-view-history');
@@ -3892,7 +3909,7 @@ function switchCallingSub(which){
     daily.style.display='none'; hist.style.display='block';
     bh.classList.add('active'); bh.style.borderBottomColor='#1e3a5f'; bh.style.color='#1e3a5f'; bh.style.fontWeight='700';
     bd.classList.remove('active'); bd.style.borderBottomColor='transparent'; bd.style.color='var(--t3)'; bd.style.fontWeight='600';
-    if(!historyData.length) loadCallHistoryList();
+    if(!historyData.length) loadCallHistoryList(0);
   } else {
     hist.style.display='none'; daily.style.display='block';
     bd.classList.add('active'); bd.style.borderBottomColor='#1e3a5f'; bd.style.color='#1e3a5f'; bd.style.fontWeight='700';
@@ -3901,26 +3918,31 @@ function switchCallingSub(which){
 }
 function clearCallHistoryFilters(){
   ['ch2-called-from','ch2-called-to','ch2-fu-from','ch2-fu-to','ch2-search'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
-  loadCallHistoryList();
+  loadCallHistoryList(0);
 }
-function loadCallHistoryList(){
+function loadCallHistoryList(page){
+  if(page==null) page=0;
+  historyPage=page;
   const body=document.getElementById('historyBody');
   body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">Loading call history…</td></tr>';
-  const qs=new URLSearchParams({
-    called_from:(document.getElementById('ch2-called-from')||{}).value||'',
-    called_to:(document.getElementById('ch2-called-to')||{}).value||'',
-    fu_from:(document.getElementById('ch2-fu-from')||{}).value||'',
-    fu_to:(document.getElementById('ch2-fu-to')||{}).value||'',
-    limit:(document.getElementById('ch2-limit')||{}).value||'100'
-  }).toString();
+  const size=getHistoryPageSize();
+  const f=getHistoryFilters();
+  const qs=new URLSearchParams({...f, limit:size, offset:page*size}).toString();
   fetch('/api/call_history_list?'+qs)
     .then(r=>r.json()).then(d=>{
       if(d.error){ body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(d.error)+'</div></td></tr>'; return; }
       historyData=d.charities||[];
+      historyTotal=d.total_filtered||d.total_called||0;
       mergeHistoryIntoCalling(historyData);
       renderHistoryList(d);
     })
     .catch(e=>{ body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(e.message)+'</div></td></tr>'; });
+}
+function historyGoto(page){
+  const size=getHistoryPageSize();
+  const maxPage=Math.max(0, Math.ceil(historyTotal/size)-1);
+  page=Math.max(0, Math.min(page, maxPage));
+  loadCallHistoryList(page);
 }
 function mergeHistoryIntoCalling(rows){
   if(typeof callingData==='undefined') return;
@@ -3932,12 +3954,39 @@ function renderHistoryList(d){
   const cnt=document.getElementById('ch2-count');
   if(!historyData.length){
     body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">No previously-called charities match these filters.</td></tr>';
-    if(cnt) cnt.textContent='';
+    if(cnt) cnt.innerHTML='';
+    renderHistoryPager();
     return;
   }
   body.innerHTML=historyData.map((c,i)=>callingRowHtml(c,i,{history:true})).join('');
-  if(cnt) cnt.textContent='Showing '+historyData.length+(d.total_called>historyData.length?(' of '+d.total_called+' called'):'');
+  const size=getHistoryPageSize();
+  const start=historyPage*size+1;
+  const end=historyPage*size+historyData.length;
+  if(cnt) cnt.innerHTML='Showing <b>'+start+'–'+end+'</b> of <b>'+historyTotal+'</b> called';
   filterHistoryTable();
+  renderHistoryPager();
+}
+function renderHistoryPager(){
+  let pager=document.getElementById('history-pager');
+  if(!pager){
+    pager=document.createElement('div');
+    pager.id='history-pager';
+    pager.style.cssText='display:flex;gap:6px;align-items:center;justify-content:center;padding:12px 0;flex-wrap:wrap';
+    const wrap=document.getElementById('calling-view-history');
+    if(wrap) wrap.appendChild(pager);
+  }
+  const size=getHistoryPageSize();
+  const maxPage=Math.max(0, Math.ceil(historyTotal/size)-1);
+  if(historyTotal<=size){ pager.innerHTML=''; return; }
+  const btn=(label,page,disabled,title)=>'<button class="btn btn-sm '+(disabled?'btn-outline':'')+'" '+
+    (disabled?'disabled style="opacity:.4"':'style="background:#1e3a5f;color:#fff"')+
+    ' title="'+(title||'')+'" onclick="historyGoto('+page+')">'+label+'</button>';
+  pager.innerHTML=
+    btn('« First',0,historyPage===0,'First page')+
+    btn('‹ Prev',historyPage-1,historyPage===0,'Previous page')+
+    '<span style="font-size:13px;color:var(--t2);padding:0 8px">Page <b>'+(historyPage+1)+'</b> of <b>'+(maxPage+1)+'</b></span>'+
+    btn('Next ›',historyPage+1,historyPage>=maxPage,'Next page')+
+    btn('Last »',maxPage,historyPage>=maxPage,'Last page');
 }
 function filterHistoryTable(){
   const q=((document.getElementById('ch2-search')||{}).value||'').toLowerCase().trim();
@@ -3957,15 +4006,15 @@ function getHistorySelectedRegs(){
 }
 function exportHistoryExcel(){
   const selected=getHistorySelectedRegs();
-  const total=historyData.length;
+  const total=historyTotal||historyData.length;
   const html=`<div style="padding:4px">
-    <p style="font-size:13px;margin:0 0 14px">Export the Call History list to Excel. What would you like to include?</p>
+    <p style="font-size:13px;margin:0 0 14px">Export the Call History to Excel. What would you like to include?</p>
     <div style="display:flex;flex-direction:column;gap:8px">
-      <button class="btn btn-green" onclick="doExportHistory(false)" style="justify-content:flex-start;text-align:left">
-        📋 All items in the list <span style="color:#eaffea;font-size:12px">(${total} charit${total===1?'y':'ies'})</span>
+      <button class="btn btn-green" onclick="doExportHistory('all')" style="justify-content:flex-start;text-align:left">
+        📋 All items across all pages <span style="color:#eaffea;font-size:12px">(${total} charit${total===1?'y':'ies'})</span>
       </button>
-      <button class="btn ${selected.length?'':'btn-outline'}" ${selected.length?'style="background:#1e3a5f;color:#fff;justify-content:flex-start;text-align:left"':'style="justify-content:flex-start;text-align:left;opacity:.6" disabled'} onclick="doExportHistory(true)">
-        ✅ Only selected items <span style="font-size:12px">(${selected.length} ticked)</span>
+      <button class="btn ${selected.length?'':'btn-outline'}" ${selected.length?'style="background:#1e3a5f;color:#fff;justify-content:flex-start;text-align:left"':'style="justify-content:flex-start;text-align:left;opacity:.6" disabled'} onclick="doExportHistory('selected')">
+        ✅ Only selected items <span style="font-size:12px">(${selected.length} ticked on this page)</span>
       </button>
       ${selected.length?'':'<div style="font-size:11px;color:var(--t3)">Tick the checkboxes on the left of rows to enable \u201Conly selected\u201D.</div>'}
     </div>
@@ -3973,13 +4022,20 @@ function exportHistoryExcel(){
   </div>`;
   showModal('⬇ Export Call History', html);
 }
-function doExportHistory(onlySelected){
-  const regs=onlySelected?getHistorySelectedRegs():historyData.map(c=>c.reg_number);
-  if(!regs.length){ alert('Nothing to export.'); return; }
+function doExportHistory(which){
+  let payload;
+  if(which==='selected'){
+    const regs=getHistorySelectedRegs();
+    if(!regs.length){ alert('No rows are ticked on this page.'); return; }
+    payload={regs};
+  } else {
+    // All items across all pages → send the current filters so the server rebuilds the full set
+    payload={mode:'all', filters:getHistoryFilters()};
+  }
   closeGenericModal(true);
   cToast('Preparing Excel…');
   fetch('/api/call_history_list/export',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({regs})})
+    body:JSON.stringify(payload)})
     .then(r=>{ if(!r.ok) return r.json().then(e=>{throw new Error(e.error||'Export failed')}); return r.blob(); })
     .then(blob=>{
       const url=URL.createObjectURL(blob);
