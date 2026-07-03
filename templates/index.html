@@ -504,6 +504,7 @@ select:focus{outline:none;border-color:var(--green)}
         </select></div>
       <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="loadCallHistoryList()">🔍 Apply</button>
       <button class="btn btn-outline btn-sm" onclick="clearCallHistoryFilters()">Clear</button>
+      <button class="btn btn-sm" style="background:#1d7a3a;color:#fff" onclick="exportHistoryExcel()">⬇ Export to Excel</button>
       <input type="text" id="ch2-search" placeholder="Filter name / reg…" oninput="filterHistoryTable()" style="width:160px;padding:6px;border:1px solid var(--bd);border-radius:4px">
       <div style="margin-left:auto;font-size:12px;color:var(--t3)" id="ch2-count"></div>
     </div>
@@ -2336,7 +2337,7 @@ function refreshCalled(){
   const m={prospects:'p-called',new:'new-called',late:'late-called',old:'old-called',milestones:'ms-called'};
   Object.entries(m).forEach(([p,id])=>{const el=document.getElementById(id);if(el)el.textContent=countC(p);});
   // Highlight called rows in light green (matches each row's Stage dropdown id to the called key)
-  document.querySelectorAll('tr.row-called').forEach(tr=>tr.classList.remove('row-called'));
+  document.querySelectorAll('tr.row-called').forEach(tr=>{ if(!tr.closest('#historyBody')) tr.classList.remove('row-called'); });
   Object.keys(called).forEach(k=>{
     const i=k.indexOf('|'); if(i<0) return;
     const sel=document.getElementById('ss-'+k.slice(0,i)+'-'+k.slice(i+1));
@@ -2506,10 +2507,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.8";
+const APP_VERSION = "1.9";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.9", date:"2026-07", title:"Call History Excel export & green fix",
+    changes:[
+      "Added \u201CExport to Excel\u201D to the Call History view, with a choice of all items or only the ticked ones.",
+      "Fixed the green highlight in Call History so every previously-called row is consistently highlighted (was affected by charities also present in today\u2019s Daily list).",
+    ]},
   { v:"1.8", date:"2026-07", title:"Call History sub-tab with calling",
     changes:[
       "Split Daily Calling into two sub-tabs: \u201CDaily Calling\u201D (today\u2019s list, unchanged) and a new \u201CCall History\u201D view.",
@@ -3931,7 +3937,6 @@ function renderHistoryList(d){
   }
   body.innerHTML=historyData.map((c,i)=>callingRowHtml(c,i,{history:true})).join('');
   if(cnt) cnt.textContent='Showing '+historyData.length+(d.total_called>historyData.length?(' of '+d.total_called+' called'):'');
-  refreshCalled();
   filterHistoryTable();
 }
 function filterHistoryTable(){
@@ -3943,10 +3948,55 @@ function filterHistoryTable(){
     tr.style.display=txt.includes(q)?'':'none';
   });
 }
+function getHistorySelectedRegs(){
+  const regs=[];
+  document.querySelectorAll('#historyBody tr .mxcb:checked').forEach(cb=>{
+    const reg=cb.getAttribute('data-reg'); if(reg) regs.push(reg);
+  });
+  return regs;
+}
+function exportHistoryExcel(){
+  const selected=getHistorySelectedRegs();
+  const total=historyData.length;
+  const html=`<div style="padding:4px">
+    <p style="font-size:13px;margin:0 0 14px">Export the Call History list to Excel. What would you like to include?</p>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-green" onclick="doExportHistory(false)" style="justify-content:flex-start;text-align:left">
+        📋 All items in the list <span style="color:#eaffea;font-size:12px">(${total} charit${total===1?'y':'ies'})</span>
+      </button>
+      <button class="btn ${selected.length?'':'btn-outline'}" ${selected.length?'style="background:#1e3a5f;color:#fff;justify-content:flex-start;text-align:left"':'style="justify-content:flex-start;text-align:left;opacity:.6" disabled'} onclick="doExportHistory(true)">
+        ✅ Only selected items <span style="font-size:12px">(${selected.length} ticked)</span>
+      </button>
+      ${selected.length?'':'<div style="font-size:11px;color:var(--t3)">Tick the checkboxes on the left of rows to enable \u201Conly selected\u201D.</div>'}
+    </div>
+    <div style="text-align:right;margin-top:16px"><button class="btn btn-outline btn-sm" onclick="closeGenericModal(true)">Cancel</button></div>
+  </div>`;
+  showModal('⬇ Export Call History', html);
+}
+function doExportHistory(onlySelected){
+  const regs=onlySelected?getHistorySelectedRegs():historyData.map(c=>c.reg_number);
+  if(!regs.length){ alert('Nothing to export.'); return; }
+  closeGenericModal(true);
+  cToast('Preparing Excel…');
+  fetch('/api/call_history_list/export',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({regs})})
+    .then(r=>{ if(!r.ok) return r.json().then(e=>{throw new Error(e.error||'Export failed')}); return r.blob(); })
+    .then(blob=>{
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url; a.download='call_history.xlsx';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),1500);
+    })
+    .catch(e=>alert('Export failed: '+e.message));
+}
 
 function callingRowHtml(c, i, opts){
   opts = opts || {};
-  const rowCls=(c.completed||c.called_today)?'called-today-row':'';
+  // History rows are all previously-called, so always show the strong "called" green.
+  // (Avoids relying on refreshCalled(), whose getElementById lookup can be shadowed by
+  // duplicate ss-calling-<reg> ids when the same charity is also in today's Daily list.)
+  const rowCls=opts.history ? 'row-called' : ((c.completed||c.called_today)?'called-today-row':'');
   const nm=esc(c.name||'');
   const calledChip=c.completed?'<span class="called-chip">✓ done</span>':(c.called_today?'<span class="called-chip">✓ called today</span>':'');
   const otherPgs=['prospects','new','late','old','search','milestones'].filter(p=>isCalled(p,c.reg_number));

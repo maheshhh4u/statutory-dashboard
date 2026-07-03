@@ -2879,6 +2879,97 @@ def _load_active_batch():
         out.append(c)
     return out
 
+@app.route("/api/call_history_list/export", methods=["POST"])
+def api_call_history_list_export():
+    """Export selected (or all) previously-called charities to Excel, with their
+    charity details, contacts, last-called date, follow-up date, latest outcome and stage."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except Exception:
+        return jsonify({"error": "openpyxl not installed. Add 'openpyxl' to requirements.txt and redeploy."}), 500
+    data = request.get_json(force=True) or {}
+    regs = [str(r).strip() for r in (data.get("regs") or []) if str(r).strip()]
+    if not regs:
+        return jsonify({"error": "No charities to export"}), 400
+    regset = set(regs)
+
+    # Gather supporting data
+    last_called, last_outcome = {}, {}
+    for reg, ts, oc in (db_query("SELECT reg_number, timestamp, outcome FROM call_log ORDER BY timestamp ASC") or []):
+        if reg in regset:
+            last_called[reg] = str(ts)
+            if oc: last_outcome[reg] = oc
+    for reg, ts in (db_query("SELECT reg_number, MAX(timestamp) FROM called_log GROUP BY reg_number") or []):
+        if reg in regset and ts and str(ts) > last_called.get(reg, ""):
+            last_called[reg] = str(ts)
+    followup = {}
+    for reg, fat, done in (db_query("SELECT reg_number, follow_up_at, done FROM follow_ups ORDER BY follow_up_at ASC") or []):
+        if reg in regset and not done and reg not in followup:
+            followup[reg] = str(fat)
+    batch_data, names = {}, {}
+    for reg, d in (db_query("SELECT reg_number, data FROM calling_batch") or []):
+        if reg in regset and reg not in batch_data:
+            try:
+                o = json.loads(d) if d else {}
+                if o: batch_data[reg] = o
+            except Exception: pass
+    for reg, nm in (db_query("SELECT reg_number, name FROM called_log") or []):
+        if reg in regset and nm: names[reg] = nm
+
+    NAVY="1E3A5F"; thin=Side(style="thin", color="D5DAE0")
+    border=Border(left=thin,right=thin,top=thin,bottom=thin)
+    wb = Workbook(); ws = wb.active; ws.title = "Call History"
+    headers = ["Charity Name","Reg Number","Source","Last Called","Latest Outcome","Follow-up Due",
+               "Stage","Main Phone","Main Email","Website",
+               "Contact Person","Job Role","Contact Phone","Contact Email",
+               "Total Income","Statutory"]
+    for ci,h in enumerate(headers,1):
+        c=ws.cell(row=1,column=ci,value=h)
+        c.font=Font(name="Arial",bold=True,color="FFFFFF",size=11)
+        c.fill=PatternFill("solid",fgColor=NAVY); c.border=border
+        c.alignment=Alignment(horizontal="left",vertical="center")
+    # Preserve the order the user is viewing (regs list order)
+    r=2
+    for reg in regs:
+        base=batch_data.get(reg,{}) or {}
+        name=base.get("name") or names.get(reg,"") or reg
+        ov=_contact_overrides.get(reg,{}) or {}
+        contacts=ov.get("contacts") or []
+        if contacts:
+            cp=contacts[0]; con_name,con_role,con_phone,con_email=cp.get("name",""),cp.get("role",""),cp.get("phone",""),cp.get("email","")
+            extras=[]
+            for x in contacts[1:]:
+                seg=x.get("name","") or ""
+                if x.get("role"): seg+=f" ({x['role']})"
+                if x.get("phone"): seg+=f" {x['phone']}"
+                if x.get("email"): seg+=f" {x['email']}"
+                if seg.strip(): extras.append(seg.strip())
+            if extras: con_name=con_name+"  ||  "+"  ||  ".join(extras)
+        else:
+            con_name,con_role,con_phone,con_email=ov.get("name",""),ov.get("role",""),ov.get("cphone",""),ov.get("cemail","")
+        stage=_statuses.get(f"calling|{reg}","")
+        vals=[name, reg, base.get("source",""), (last_called.get(reg,"") or "")[:16],
+              last_outcome.get(reg,""), (followup.get(reg,"") or "")[:16], stage,
+              ov.get("phone") or base.get("phone",""), ov.get("email") or base.get("email",""),
+              ov.get("website") or base.get("website",""),
+              con_name, con_role, con_phone, con_email,
+              base.get("total_income",""), base.get("statutory","")]
+        for ci,v in enumerate(vals,1):
+            cell=ws.cell(row=r,column=ci,value=v)
+            cell.font=Font(name="Arial",size=10); cell.border=border
+        r+=1
+    widths=[30,12,16,17,20,17,16,16,24,22,30,18,16,24,14,12]
+    for ci,w in enumerate(widths,1):
+        ws.column_dimensions[get_column_letter(ci)].width=w
+    ws.freeze_panes="A2"
+    buf=io.BytesIO(); wb.save(buf); buf.seek(0)
+    tstamp=datetime.utcnow().strftime("%Y%m%d_%H%M")
+    return Response(buf.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=call_history_{tstamp}.xlsx"})
+
 @app.route("/api/call_history_list")
 def api_call_history_list():
     """Charities that have EVER been called, in the same row shape as Daily Calling,
