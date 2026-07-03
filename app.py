@@ -1117,14 +1117,22 @@ def ai_analyze():
     category      = str(data.get("category", "")).strip()
     category_note = str(data.get("category_note", "")).strip()
     all_lists     = str(data.get("all_lists", "")).strip()
+    source_detail = str(c.get("source_detail", "")).strip()
     cat_block = ""
     if category:
         cat_block = (f"\n\nPROSPECT LIST CONTEXT — this charity surfaced in 9 Mountains' "
                      f"'{category}' list. What that list means: {category_note}")
+        if source_detail:
+            cat_block += (f"\nSPECIFIC LIST DETAIL for this charity: {source_detail}. "
+                          "Reference this concretely (e.g. a 1-year anniversary is a natural, timely reason to reach out; "
+                          "an overdue filing suggests they may need support).")
         if all_lists and all_lists != category:
             cat_block += f"\n(It also qualifies for: {all_lists}.)"
         cat_block += ("\nThis is the SPECIFIC reason 9 Mountains is calling — make the "
                       "'Why they're a fit' and 'Talking points' sections speak directly to it.")
+    elif source_detail:
+        cat_block = (f"\n\nWHY THIS CHARITY IS ON THE LIST: {source_detail}. "
+                     "Use this as a timely, concrete hook in the talking points.")
 
     # Known contact person + their job role (so the briefing is tuned to who we're calling)
     contact_block = ""
@@ -2677,6 +2685,48 @@ def _normalize_for_calling(c, source):
     stat = fin.get("statutory","")
     pstat= fin.get("prev_statutory","")
     spend_over = any(f.get("label","").startswith("Spend") for f in fin.get("flags",[]))
+    # Human-readable "which data from the source" label, shown in its own column
+    # and fed to the AI insight so the caller knows why this charity is on the list.
+    detail = ""
+    try:
+        if source == "Anniversary Watch" or c.get("milestone"):
+            ms = c.get("milestone")
+            if ms:
+                yr = int(ms)
+                yrtxt = "1 year" if yr == 1 else f"{yr} years"
+                dta = c.get("days_to_anniversary")
+                when = ""
+                if c.get("within_week"): when = " · due within a week"
+                elif c.get("just_completed"): when = " · just reached"
+                elif isinstance(c.get("months_to_anniversary"), (int, float)):
+                    m = c.get("months_to_anniversary")
+                    if m is not None and m >= 0: when = f" · in ~{round(m)} mo"
+                detail = f"🎂 {yrtxt} anniversary{when}"
+        elif source == "Late Accounts" or c.get("months_late") not in ("", None):
+            ml = c.get("months_late")
+            try:
+                mlv = float(ml)
+                band = "Over 12 mo late" if mlv >= 12 else ("6–12 mo late" if mlv >= 6 else "Under 6 mo late")
+                detail = f"⏰ {band} ({round(mlv)} mo)"
+            except Exception:
+                if ml: detail = f"⏰ {ml} months late"
+        elif source == "Newly Registered":
+            dr = str(c.get("date_registered","") or "")[:10]
+            if dr:
+                try:
+                    from datetime import datetime as _dt
+                    days = (_dt.utcnow().date() - _dt.strptime(dr, "%Y-%m-%d").date()).days
+                    detail = f"📰 Registered {days} days ago"
+                except Exception:
+                    detail = f"📰 Registered {dr}"
+        elif source == "40+ Yrs Zero Statutory":
+            detail = "🏛️ 40+ yrs · no statutory income"
+        elif source == "Prospect Lists":
+            detail = "📋 Prospect list"
+        elif source == "Charity Search":
+            detail = "🔍 Saved search"
+    except Exception:
+        detail = ""
     return {
         "reg_number": c.get("reg_number",""),
         "name": c.get("name",""),
@@ -2698,6 +2748,7 @@ def _normalize_for_calling(c, source):
         "spend_over_income": spend_over,
         "removed": bool(c.get("removed", False)),
         "source": source,
+        "source_detail": detail,
     }
 
 def _collect_from_cache():
@@ -2879,6 +2930,22 @@ def api_calling_batch_generate():
     data = request.json or {}
     category = str(data.get("category", "all")).strip().lower() or "all"
     mode = str(data.get("mode", "fresh")).strip().lower()
+    filters = data.get("filters") or {}
+
+    # When Anniversary Watch is the source AND a specific milestone year is chosen,
+    # compute that milestone window fresh (like the Anniversary tab does) so the data
+    # is always available even if it wasn't pre-cached. This fixes "1 year + within a
+    # week returns nothing in Daily Calling" when milestones_1 hadn't been cached.
+    if category == "milestones" and filters.get("years"):
+        try:
+            yr = int(filters.get("years"))
+            fresh = compute_milestones(yr)
+            rows = (fresh or {}).get("charities", []) if isinstance(fresh, dict) else (fresh or [])
+            if rows:
+                cache_set(f"milestones_{yr}", {"charities": rows,
+                    "milestone": yr, "generated": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")})
+        except Exception as e:
+            print(f"  fresh milestone compute error: {e}")
 
     scored, err = _rank_calling_pool(category)
     if err is not None:
@@ -2896,6 +2963,7 @@ def api_calling_batch_generate():
         "trusts":    ["trust"],
         "school_pta":["pta", "parent teacher", "friends of"],
         "pfa":       ["pfa", "parents and friends", "parent and friends"],
+        "foundation":["foundation"],
     }
     exclude_keys = data.get("exclude") or []
     excl_kw = []
@@ -2921,7 +2989,6 @@ def api_calling_batch_generate():
     pool = [c for c in scored if not _ever_called(c["reg_number"]) and not _name_excluded(c) and c["reg_number"] not in _calling_excl]
 
     # ── Source-specific filters (Anniversary milestone/timing, Late months, New days) ──
-    filters = data.get("filters") or {}
     def _num(v, default=None):
         try: return float(v)
         except: return default

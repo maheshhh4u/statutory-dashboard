@@ -403,6 +403,7 @@ select:focus{outline:none;border-color:var(--green)}
       <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="trusts" checked onchange="saveExclusions()"> Trusts</label>
       <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="school_pta" checked onchange="saveExclusions()"> School PTA</label>
       <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="pfa" checked onchange="saveExclusions()"> PFA</label>
+      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="foundation" checked onchange="saveExclusions()"> Foundation</label>
     </div>
     <div class="calling-progress">
       <div class="calling-progress-label"><span id="callingDone">0</span> / <span id="callingTotal">0</span> completed</div>
@@ -461,6 +462,7 @@ select:focus{outline:none;border-color:var(--green)}
           <th>Total Income</th>
           <th>Statutory</th>
           <th>Source</th>
+          <th style="min-width:150px" title="Which data from the source (e.g. anniversary milestone, how late)">Source Detail</th>
           <th style="width:140px">Stage</th>
           <th style="min-width:180px">Comment</th>
           <th style="width:80px">Called</th>
@@ -471,7 +473,7 @@ select:focus{outline:none;border-color:var(--green)}
         </tr>
       </thead>
       <tbody id="callingBody">
-        <tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>
+        <tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>
       </tbody>
     </table>
   </div>
@@ -1528,9 +1530,21 @@ function openCallModal(pg,reg,name,ccPhone){
   const currentPhone=overridePhone||ccPhone||'';
   const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
   const callerWarn=caller?'':'<div style="color:var(--red);font-size:11px;margin-bottom:8px">⚠ Select your name from "Calling as:" dropdown first.</div>';
+  // Look up this charity's source + source detail so the caller sees why it's on the list
+  let srcInfo='';
+  try{
+    const cd=(typeof callingData!=='undefined')?callingData.find(x=>String(x.reg_number)===String(reg)):null;
+    if(cd){
+      const bits=[];
+      if(cd.source) bits.push(esc(cd.source));
+      if(cd.source_detail) bits.push('<span style="background:#eef4fb;border:1px solid #d5e2f0;border-radius:6px;padding:1px 7px;margin-left:4px">'+esc(cd.source_detail)+'</span>');
+      if(bits.length) srcInfo='<div style="font-size:11px;color:var(--t3);margin-bottom:10px">From: '+bits.join(' ')+'</div>';
+    }
+  }catch(e){}
   const html=`
     <div style="font-size:12px;color:var(--t3);margin-bottom:6px">Charity:</div>
-    <div style="font-weight:600;margin-bottom:10px">${esc(name||'')} <span style="color:var(--t3);font-weight:400;font-size:12px">· Reg ${esc(reg)}</span></div>
+    <div style="font-weight:600;margin-bottom:6px">${esc(name||'')} <span style="color:var(--t3);font-weight:400;font-size:12px">· Reg ${esc(reg)}</span></div>
+    ${srcInfo}
     <button type="button" onclick="runAiAnalysis('${pg}','${esc(reg)}')" id="ai-btn" style="width:100%;background:linear-gradient(135deg,#1e3a5f,#2d5a8f);color:#fff;border:none;border-radius:6px;padding:9px;cursor:pointer;font-size:13px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;justify-content:center;gap:6px">
       <span style="font-size:15px">🤖</span> AI Pre-Call Insights
     </button>
@@ -2433,10 +2447,17 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.6";
+const APP_VERSION = "1.7";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.7", date:"2026-07", title:"Source detail column & anniversary fix",
+    changes:[
+      "Added a \u201CSource Detail\u201D column in Daily Calling showing which data from the source each charity represents (e.g. \u201C1 year anniversary \u00b7 due within a week\u201D, \u201C6\u201312 mo late\u201D, \u201CRegistered 12 days ago\u201D).",
+      "The source detail now also appears in the call popup and is fed into the AI pre-call insight as a timely hook.",
+      "Fixed the Anniversary Watch filter in Daily Calling so \u201C1 year\u201D + \u201CWithin a week\u201D now returns data (it computes the milestone fresh instead of relying on cached data).",
+      "Added \u201CFoundation\u201D to the exclude-from-list checkboxes.",
+    ]},
   { v:"1.6", date:"2026-06", title:"About panel & version history",
     changes:[
       "Added this About panel with app name, current version, and full version history.",
@@ -3519,10 +3540,10 @@ function loadCalling(retryCount){
   note.style.display='none';
   // Only show the "loading" message on the first attempt; keep it calm on retries
   if(retryCount===0){
-    body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">Loading your calling list…</td></tr>';
+    body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">Loading your calling list…</td></tr>';
   } else if(retryCount>=2){
     // After a couple of silent retries, reassure the user it\'s waking up
-    body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">'+
+    body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">'+
       '⏳ Connecting to the server… one moment<br><span style="font-size:11px">(this can take up to a minute after a quiet period)</span></td></tr>';
   }
   // Per-attempt timeout so a hung request doesn\'t block the retry chain
@@ -3532,7 +3553,7 @@ function loadCalling(retryCount){
     .then(r=>{ clearTimeout(tmo); if(!r.ok) throw new Error('Server responded '+r.status); return r.json(); })
     .then(d=>{
       if(d.error && !d.has_batch && !(d.charities&&d.charities.length)){
-        body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(d.error)+
+        body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(d.error)+
           '<br><button class="btn btn-sm" style="margin-top:10px;background:#1e3a5f;color:#fff" onclick="loadCalling()">↻ Try again</button></div></td></tr>';
         return;
       }
@@ -3554,7 +3575,7 @@ function loadCalling(retryCount){
         setTimeout(()=>loadCalling(retryCount+1), wait);
         return;
       }
-      body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px"><div class="err-box">⚠ Couldn\'t reach the server after several attempts.'+
+      body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px"><div class="err-box">⚠ Couldn\'t reach the server after several attempts.'+
         '<br><span style="font-size:11px">The server may be restarting. Wait a moment and try again.</span>'+
         '<br><button class="btn btn-sm" style="margin-top:10px;background:#1e3a5f;color:#fff" onclick="loadCalling()">↻ Try again</button></div></td></tr>';
     });
@@ -3664,7 +3685,7 @@ function autoLoadAndGenerate(cat, mode){
     alert('This source can\'t be auto-loaded. Please open its tab once, then generate.');
     loadCalling(); return;
   }
-  body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">⏳ Loading source data… first load can take up to a minute.</td></tr>';
+  body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">⏳ Loading source data… first load can take up to a minute.</td></tr>';
   let chain=Promise.resolve();
   eps.forEach(u=>{ chain=chain.then(()=>warmEndpoint(u)); });
   chain.then(()=>runGenerate(cat,mode)).then(d=>{
@@ -3677,7 +3698,7 @@ function doGenerate(cat, mode){
   closeGenericModal(true);
   callingScroll=null;
   const body=document.getElementById('callingBody');
-  body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">⏳ Generating your list of 100…</td></tr>';
+  body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">⏳ Generating your list of 100…</td></tr>';
   runGenerate(cat,mode).then(d=>{
     if(d.status==='not_loaded'){
       if(cat==='search'){
@@ -3803,7 +3824,7 @@ function renderCalling(d){
     else gb.innerHTML='🔄 Generate New List';
   }
   if(!callingData.length){
-    body.innerHTML='<tr><td colspan="23" style="text-align:center;padding:30px;color:var(--t3)">'
+    body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">'
       +(d.has_batch?'This list is empty.':'No active list yet — pick a source above and click <strong>Generate List</strong>.')+'</td></tr>';
     return;
   }
@@ -3827,6 +3848,7 @@ function renderCalling(d){
       <td class="mono" style="font-weight:600">${fmt(c.total_income)}</td>
       <td class="mono">${fmt(c.statutory)}</td>
       <td><span class="src-chip">${esc(c.source||'')}</span></td>
+      <td style="font-size:11px;color:var(--t2)">${c.source_detail?('<span style="background:#eef4fb;border:1px solid #d5e2f0;border-radius:6px;padding:2px 7px;display:inline-block;white-space:nowrap">'+esc(c.source_detail)+'</span>'):'<span style="color:var(--t3)">—</span>'}</td>
       <td>${sSelect('calling',c.reg_number)}</td>
       <td>${cmBox('calling',c.reg_number)}</td>
       <td>${cBtn('calling',c.reg_number,c.name||'')}</td>
