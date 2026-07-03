@@ -521,6 +521,7 @@ select:focus{outline:none;border-color:var(--green)}
             <th title="AI find contact">🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
             <th>Total Income</th><th>Statutory</th>
             <th>Source</th>
+            <th style="min-width:150px" title="Which data from the source (e.g. anniversary milestone, how late)">Source Detail</th>
             <th style="min-width:150px">Last Called / Follow-up</th>
             <th style="width:140px">Stage</th>
             <th style="min-width:180px">Comment</th>
@@ -532,7 +533,7 @@ select:focus{outline:none;border-color:var(--green)}
           </tr>
         </thead>
         <tbody id="historyBody">
-          <tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">Loading previously-called charities…</td></tr>
+          <tr><td colspan="25" style="text-align:center;padding:30px;color:var(--t3)">Loading previously-called charities…</td></tr>
         </tbody>
       </table>
     </div>
@@ -2507,10 +2508,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.10";
+const APP_VERSION = "1.11";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.11", date:"2026-07", title:"Source Detail in Call History",
+    changes:[
+      "Added the \u201CSource Detail\u201D column to the Call History view (alongside Last Called / Follow-up).",
+      "Source Detail is now permanently saved when a Daily Calling list is generated, so future calls keep it; older calls have it reconstructed from stored data (anniversary / lateness / registration) where possible.",
+      "Source Detail is included in the Call History Excel export.",
+    ]},
   { v:"1.10", date:"2026-07", title:"Call History pagination",
     changes:[
       "Added First / Prev / Next / Last pagination to Call History so you can page through all called charities at the chosen page size (50 / 100 / 200 / 500).",
@@ -3924,19 +3931,19 @@ function loadCallHistoryList(page){
   if(page==null) page=0;
   historyPage=page;
   const body=document.getElementById('historyBody');
-  body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">Loading call history…</td></tr>';
+  body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px;color:var(--t3)">Loading call history…</td></tr>';
   const size=getHistoryPageSize();
   const f=getHistoryFilters();
   const qs=new URLSearchParams({...f, limit:size, offset:page*size}).toString();
   fetch('/api/call_history_list?'+qs)
     .then(r=>r.json()).then(d=>{
-      if(d.error){ body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(d.error)+'</div></td></tr>'; return; }
+      if(d.error){ body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(d.error)+'</div></td></tr>'; return; }
       historyData=d.charities||[];
       historyTotal=d.total_filtered||d.total_called||0;
       mergeHistoryIntoCalling(historyData);
       renderHistoryList(d);
     })
-    .catch(e=>{ body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(e.message)+'</div></td></tr>'; });
+    .catch(e=>{ body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(e.message)+'</div></td></tr>'; });
 }
 function historyGoto(page){
   const size=getHistoryPageSize();
@@ -3953,7 +3960,7 @@ function renderHistoryList(d){
   const body=document.getElementById('historyBody');
   const cnt=document.getElementById('ch2-count');
   if(!historyData.length){
-    body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">No previously-called charities match these filters.</td></tr>';
+    body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px;color:var(--t3)">No previously-called charities match these filters.</td></tr>';
     if(cnt) cnt.innerHTML='';
     renderHistoryPager();
     return;
@@ -4059,18 +4066,19 @@ function callingRowHtml(c, i, opts){
   const pgL={'prospects':'Prospects','new':'Newly Reg.','late':'Late Accts','old':'40+ Yrs','search':'Search','milestones':'Milestones'};
   const cc=otherPgs.map(p=>`<span class="tag tag-purple" style="font-size:9px" title="Called in ${pgL[p]}">★ ${pgL[p]}</span>`).join(' ');
   const ai=[getOL(c.reg_number),cc].filter(Boolean).join(' ');
-  // History view shows a "last called / follow-up" detail instead of source detail
-  let detailCell;
+  // Source Detail cell (shown in both Daily and History)
+  const sourceDetailCell='<td style="font-size:11px;color:var(--t2)">'+(c.source_detail?('<span style="background:#eef4fb;border:1px solid #d5e2f0;border-radius:6px;padding:2px 7px;display:inline-block;white-space:nowrap">'+esc(c.source_detail)+'</span>'):'<span style="color:var(--t3)">—</span>')+'</td>';
+  // In History, an extra "Last called / follow-up" cell follows the source detail
+  let lastCalledCell='';
   if(opts.history){
     const lc=c.last_called?esc(String(c.last_called).slice(0,16)):'';
     const fu=c.follow_up_at?esc(String(c.follow_up_at).slice(0,16)):'';
-    detailCell='<td style="font-size:11px;color:var(--t2)">'+
+    lastCalledCell='<td style="font-size:11px;color:var(--t2)">'+
       (lc?'<div title="Last called">📞 '+lc+'</div>':'')+
       (fu?'<div title="Follow-up due" style="color:#c47f17">📅 '+fu+'</div>':'')+
       (!lc&&!fu?'<span style="color:var(--t3)">—</span>':'')+'</td>';
-  } else {
-    detailCell='<td style="font-size:11px;color:var(--t2)">'+(c.source_detail?('<span style="background:#eef4fb;border:1px solid #d5e2f0;border-radius:6px;padding:2px 7px;display:inline-block;white-space:nowrap">'+esc(c.source_detail)+'</span>'):'<span style="color:var(--t3)">—</span>')+'</td>';
   }
+  const detailCell=sourceDetailCell+lastCalledCell;
   return`<tr class="${rowCls}">
     <td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="calling" data-reg="${esc(c.reg_number)}" ${(mxSel['calling']&&mxSel['calling'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('calling','${esc(c.reg_number)}',this)">⇄</button></td>
     <td style="text-align:center">${callBtn('calling',c.reg_number,c.name,c.phone)}</td>

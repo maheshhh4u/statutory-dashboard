@@ -2932,7 +2932,7 @@ def api_call_history_list_export():
     NAVY="1E3A5F"; thin=Side(style="thin", color="D5DAE0")
     border=Border(left=thin,right=thin,top=thin,bottom=thin)
     wb = Workbook(); ws = wb.active; ws.title = "Call History"
-    headers = ["Charity Name","Reg Number","Source","Last Called","Latest Outcome","Follow-up Due",
+    headers = ["Charity Name","Reg Number","Source","Source Detail","Last Called","Latest Outcome","Follow-up Due",
                "Stage","Main Phone","Main Email","Website",
                "Contact Person","Job Role","Contact Phone","Contact Email",
                "Total Income","Statutory"]
@@ -2942,6 +2942,13 @@ def api_call_history_list_export():
         c.fill=PatternFill("solid",fgColor=NAVY); c.border=border
         c.alignment=Alignment(horizontal="left",vertical="center")
     # Preserve the order the user is viewing (regs list order)
+    # Reg → reconstructed source_detail (reuse the same logic the History view uses)
+    sd_map = {}
+    try:
+        for r in _build_call_history_rows():
+            sd_map[r["reg_number"]] = r.get("source_detail","")
+    except Exception:
+        pass
     r=2
     for reg in regs:
         base=batch_data.get(reg,{}) or {}
@@ -2961,7 +2968,7 @@ def api_call_history_list_export():
         else:
             con_name,con_role,con_phone,con_email=ov.get("name",""),ov.get("role",""),ov.get("cphone",""),ov.get("cemail","")
         stage=_statuses.get(f"calling|{reg}","")
-        vals=[name, reg, base.get("source",""), (last_called.get(reg,"") or "")[:16],
+        vals=[name, reg, base.get("source",""), sd_map.get(reg,""), (last_called.get(reg,"") or "")[:16],
               last_outcome.get(reg,""), (followup.get(reg,"") or "")[:16], stage,
               ov.get("phone") or base.get("phone",""), ov.get("email") or base.get("email",""),
               ov.get("website") or base.get("website",""),
@@ -2971,7 +2978,7 @@ def api_call_history_list_export():
             cell=ws.cell(row=r,column=ci,value=v)
             cell.font=Font(name="Arial",size=10); cell.border=border
         r+=1
-    widths=[30,12,16,17,20,17,16,16,24,22,30,18,16,24,14,12]
+    widths=[30,12,16,22,17,20,17,16,16,24,22,30,18,16,24,14,12]
     for ci,w in enumerate(widths,1):
         ws.column_dimensions[get_column_letter(ci)].width=w
     ws.freeze_panes="A2"
@@ -3036,8 +3043,27 @@ def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="")
         base["last_called"]  = lc
         base["follow_up_at"] = fu_next or ""
         base["latest_outcome"] = ""
+        # Ensure a Source Detail: use the stored one, else reconstruct from stored
+        # fields (milestone / months_late / date_registered), else a light fallback.
         if not base.get("source_detail"):
-            base["source_detail"] = "📞 Previously called"
+            sd = ""
+            try:
+                ms = base.get("milestone")
+                if ms:
+                    yr = int(ms)
+                    sd = f"🎂 {'1 year' if yr==1 else str(yr)+' years'} anniversary"
+                elif base.get("months_late") not in ("", None):
+                    mlv = float(base.get("months_late"))
+                    bandl = "Over 12 mo late" if mlv>=12 else ("6–12 mo late" if mlv>=6 else "Under 6 mo late")
+                    sd = f"⏰ {bandl}"
+                elif base.get("date_registered"):
+                    dr = str(base.get("date_registered"))[:10]
+                    from datetime import datetime as _dt
+                    days = (_dt.utcnow().date() - _dt.strptime(dr, "%Y-%m-%d").date()).days
+                    if 0 <= days <= 400: sd = f"📰 Registered {days} days ago"
+            except Exception:
+                sd = ""
+            base["source_detail"] = sd or ("📞 " + (base.get("source") or "Previously called"))
         rows.append(base)
     rows.sort(key=lambda x: x.get("last_called",""), reverse=True)
     return rows
