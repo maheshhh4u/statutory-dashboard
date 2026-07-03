@@ -373,6 +373,13 @@ select:focus{outline:none;border-color:var(--green)}
     </div>
   </div>
 
+  <!-- Sub-tabs: Daily Calling vs Call History -->
+  <div class="calling-subtabs" style="display:flex;gap:4px;border-bottom:2px solid var(--bd);margin-bottom:14px">
+    <button id="subtab-daily" class="calling-subtab active" onclick="switchCallingSub('daily')" style="background:none;border:none;border-bottom:3px solid var(--navy,#1e3a5f);color:var(--navy,#1e3a5f);font-weight:700;font-size:14px;padding:8px 16px;cursor:pointer;margin-bottom:-2px">📞 Daily Calling</button>
+    <button id="subtab-history" class="calling-subtab" onclick="switchCallingSub('history')" style="background:none;border:none;border-bottom:3px solid transparent;color:var(--t3);font-weight:600;font-size:14px;padding:8px 16px;cursor:pointer;margin-bottom:-2px">🕓 Call History</button>
+  </div>
+
+  <div id="calling-view-daily">
   <div class="calling-bar">
     <div class="calling-cat">
       <label for="callingCat">Source list:</label>
@@ -477,6 +484,58 @@ select:focus{outline:none;border-color:var(--green)}
       </tbody>
     </table>
   </div>
+  </div><!-- /calling-view-daily -->
+
+  <!-- ══ CALL HISTORY SUB-VIEW ══ -->
+  <div id="calling-view-history" style="display:none">
+    <div class="filter-bar" style="flex-wrap:wrap;gap:10px;align-items:flex-end">
+      <div><label style="font-size:11px;color:var(--t3);display:block">Last called from</label>
+        <input type="date" id="ch2-called-from" style="padding:6px;border:1px solid var(--bd);border-radius:4px"></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Last called to</label>
+        <input type="date" id="ch2-called-to" style="padding:6px;border:1px solid var(--bd);border-radius:4px"></div>
+      <div style="border-left:1px solid var(--bd);padding-left:10px"><label style="font-size:11px;color:var(--t3);display:block">Follow-up from</label>
+        <input type="date" id="ch2-fu-from" style="padding:6px;border:1px solid var(--bd);border-radius:4px"></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Follow-up to</label>
+        <input type="date" id="ch2-fu-to" style="padding:6px;border:1px solid var(--bd);border-radius:4px"></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Show</label>
+        <select id="ch2-limit" style="padding:6px;border:1px solid var(--bd);border-radius:4px" onchange="loadCallHistoryList()">
+          <option value="50">50</option><option value="100" selected>100</option>
+          <option value="200">200</option><option value="500">500</option>
+        </select></div>
+      <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="loadCallHistoryList()">🔍 Apply</button>
+      <button class="btn btn-outline btn-sm" onclick="clearCallHistoryFilters()">Clear</button>
+      <input type="text" id="ch2-search" placeholder="Filter name / reg…" oninput="filterHistoryTable()" style="width:160px;padding:6px;border:1px solid var(--bd);border-radius:4px">
+      <div style="margin-left:auto;font-size:12px;color:var(--t3)" id="ch2-count"></div>
+    </div>
+    <div class="tbl-wrap tbl-scroll" id="historyScroll" style="max-height:74vh;overflow:auto">
+      <table id="historyTable">
+        <thead>
+          <tr>
+            <th style="width:30px"></th>
+            <th style="width:44px" title="Call">📞</th>
+            <th style="width:44px">#</th>
+            <th style="width:90px">Priority</th>
+            <th>Charity Name</th>
+            <th>Phone</th><th>Email</th><th>Website</th>
+            <th title="AI find contact">🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
+            <th>Total Income</th><th>Statutory</th>
+            <th>Source</th>
+            <th style="min-width:150px">Last Called / Follow-up</th>
+            <th style="width:140px">Stage</th>
+            <th style="min-width:180px">Comment</th>
+            <th style="width:80px">Called</th>
+            <th style="width:72px">Newsletter</th>
+            <th style="width:50px">Excl.</th>
+            <th style="width:90px">Caller</th>
+            <th style="min-width:120px">Also in / Elsewhere</th>
+          </tr>
+        </thead>
+        <tbody id="historyBody">
+          <tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">Loading previously-called charities…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div><!-- /calling-view-history -->
 </section>
 
 <!-- PROSPECTS -->
@@ -2447,10 +2506,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.7";
+const APP_VERSION = "1.8";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.8", date:"2026-07", title:"Call History sub-tab with calling",
+    changes:[
+      "Split Daily Calling into two sub-tabs: \u201CDaily Calling\u201D (today\u2019s list, unchanged) and a new \u201CCall History\u201D view.",
+      "Call History shows every previously-called charity in the same full-featured table \u2014 you can call, run AI, edit contacts, set outcomes and follow-ups directly from it.",
+      "Added separate date filters for last-called and follow-up-due, a name/reg filter, and a page-size selector (50 / 100 / 200 / 500).",
+    ]},
   { v:"1.7", date:"2026-07", title:"Source detail column & anniversary fix",
     changes:[
       "Added a \u201CSource Detail\u201D column in Daily Calling showing which data from the source each charity represents (e.g. \u201C1 year anniversary \u00b7 due within a week\u201D, \u201C6\u201312 mo late\u201D, \u201CRegistered 12 days ago\u201D).",
@@ -3811,6 +3876,117 @@ function setupCallingScroll(){
     if(next){ const hdr=sc.querySelector('thead'); sc.scrollTop=Math.max(0, next.offsetTop-(hdr?hdr.offsetHeight:32)-6); }
   },40);
 }
+let historyData=[];
+function switchCallingSub(which){
+  const daily=document.getElementById('calling-view-daily');
+  const hist=document.getElementById('calling-view-history');
+  const bd=document.getElementById('subtab-daily');
+  const bh=document.getElementById('subtab-history');
+  if(which==='history'){
+    daily.style.display='none'; hist.style.display='block';
+    bh.classList.add('active'); bh.style.borderBottomColor='#1e3a5f'; bh.style.color='#1e3a5f'; bh.style.fontWeight='700';
+    bd.classList.remove('active'); bd.style.borderBottomColor='transparent'; bd.style.color='var(--t3)'; bd.style.fontWeight='600';
+    if(!historyData.length) loadCallHistoryList();
+  } else {
+    hist.style.display='none'; daily.style.display='block';
+    bd.classList.add('active'); bd.style.borderBottomColor='#1e3a5f'; bd.style.color='#1e3a5f'; bd.style.fontWeight='700';
+    bh.classList.remove('active'); bh.style.borderBottomColor='transparent'; bh.style.color='var(--t3)'; bh.style.fontWeight='600';
+  }
+}
+function clearCallHistoryFilters(){
+  ['ch2-called-from','ch2-called-to','ch2-fu-from','ch2-fu-to','ch2-search'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  loadCallHistoryList();
+}
+function loadCallHistoryList(){
+  const body=document.getElementById('historyBody');
+  body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">Loading call history…</td></tr>';
+  const qs=new URLSearchParams({
+    called_from:(document.getElementById('ch2-called-from')||{}).value||'',
+    called_to:(document.getElementById('ch2-called-to')||{}).value||'',
+    fu_from:(document.getElementById('ch2-fu-from')||{}).value||'',
+    fu_to:(document.getElementById('ch2-fu-to')||{}).value||'',
+    limit:(document.getElementById('ch2-limit')||{}).value||'100'
+  }).toString();
+  fetch('/api/call_history_list?'+qs)
+    .then(r=>r.json()).then(d=>{
+      if(d.error){ body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(d.error)+'</div></td></tr>'; return; }
+      historyData=d.charities||[];
+      mergeHistoryIntoCalling(historyData);
+      renderHistoryList(d);
+    })
+    .catch(e=>{ body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(e.message)+'</div></td></tr>'; });
+}
+function mergeHistoryIntoCalling(rows){
+  if(typeof callingData==='undefined') return;
+  const have=new Set(callingData.map(c=>String(c.reg_number)));
+  rows.forEach(c=>{ if(!have.has(String(c.reg_number))) callingData.push(c); });
+}
+function renderHistoryList(d){
+  const body=document.getElementById('historyBody');
+  const cnt=document.getElementById('ch2-count');
+  if(!historyData.length){
+    body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">No previously-called charities match these filters.</td></tr>';
+    if(cnt) cnt.textContent='';
+    return;
+  }
+  body.innerHTML=historyData.map((c,i)=>callingRowHtml(c,i,{history:true})).join('');
+  if(cnt) cnt.textContent='Showing '+historyData.length+(d.total_called>historyData.length?(' of '+d.total_called+' called'):'');
+  refreshCalled();
+  filterHistoryTable();
+}
+function filterHistoryTable(){
+  const q=((document.getElementById('ch2-search')||{}).value||'').toLowerCase().trim();
+  const rows=document.querySelectorAll('#historyBody tr');
+  rows.forEach(tr=>{
+    if(!q){ tr.style.display=''; return; }
+    const txt=tr.textContent.toLowerCase();
+    tr.style.display=txt.includes(q)?'':'none';
+  });
+}
+
+function callingRowHtml(c, i, opts){
+  opts = opts || {};
+  const rowCls=(c.completed||c.called_today)?'called-today-row':'';
+  const nm=esc(c.name||'');
+  const calledChip=c.completed?'<span class="called-chip">✓ done</span>':(c.called_today?'<span class="called-chip">✓ called today</span>':'');
+  const otherPgs=['prospects','new','late','old','search','milestones'].filter(p=>isCalled(p,c.reg_number));
+  const pgL={'prospects':'Prospects','new':'Newly Reg.','late':'Late Accts','old':'40+ Yrs','search':'Search','milestones':'Milestones'};
+  const cc=otherPgs.map(p=>`<span class="tag tag-purple" style="font-size:9px" title="Called in ${pgL[p]}">★ ${pgL[p]}</span>`).join(' ');
+  const ai=[getOL(c.reg_number),cc].filter(Boolean).join(' ');
+  // History view shows a "last called / follow-up" detail instead of source detail
+  let detailCell;
+  if(opts.history){
+    const lc=c.last_called?esc(String(c.last_called).slice(0,16)):'';
+    const fu=c.follow_up_at?esc(String(c.follow_up_at).slice(0,16)):'';
+    detailCell='<td style="font-size:11px;color:var(--t2)">'+
+      (lc?'<div title="Last called">📞 '+lc+'</div>':'')+
+      (fu?'<div title="Follow-up due" style="color:#c47f17">📅 '+fu+'</div>':'')+
+      (!lc&&!fu?'<span style="color:var(--t3)">—</span>':'')+'</td>';
+  } else {
+    detailCell='<td style="font-size:11px;color:var(--t2)">'+(c.source_detail?('<span style="background:#eef4fb;border:1px solid #d5e2f0;border-radius:6px;padding:2px 7px;display:inline-block;white-space:nowrap">'+esc(c.source_detail)+'</span>'):'<span style="color:var(--t3)">—</span>')+'</td>';
+  }
+  return`<tr class="${rowCls}">
+    <td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="calling" data-reg="${esc(c.reg_number)}" ${(mxSel['calling']&&mxSel['calling'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('calling','${esc(c.reg_number)}',this)">⇄</button></td>
+    <td style="text-align:center">${callBtn('calling',c.reg_number,c.name,c.phone)}</td>
+    <td class="mono" style="color:var(--t3)">${i+1}</td>
+    <td>${prioBadge(c.band,c.priority)}</td>
+    <td title="${esc(c.name)}"><span class="mono" style="font-size:10px;color:var(--t3)">${esc(c.reg_number)}</span><br>${nm}${calledChip}</td>
+    ${ctCell(c.reg_number,'phone',c.phone)}
+    ${ctCell(c.reg_number,'email',c.email)}
+    ${ctCell(c.reg_number,'website',c.website)}<td style="text-align:center;padding:0 4px">${findBtn(c.reg_number,c.name)}</td>${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}${ctCell(c.reg_number,'cphone','')}${ctCell(c.reg_number,'cemail','')}
+    <td class="mono" style="font-weight:600">${fmt(c.total_income)}</td>
+    <td class="mono">${fmt(c.statutory)}</td>
+    <td><span class="src-chip">${esc(c.source||'')}</span></td>
+    ${detailCell}
+    <td>${sSelect('calling',c.reg_number)}</td>
+    <td>${cmBox('calling',c.reg_number)}</td>
+    <td>${cBtn('calling',c.reg_number,c.name||'')}</td>
+    <td style="text-align:center"><input type="checkbox" class="nl-cb" ${newsletterFlags[c.reg_number]?'checked':''} onchange="toggleNewsletter('${esc(c.reg_number)}',this)" title="Newsletter opt-in"></td>
+    <td style="text-align:center"><button type="button" onclick="toggleCallingExcl('${esc(c.reg_number)}',this)" title="${callingExcl.has(c.reg_number)?'Click to re-include in future lists':'Click to exclude from future lists'}" style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px;opacity:${callingExcl.has(c.reg_number)?'1':'0.3'}">${callingExcl.has(c.reg_number)?'🚫':'🚫'}</button></td>
+    <td>${callerCol('calling',c.reg_number)}</td>
+    <td style="white-space:normal">${ai||'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
+  </tr>`;
+}
 function renderCalling(d){
   const body=document.getElementById('callingBody');
   const done=d.completed||0, total=d.count||0;
@@ -3828,36 +4004,7 @@ function renderCalling(d){
       +(d.has_batch?'This list is empty.':'No active list yet — pick a source above and click <strong>Generate List</strong>.')+'</td></tr>';
     return;
   }
-  body.innerHTML=callingData.map((c,i)=>{
-    const rowCls=(c.completed||c.called_today)?'called-today-row':'';
-    const nm=esc(c.name||'');
-    const calledChip=c.completed?'<span class="called-chip">✓ done</span>':(c.called_today?'<span class="called-chip">✓ called today</span>':'');
-    const otherPgs=['prospects','new','late','old','search','milestones'].filter(p=>isCalled(p,c.reg_number));
-    const pgL={'prospects':'Prospects','new':'Newly Reg.','late':'Late Accts','old':'40+ Yrs','search':'Search','milestones':'Milestones'};
-    const cc=otherPgs.map(p=>`<span class="tag tag-purple" style="font-size:9px" title="Called in ${pgL[p]}">★ ${pgL[p]}</span>`).join(' ');
-    const ai=[getOL(c.reg_number),cc].filter(Boolean).join(' ');
-    return`<tr class="${rowCls}">
-      <td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="calling" data-reg="${esc(c.reg_number)}" ${(mxSel['calling']&&mxSel['calling'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('calling','${esc(c.reg_number)}',this)">⇄</button></td>
-      <td style="text-align:center">${callBtn('calling',c.reg_number,c.name,c.phone)}</td>
-      <td class="mono" style="color:var(--t3)">${i+1}</td>
-      <td>${prioBadge(c.band,c.priority)}</td>
-      <td title="${esc(c.name)}"><span class="mono" style="font-size:10px;color:var(--t3)">${esc(c.reg_number)}</span><br>${nm}${calledChip}</td>
-      ${ctCell(c.reg_number,'phone',c.phone)}
-      ${ctCell(c.reg_number,'email',c.email)}
-      ${ctCell(c.reg_number,'website',c.website)}<td style="text-align:center;padding:0 4px">${findBtn(c.reg_number,c.name)}</td>${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}${ctCell(c.reg_number,'cphone','')}${ctCell(c.reg_number,'cemail','')}
-      <td class="mono" style="font-weight:600">${fmt(c.total_income)}</td>
-      <td class="mono">${fmt(c.statutory)}</td>
-      <td><span class="src-chip">${esc(c.source||'')}</span></td>
-      <td style="font-size:11px;color:var(--t2)">${c.source_detail?('<span style="background:#eef4fb;border:1px solid #d5e2f0;border-radius:6px;padding:2px 7px;display:inline-block;white-space:nowrap">'+esc(c.source_detail)+'</span>'):'<span style="color:var(--t3)">—</span>'}</td>
-      <td>${sSelect('calling',c.reg_number)}</td>
-      <td>${cmBox('calling',c.reg_number)}</td>
-      <td>${cBtn('calling',c.reg_number,c.name||'')}</td>
-      <td style="text-align:center"><input type="checkbox" class="nl-cb" ${newsletterFlags[c.reg_number]?'checked':''} onchange="toggleNewsletter('${esc(c.reg_number)}',this)" title="Newsletter opt-in"></td>
-      <td style="text-align:center"><button type="button" onclick="toggleCallingExcl('${esc(c.reg_number)}',this)" title="${callingExcl.has(c.reg_number)?'Click to re-include in future lists':'Click to exclude from future lists'}" style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px;opacity:${callingExcl.has(c.reg_number)?'1':'0.3'}">${callingExcl.has(c.reg_number)?'🚫':'🚫'}</button></td>
-      <td>${callerCol('calling',c.reg_number)}</td>
-      <td style="white-space:normal">${ai||'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
-    </tr>`;
-  }).join('');
+  body.innerHTML=callingData.map((c,i)=>callingRowHtml(c,i)).join('');
   refreshCalled();
   filterCalling();
   setupCallingScroll();
