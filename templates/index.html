@@ -2572,10 +2572,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.15";
+const APP_VERSION = "1.16";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.16", date:"2026-07", title:"Richer Search export & working Saved Searches in Daily Calling",
+    changes:[
+      "Charity Search CSV export (Simple and Advanced) now includes What, Who, How, Region, Local Authority, Country, Policy, and Activities \u2014 pulled from Charity Commission reference data.",
+      "Added a \u201CSaved Search\u201D dropdown to the Daily Calling filters when \u201CCharity Search (saved)\u201D is the source, listing all saved searches to choose from.",
+      "Fixed \u201CCharity Search (saved)\u201D in Daily Calling \u2014 it previously could never return results because saved searches only stored filter criteria, not results; it now runs the selected saved search live against current Charity Commission data.",
+    ]},
   { v:"1.15", date:"2026-07", title:"Overdue follow-up refinements",
     changes:[
       "Fixed the overdue badge/count going white-on-white mid-blink \u2014 the badge text is now a fixed dark navy on a solid pink background, always legible; only the row itself keeps the red pulse.",
@@ -2975,8 +2981,8 @@ function clearSearch(){document.getElementById('search-q').value='';document.get
 function clearAdv(){['adv-name','adv-reg','adv-postcode','adv-county','adv-what','adv-who','adv-how','adv-inc-min','adv-inc-max','adv-date-from','adv-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('adv-status').value='registered';document.getElementById('adv-type').value='';}
 function dlSearch(){
   if(!sAll.length)return;
-  const hdrs=["Reg No","Name","Status","Income","Gov Grants","Gov Contracts","Stat%","Town","County","Phone","Email","Website","Lists","Call Status","Comment","Called"];
-  const rows=sAll.map(c=>{const f=c.financials||{};return[c.reg_number,c.name,c.status,f.total_income||c.latest_income,f.gov_grants,f.gov_contracts,f.stat_pct,c.town,c.county,c.phone,c.email,c.website,(c.lists||[]).join('; '),statuses['search|'+c.reg_number]||'',comments['search|'+c.reg_number]||'',isCalled('search',c.reg_number)?'Yes':'No'];});
+  const hdrs=["Reg No","Name","Status","Income","Gov Grants","Gov Contracts","Stat%","Town","County","Phone","Email","Website","Lists","Call Status","Comment","Called","What","Who","How","Region","Local Authority","Country","Policy","Activities"];
+  const rows=sAll.map(c=>{const f=c.financials||{};return[c.reg_number,c.name,c.status,f.total_income||c.latest_income,f.gov_grants,f.gov_contracts,f.stat_pct,c.town,c.county,c.phone,c.email,c.website,(c.lists||[]).join('; '),statuses['search|'+c.reg_number]||'',comments['search|'+c.reg_number]||'',isCalled('search',c.reg_number)?'Yes':'No',c.what||'',c.who||'',c.how||'',c.region||'',c.local_authority||'',c.country||'',c.policy||'',c.activities||''];});
   dlB(toCSV(rows,hdrs),'Charity_Search_'+today()+'.csv');
 }
 
@@ -3807,6 +3813,10 @@ const SOURCE_FILTERS={
     {id:'sf-newdays',label:'Registered in last',type:'select',opts:[
       {v:'30',t:'30 days'},{v:'60',t:'60 days'},{v:'90',t:'90 days'}]},
   ],
+  search:[
+    {id:'sf-saved_search',label:'Saved Search',type:'select',opts:[
+      {v:'',t:'— Select a saved search —'}]},
+  ],
 };
 function renderSourceFilters(){
   const cat=document.getElementById('callingCat').value;
@@ -3823,6 +3833,21 @@ function renderSourceFilters(){
     }
     return '';
   }).join('');
+  // "Charity Search (saved)" needs its dropdown populated live with the saved search names
+  if(cat==='search'){
+    const sel=document.getElementById('sf-saved_search');
+    if(sel){
+      sel.innerHTML='<option value="">Loading saved searches…</option>';
+      fetch('/api/saved_searches').then(r=>r.json()).then(names=>{
+        if(!names || !names.length){
+          sel.innerHTML='<option value="">No saved searches yet — save one from Charity Search first</option>';
+          return;
+        }
+        sel.innerHTML='<option value="">— Select a saved search —</option>'+
+          names.map(n=>'<option value="'+esc(n)+'">'+esc(n)+'</option>').join('');
+      }).catch(()=>{ sel.innerHTML='<option value="">Could not load saved searches</option>'; });
+    }
+  }
 }
 function getSourceFilters(){
   const cat=document.getElementById('callingCat').value;

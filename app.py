@@ -15,6 +15,7 @@ CHARITY_URL= f"{BULK_BASE}/publicextract.charity.zip"
 CLASSIF_URL= f"{BULK_BASE}/publicextract.charity_classification.zip"
 CC_API_BASE = "https://api.charitycommission.gov.uk/register/api"
 AREA_URL   = f"{BULK_BASE}/publicextract.charity_area_of_operation.zip"
+POLICY_URL = f"{BULK_BASE}/publicextract.charity_policy.zip"
 
 # ─── Turso DB ─────────────────────────────────────────────────────────────────
 TURSO_URL   = os.environ.get("TURSO_DATABASE_URL", "")
@@ -603,7 +604,8 @@ def api_search():
     if not term: return jsonify([])
     COLS={"registered_charity_number","charity_name","charity_registration_status",
           "charity_contact_web","charity_contact_phone","charity_contact_email",
-          "charity_contact_address3","charity_contact_address4","date_of_removal"}
+          "charity_contact_address3","charity_contact_address4","date_of_removal",
+          "charity_activities"}
     results=[]; is_num=term.isdigit()
     for row in stream_zip_csv(CHARITY_URL,COLS):
         reg=row.get("registered_charity_number","").strip()
@@ -613,27 +615,33 @@ def api_search():
         else:
             if term.upper() not in name.upper(): continue
         rem=row.get("date_of_removal","")
+        cls = get_charity_classification(reg)
+        area = get_charity_area(reg)
         results.append({"reg_number":reg,"name":name,"status":"Removed" if rem else "Active",
                         "phone":row.get("charity_contact_phone",""),"email":row.get("charity_contact_email",""),
                         "town":row.get("charity_contact_address3",""),"county":row.get("charity_contact_address4",""),
-                        "website":row.get("charity_contact_web",""),"financials":{},"lists":[]})
+                        "website":row.get("charity_contact_web",""),"financials":{},"lists":[],
+                        "what":cls["what"],"who":cls["who"],"how":cls["how"],
+                        "region":area["region"],"local_authority":area["local_authority"],"country":area["country"],
+                        "policy":get_charity_policy(reg),"activities":row.get("charity_activities","")})
         if len(results)>=25: break
     return jsonify(results)
 
-@app.route("/api/advanced_search")
-def advanced_search():
-    nq=request.args.get("name","").upper().strip()
-    rq=request.args.get("reg_number","").strip()
-    pq=request.args.get("postcode","").upper().strip()
-    cq=request.args.get("county","").upper().strip()
-    wq=request.args.get("what","").upper().strip()
-    sq=request.args.get("reg_status","registered").strip()
-    imin=flt(request.args.get("inc_min","")); imax=flt(request.args.get("inc_max","")) or float("inf")
-    df=request.args.get("reg_date_from","").strip(); dt=request.args.get("reg_date_to","").strip()
-    tq=request.args.get("charity_type","").upper().strip()
-    # Optional limit (default 50000 - allows full UK charity range, pagination handles UI rendering)
-    try: limit = max(1, min(int(request.args.get("limit","50000")), 200000))
-    except: limit = 50000
+def _run_advanced_search(criteria, limit=50000):
+    """Core advanced-search logic, usable both by the /api/advanced_search endpoint
+    and by anything that needs to run a SAVED search live (e.g. the Daily Calling
+    'Charity Search (saved)' source), since saved searches only store the filter
+    criteria, not stale results."""
+    nq=str(criteria.get("name","")).upper().strip()
+    rq=str(criteria.get("reg_number","")).strip()
+    pq=str(criteria.get("postcode","")).upper().strip()
+    cq=str(criteria.get("county","")).upper().strip()
+    wq=str(criteria.get("what","")).upper().strip()
+    sq=str(criteria.get("reg_status","registered")).strip()
+    imin=flt(criteria.get("inc_min","")); imax=flt(criteria.get("inc_max","")) or float("inf")
+    df=str(criteria.get("reg_date_from","")).strip(); dt=str(criteria.get("reg_date_to","")).strip()
+    tq=str(criteria.get("charity_type","")).upper().strip()
+    limit = max(1, min(int(limit or 50000), 200000))
     COLS={"registered_charity_number","charity_name","charity_registration_status",
           "date_of_registration","date_of_removal","charity_contact_web",
           "charity_contact_phone","charity_contact_email",
@@ -663,15 +671,35 @@ def advanced_search():
         dtreg=row.get("date_of_registration","")[:10]
         if df and dtreg<df: continue
         if dt and dtreg>dt: continue
+        cls = get_charity_classification(reg)
+        area = get_charity_area(reg)
         results.append({"reg_number":reg,"name":name,"status":st,"latest_income":inc,
                         "date_registered":dtreg,"website":row.get("charity_contact_web",""),
                         "phone":row.get("charity_contact_phone",""),"email":row.get("charity_contact_email",""),
                         "town":row.get("charity_contact_address3",""),"county":row.get("charity_contact_address4",""),
-                        "postcode":pc,"activities":row.get("charity_activities","")[:200],
-                        "charity_type":row.get("charity_type",""),"financials":{},"lists":[]})
+                        "postcode":pc,"activities":row.get("charity_activities",""),
+                        "charity_type":row.get("charity_type",""),"financials":{},"lists":[],
+                        "what":cls["what"],"who":cls["who"],"how":cls["how"],
+                        "region":area["region"],"local_authority":area["local_authority"],"country":area["country"],
+                        "policy":get_charity_policy(reg)})
         if len(results)>=limit:
             truncated=True
             break
+    return results, truncated
+
+@app.route("/api/advanced_search")
+def advanced_search():
+    criteria = {
+        "name": request.args.get("name",""), "reg_number": request.args.get("reg_number",""),
+        "postcode": request.args.get("postcode",""), "county": request.args.get("county",""),
+        "what": request.args.get("what",""), "reg_status": request.args.get("reg_status","registered"),
+        "inc_min": request.args.get("inc_min",""), "inc_max": request.args.get("inc_max",""),
+        "reg_date_from": request.args.get("reg_date_from",""), "reg_date_to": request.args.get("reg_date_to",""),
+        "charity_type": request.args.get("charity_type",""),
+    }
+    try: limit = max(1, min(int(request.args.get("limit","50000")), 200000))
+    except: limit = 50000
+    results, truncated = _run_advanced_search(criteria, limit)
     return jsonify({"charities":results,"count":len(results),"truncated":truncated,"limit":limit})
 
 @app.route("/api/mark_called",methods=["POST"])
@@ -2813,19 +2841,32 @@ CALLING_CATEGORIES = {
     "search": "Charity Search (saved)",
 }
 
-def _rank_calling_pool(category):
+def _rank_calling_pool(category, filters=None):
     """Return (scored_sorted_list, error_response_or_None) for a calling category."""
+    filters = filters or {}
     pools = _collect_from_cache()
     if category == "search":
-        rows = []
-        for crit in _saved_searches.values():
-            if isinstance(crit, dict) and crit.get("results"):
-                rows.extend(crit["results"])
+        saved_name = str(filters.get("saved_search","")).strip()
+        if not saved_name:
+            names = list(_saved_searches.keys())
+            return [], jsonify({"charities":[], "count":0, "category":category,
+                "category_label": CALLING_CATEGORIES.get(category,category),
+                "note": ("Pick a saved search from the 'Saved Search' filter above, then Generate."
+                         if names else
+                         "No saved searches yet. Save one from the Charity Search (Advanced) page first.")})
+        crit = _saved_searches.get(saved_name)
+        if not isinstance(crit, dict):
+            return [], jsonify({"charities":[], "count":0, "category":category,
+                "category_label": CALLING_CATEGORIES.get(category,category),
+                "note": f"Saved search '{saved_name}' was not found — it may have been deleted."})
+        # Run the saved search live (saved searches only store filter criteria, not
+        # results, so results always reflect the current Charity Commission data).
+        rows, _truncated = _run_advanced_search(crit, limit=2000)
         if not rows:
             return [], jsonify({"charities":[], "count":0, "category":category,
                 "category_label": CALLING_CATEGORIES.get(category,category),
-                "note":"No saved searches with results yet. Run a Charity Search and save it to feed this view."})
-        src_map = {"Charity Search": rows}
+                "note": f"Saved search '{saved_name}' returned no charities."})
+        src_map = {f"Charity Search (saved: {saved_name})": rows}
     elif category == "all":
         src_map = pools
     else:
@@ -2862,7 +2903,8 @@ def _rank_calling_pool(category):
 @app.route("/api/daily_calling")
 def api_daily_calling():
     category = request.args.get("category","all").strip().lower()
-    scored, err = _rank_calling_pool(category)
+    filters = {"saved_search": request.args.get("saved_search","")}
+    scored, err = _rank_calling_pool(category, filters)
     if err is not None:
         return err
     top = scored[:100]
@@ -3179,7 +3221,7 @@ def api_calling_batch_generate():
         except Exception as e:
             print(f"  fresh milestone compute error: {e}")
 
-    scored, err = _rank_calling_pool(category)
+    scored, err = _rank_calling_pool(category, filters)
     if err is not None:
         return err
 
@@ -3756,6 +3798,81 @@ def get_charity_classification(reg_no):
         "who":  codes_to_str(entry.get("who",[])),
         "how":  codes_to_str(entry.get("how",[])),
     }
+
+# ── CC area of operation cache (Region / Local Authority / Country) ─────────────
+_area_cache = {}
+_area_loaded = False
+
+def load_area_cache():
+    """Load charity area-of-operation (Region / Local Authority / Country) from the
+    CC bulk file into memory once per server lifetime — avoids a live API call per
+    charity, which matters when exporting hundreds of search results at once."""
+    global _area_cache, _area_loaded
+    if _area_loaded: return
+    try:
+        cols = {"registered_charity_number","geographic_area_type","geographic_area_description"}
+        for row in stream_zip_csv(AREA_URL, cols):
+            reg = row.get("registered_charity_number","").strip()
+            atype = row.get("geographic_area_type","").strip().lower()
+            adesc = row.get("geographic_area_description","").strip()
+            if not reg or not adesc: continue
+            if reg not in _area_cache:
+                _area_cache[reg] = {"region":[], "local_authority":[], "country":[]}
+            if atype == "region":
+                if adesc not in _area_cache[reg]["region"]: _area_cache[reg]["region"].append(adesc)
+            elif atype == "local authority":
+                if adesc not in _area_cache[reg]["local_authority"]: _area_cache[reg]["local_authority"].append(adesc)
+            elif atype == "country":
+                if adesc not in _area_cache[reg]["country"]: _area_cache[reg]["country"].append(adesc)
+        _area_loaded = True
+        print(f"Area-of-operation cache loaded: {len(_area_cache)} charities")
+    except Exception as e:
+        print(f"load_area_cache error: {e}")
+        _area_loaded = True  # Don't retry on error
+
+def get_charity_area(reg_no):
+    """Get Region / Local Authority / Country strings for a charity."""
+    load_area_cache()
+    entry = _area_cache.get(str(reg_no), {})
+    return {
+        "region": ", ".join(entry.get("region", [])),
+        "local_authority": ", ".join(entry.get("local_authority", [])),
+        "country": ", ".join(entry.get("country", [])),
+    }
+
+# ── CC policy cache (Safeguarding, Investment, Risk management, etc.) ───────────
+_policy_cache = {}
+_policy_loaded = False
+
+def load_policy_cache():
+    """Load the policies each charity has in place (from its Annual Return) from the
+    CC bulk file into memory once per server lifetime."""
+    global _policy_cache, _policy_loaded
+    if _policy_loaded: return
+    try:
+        # Column name isn't 100% certain from the public docs, so we accept several
+        # plausible variants and use whichever is present in the actual file.
+        cols = {"registered_charity_number","policy_type","policy_desc",
+                "charity_policy_type","charity_policy_desc","policy"}
+        for row in stream_zip_csv(POLICY_URL, cols):
+            reg = row.get("registered_charity_number","").strip()
+            desc = (row.get("policy_type") or row.get("policy_desc") or
+                    row.get("charity_policy_type") or row.get("charity_policy_desc") or
+                    row.get("policy") or "").strip()
+            if not reg or not desc: continue
+            _policy_cache.setdefault(reg, [])
+            if desc not in _policy_cache[reg]:
+                _policy_cache[reg].append(desc)
+        _policy_loaded = True
+        print(f"Policy cache loaded: {len(_policy_cache)} charities")
+    except Exception as e:
+        print(f"load_policy_cache error: {e}")
+        _policy_loaded = True  # Don't retry on error
+
+def get_charity_policy(reg_no):
+    """Get a comma-separated list of policies a charity has in place."""
+    load_policy_cache()
+    return ", ".join(_policy_cache.get(str(reg_no), []))
 
 def mx_hdrs():
     return {"Authorization":f"Bearer {MX_TOKEN}",
