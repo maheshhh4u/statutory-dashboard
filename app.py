@@ -615,15 +615,11 @@ def api_search():
         else:
             if term.upper() not in name.upper(): continue
         rem=row.get("date_of_removal","")
-        cls = get_charity_classification(reg)
-        area = get_charity_area(reg)
         results.append({"reg_number":reg,"name":name,"status":"Removed" if rem else "Active",
                         "phone":row.get("charity_contact_phone",""),"email":row.get("charity_contact_email",""),
                         "town":row.get("charity_contact_address3",""),"county":row.get("charity_contact_address4",""),
                         "website":row.get("charity_contact_web",""),"financials":{},"lists":[],
-                        "what":cls["what"],"who":cls["who"],"how":cls["how"],
-                        "region":area["region"],"local_authority":area["local_authority"],"country":area["country"],
-                        "policy":get_charity_policy(reg),"activities":row.get("charity_activities","")})
+                        "activities":row.get("charity_activities","")})
         if len(results)>=25: break
     return jsonify(results)
 
@@ -671,17 +667,12 @@ def _run_advanced_search(criteria, limit=50000):
         dtreg=row.get("date_of_registration","")[:10]
         if df and dtreg<df: continue
         if dt and dtreg>dt: continue
-        cls = get_charity_classification(reg)
-        area = get_charity_area(reg)
         results.append({"reg_number":reg,"name":name,"status":st,"latest_income":inc,
                         "date_registered":dtreg,"website":row.get("charity_contact_web",""),
                         "phone":row.get("charity_contact_phone",""),"email":row.get("charity_contact_email",""),
                         "town":row.get("charity_contact_address3",""),"county":row.get("charity_contact_address4",""),
                         "postcode":pc,"activities":row.get("charity_activities",""),
-                        "charity_type":row.get("charity_type",""),"financials":{},"lists":[],
-                        "what":cls["what"],"who":cls["who"],"how":cls["how"],
-                        "region":area["region"],"local_authority":area["local_authority"],"country":area["country"],
-                        "policy":get_charity_policy(reg)})
+                        "charity_type":row.get("charity_type",""),"financials":{},"lists":[]})
         if len(results)>=limit:
             truncated=True
             break
@@ -701,6 +692,23 @@ def advanced_search():
     except: limit = 50000
     results, truncated = _run_advanced_search(criteria, limit)
     return jsonify({"charities":results,"count":len(results),"truncated":truncated,"limit":limit})
+
+@app.route("/api/search/enrich_export", methods=["POST"])
+def api_search_enrich_export():
+    """Look up What/Who/How, Region/Local Authority/Country, and Policy for a
+    bounded set of charities, for the Charity Search CSV export ONLY. This is
+    deliberately separate from the live search endpoints — it only runs when the
+    user clicks Download CSV, and only for the specific charities being exported,
+    capped at EXPORT_ENRICH_MAX to keep memory and response time bounded."""
+    data = request.get_json(force=True) or {}
+    regs = [str(r).strip() for r in (data.get("regs") or []) if str(r).strip()]
+    capped = len(regs) > EXPORT_ENRICH_MAX
+    regs = regs[:EXPORT_ENRICH_MAX]
+    if not regs:
+        return jsonify({"enriched": {}, "capped": False, "count": 0})
+    enriched = enrich_regs_for_export(regs)
+    return jsonify({"enriched": enriched, "capped": capped, "count": len(regs),
+                    "max": EXPORT_ENRICH_MAX})
 
 @app.route("/api/mark_called",methods=["POST"])
 def mark_called():
@@ -2861,7 +2869,10 @@ def _rank_calling_pool(category, filters=None):
                 "note": f"Saved search '{saved_name}' was not found — it may have been deleted."})
         # Run the saved search live (saved searches only store filter criteria, not
         # results, so results always reflect the current Charity Commission data).
-        rows, _truncated = _run_advanced_search(crit, limit=2000)
+        # Daily Calling only ever uses the top 100, so a small bounded limit here is
+        # plenty and keeps a broad saved search (e.g. a full year of registrations)
+        # from pulling in thousands of rows unnecessarily.
+        rows, _truncated = _run_advanced_search(crit, limit=300)
         if not rows:
             return [], jsonify({"charities":[], "count":0, "category":category,
                 "category_label": CALLING_CATEGORIES.get(category,category),
@@ -3799,80 +3810,84 @@ def get_charity_classification(reg_no):
         "how":  codes_to_str(entry.get("how",[])),
     }
 
-# ── CC area of operation cache (Region / Local Authority / Country) ─────────────
-_area_cache = {}
-_area_loaded = False
+# ── Bounded, on-demand enrichment for CSV export only ────────────────────────────
+# IMPORTANT: earlier versions of this code cached the ENTIRE national Region/Local
+# Authority/Country and Policy datasets permanently in memory (hundreds of thousands
+# of charities), triggered the first time any search ran. Combined with the existing
+# classification cache, this pushed the server past Render's 512MB free-tier limit
+# and caused repeated out-of-memory crashes. This version instead does a single
+# bounded, targeted pass per export — filtered down to just the charities actually
+# being exported (capped) — and never retains data for charities outside that set.
+EXPORT_ENRICH_MAX = 1000  # hard cap on how many charities one export can enrich
 
-def load_area_cache():
-    """Load charity area-of-operation (Region / Local Authority / Country) from the
-    CC bulk file into memory once per server lifetime — avoids a live API call per
-    charity, which matters when exporting hundreds of search results at once."""
-    global _area_cache, _area_loaded
-    if _area_loaded: return
+def enrich_regs_for_export(regs):
+    """Look up What/Who/How, Region/Local Authority/Country, and Policy for a
+    bounded list of specific charities (used only when exporting search results to
+    CSV — never for a live/on-screen search). Streams each CC bulk file once and
+    keeps data only for the requested reg numbers, so memory stays proportional to
+    the export size rather than the whole national register."""
+    reg_set = {str(r).strip() for r in regs if str(r).strip()}
+    out = {r: {"what":"","who":"","how":"","region":"","local_authority":"","country":"","policy":""} for r in reg_set}
+    if not reg_set:
+        return out
+    # What / Who / How — from the classification bulk file
+    try:
+        cols = {"registered_charity_number","classification_code","classification_type"}
+        tmp = {}
+        for row in stream_zip_csv(CLASSIF_URL, cols):
+            reg = row.get("registered_charity_number","").strip()
+            if reg not in reg_set: continue
+            ctype = row.get("classification_type","").strip().lower()
+            code = row.get("classification_code","").strip()
+            if not code: continue
+            tmp.setdefault(reg, {"what":[],"who":[],"how":[]})
+            if ctype in ("what","who","how"):
+                tmp[reg][ctype].append(CC_CODE_MAP.get(code, code))
+        for reg, d in tmp.items():
+            out[reg]["what"] = ",".join(dict.fromkeys(d["what"]))
+            out[reg]["who"]  = ",".join(dict.fromkeys(d["who"]))
+            out[reg]["how"]  = ",".join(dict.fromkeys(d["how"]))
+    except Exception as e:
+        print(f"enrich_regs_for_export classification error: {e}")
+    # Region / Local Authority / Country — from the area-of-operation bulk file
     try:
         cols = {"registered_charity_number","geographic_area_type","geographic_area_description"}
+        tmp = {}
         for row in stream_zip_csv(AREA_URL, cols):
             reg = row.get("registered_charity_number","").strip()
+            if reg not in reg_set: continue
             atype = row.get("geographic_area_type","").strip().lower()
             adesc = row.get("geographic_area_description","").strip()
-            if not reg or not adesc: continue
-            if reg not in _area_cache:
-                _area_cache[reg] = {"region":[], "local_authority":[], "country":[]}
-            if atype == "region":
-                if adesc not in _area_cache[reg]["region"]: _area_cache[reg]["region"].append(adesc)
-            elif atype == "local authority":
-                if adesc not in _area_cache[reg]["local_authority"]: _area_cache[reg]["local_authority"].append(adesc)
-            elif atype == "country":
-                if adesc not in _area_cache[reg]["country"]: _area_cache[reg]["country"].append(adesc)
-        _area_loaded = True
-        print(f"Area-of-operation cache loaded: {len(_area_cache)} charities")
+            if not adesc: continue
+            tmp.setdefault(reg, {"region":[], "local_authority":[], "country":[]})
+            bucket = "region" if atype=="region" else ("local_authority" if atype=="local authority" else ("country" if atype=="country" else None))
+            if bucket and adesc not in tmp[reg][bucket]:
+                tmp[reg][bucket].append(adesc)
+        for reg, d in tmp.items():
+            out[reg]["region"] = ", ".join(d["region"])
+            out[reg]["local_authority"] = ", ".join(d["local_authority"])
+            out[reg]["country"] = ", ".join(d["country"])
     except Exception as e:
-        print(f"load_area_cache error: {e}")
-        _area_loaded = True  # Don't retry on error
-
-def get_charity_area(reg_no):
-    """Get Region / Local Authority / Country strings for a charity."""
-    load_area_cache()
-    entry = _area_cache.get(str(reg_no), {})
-    return {
-        "region": ", ".join(entry.get("region", [])),
-        "local_authority": ", ".join(entry.get("local_authority", [])),
-        "country": ", ".join(entry.get("country", [])),
-    }
-
-# ── CC policy cache (Safeguarding, Investment, Risk management, etc.) ───────────
-_policy_cache = {}
-_policy_loaded = False
-
-def load_policy_cache():
-    """Load the policies each charity has in place (from its Annual Return) from the
-    CC bulk file into memory once per server lifetime."""
-    global _policy_cache, _policy_loaded
-    if _policy_loaded: return
+        print(f"enrich_regs_for_export area error: {e}")
+    # Policy — from the policy bulk file (column name best-effort, see note below)
     try:
-        # Column name isn't 100% certain from the public docs, so we accept several
-        # plausible variants and use whichever is present in the actual file.
         cols = {"registered_charity_number","policy_type","policy_desc",
                 "charity_policy_type","charity_policy_desc","policy"}
+        tmp = {}
         for row in stream_zip_csv(POLICY_URL, cols):
             reg = row.get("registered_charity_number","").strip()
+            if reg not in reg_set: continue
             desc = (row.get("policy_type") or row.get("policy_desc") or
                     row.get("charity_policy_type") or row.get("charity_policy_desc") or
                     row.get("policy") or "").strip()
-            if not reg or not desc: continue
-            _policy_cache.setdefault(reg, [])
-            if desc not in _policy_cache[reg]:
-                _policy_cache[reg].append(desc)
-        _policy_loaded = True
-        print(f"Policy cache loaded: {len(_policy_cache)} charities")
+            if not desc: continue
+            tmp.setdefault(reg, [])
+            if desc not in tmp[reg]: tmp[reg].append(desc)
+        for reg, lst in tmp.items():
+            out[reg]["policy"] = ", ".join(lst)
     except Exception as e:
-        print(f"load_policy_cache error: {e}")
-        _policy_loaded = True  # Don't retry on error
-
-def get_charity_policy(reg_no):
-    """Get a comma-separated list of policies a charity has in place."""
-    load_policy_cache()
-    return ", ".join(_policy_cache.get(str(reg_no), []))
+        print(f"enrich_regs_for_export policy error: {e}")
+    return out
 
 def mx_hdrs():
     return {"Authorization":f"Bearer {MX_TOKEN}",

@@ -666,7 +666,7 @@ select:focus{outline:none;border-color:var(--green)}
   <div id="s-results" style="display:none">
     <div class="ctrl"><div id="s-meta" style="font-size:12px;color:var(--t3)"></div>
       <div style="display:flex;gap:7px">
-        <button class="btn btn-outline btn-sm" onclick="dlSearch()">↓ Download CSV</button>
+        <button class="btn btn-outline btn-sm" onclick="dlSearch(this)">↓ Download CSV</button>
         <button class="btn btn-outline btn-sm" style="border-color:#6060c0;color:#6060c0" onclick="syncSearchResults()">🔄 Sync Maximizer</button>
       </div>
     </div>
@@ -2572,10 +2572,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.16";
+const APP_VERSION = "1.17";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.17", date:"2026-07", title:"Critical fix: out-of-memory crash on Search export",
+    changes:[
+      "Fixed a server crash (\u201COut of memory\u201D, \u201CUnexpected end of JSON input\u201D) caused by the v1.16 Search export fields \u2014 they were being computed for every matching charity during the search itself, and permanently cached for the whole of England & Wales, which could exceed the server\u2019s memory limit on a broad search or saved search.",
+      "What/Who/How, Region/Local Authority/Country and Policy are now looked up only when you click Download CSV, only for the charities being exported, and capped at 1,000 charities per export \u2014 memory use is now bounded regardless of how broad a search or saved search is.",
+      "Saved Search results used as a Daily Calling source are now capped at a sensible size, since only the top 100 are ever used.",
+    ]},
   { v:"1.16", date:"2026-07", title:"Richer Search export & working Saved Searches in Daily Calling",
     changes:[
       "Charity Search CSV export (Simple and Advanced) now includes What, Who, How, Region, Local Authority, Country, Policy, and Activities \u2014 pulled from Charity Commission reference data.",
@@ -2979,10 +2985,37 @@ function renderSR(data,pg){
 function sortS(col){const s=srt.s;s.d=(s.c===col)?-s.d:1;s.c=col;renderSR(sAll,1);}
 function clearSearch(){document.getElementById('search-q').value='';document.getElementById('s-results').style.display='none';document.getElementById('s-empty').style.display='block';sAll=[];}
 function clearAdv(){['adv-name','adv-reg','adv-postcode','adv-county','adv-what','adv-who','adv-how','adv-inc-min','adv-inc-max','adv-date-from','adv-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('adv-status').value='registered';document.getElementById('adv-type').value='';}
-function dlSearch(){
+function dlSearch(btn){
   if(!sAll.length)return;
+  const regs=sAll.map(c=>c.reg_number);
+  const origLabel=btn?btn.innerHTML:null;
+  if(btn){ btn.disabled=true; btn.innerHTML='⏳ Preparing…'; }
+  cToast('Fetching Charity Commission detail for export… this can take a little while.');
+  fetch('/api/search/enrich_export',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({regs})})
+    .then(r=>r.json())
+    .then(d=>{
+      const enr=d.enriched||{};
+      if(d.capped){
+        cToast('⚠ Only the first '+d.max+' charities include full Charity Commission detail (What/Who/How/Region/Policy). The rest still export with the other columns.');
+      }
+      buildSearchCsv(enr);
+    })
+    .catch(e=>{
+      // If the enrichment lookup fails for any reason, still export everything else
+      // rather than blocking the user's download entirely.
+      cToast('⚠ Could not fetch extra Charity Commission detail — exporting without it.');
+      buildSearchCsv({});
+    })
+    .finally(()=>{ if(btn){ btn.disabled=false; btn.innerHTML=origLabel; } });
+}
+function buildSearchCsv(enrichMap){
   const hdrs=["Reg No","Name","Status","Income","Gov Grants","Gov Contracts","Stat%","Town","County","Phone","Email","Website","Lists","Call Status","Comment","Called","What","Who","How","Region","Local Authority","Country","Policy","Activities"];
-  const rows=sAll.map(c=>{const f=c.financials||{};return[c.reg_number,c.name,c.status,f.total_income||c.latest_income,f.gov_grants,f.gov_contracts,f.stat_pct,c.town,c.county,c.phone,c.email,c.website,(c.lists||[]).join('; '),statuses['search|'+c.reg_number]||'',comments['search|'+c.reg_number]||'',isCalled('search',c.reg_number)?'Yes':'No',c.what||'',c.who||'',c.how||'',c.region||'',c.local_authority||'',c.country||'',c.policy||'',c.activities||''];});
+  const rows=sAll.map(c=>{
+    const f=c.financials||{};
+    const e=enrichMap[c.reg_number]||{};
+    return[c.reg_number,c.name,c.status,f.total_income||c.latest_income,f.gov_grants,f.gov_contracts,f.stat_pct,c.town,c.county,c.phone,c.email,c.website,(c.lists||[]).join('; '),statuses['search|'+c.reg_number]||'',comments['search|'+c.reg_number]||'',isCalled('search',c.reg_number)?'Yes':'No',e.what||'',e.who||'',e.how||'',e.region||'',e.local_authority||'',e.country||'',e.policy||'',c.activities||''];
+  });
   dlB(toCSV(rows,hdrs),'Charity_Search_'+today()+'.csv');
 }
 
