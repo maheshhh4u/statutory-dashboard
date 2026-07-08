@@ -2572,10 +2572,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.19";
+const APP_VERSION = "1.20";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.20", date:"2026-07", title:"Diagnostics for the blank Policy field",
+    changes:[
+      "The Policy column in Search exports is currently blank \u2014 unlike What/Who/How (now fixed against official Charity Commission reference data), the exact file/column names for Policy were never confirmed and the best-effort guess isn't matching.",
+      "Added logging so the next export attempt will show the real column names in the Charity Commission's policy data file, to fix this properly rather than guess again.",
+    ]},
   { v:"1.19", date:"2026-07", title:"Fixed incorrect What/Who/How labels",
     changes:[
       "Fixed the What classification codes \u2014 the mapping was shifted/incorrect for codes 103 and above (e.g. a charity classified as \u2018Disability\u2019 could show as \u2018Health\u2019, and code 117 \u2018Other charitable purposes\u2019 had no label at all and showed as a bare \u201C117\u201D). Corrected using the Charity Commission\u2019s own reference data.",

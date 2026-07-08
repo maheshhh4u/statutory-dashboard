@@ -310,7 +310,10 @@ def stream_zip_csv(url, needed_cols=None):
         with z.open(inner) as f:
             header=f.readline().decode('utf-8',errors='replace').rstrip('\r\n')
             all_cols=[c.strip().lower() for c in header.split('\t')]
+            print(f"  [stream_zip_csv] {url.split('/')[-1]} actual columns: {all_cols}")
             keep={i:c for i,c in enumerate(all_cols) if not needed_cols or c in needed_cols}
+            if needed_cols and not keep:
+                print(f"  [stream_zip_csv] WARNING: none of {sorted(needed_cols)} matched the actual columns above")
             count=0
             for raw in f:
                 try:
