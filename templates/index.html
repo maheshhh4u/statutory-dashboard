@@ -2572,10 +2572,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.20";
+const APP_VERSION = "1.21";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.21", date:"2026-07", title:"Policy field detection now value-based, not column-name-based",
+    changes:[
+      "The Policy lookup no longer guesses the source file's column name \u2014 it now reads every column and detects which one holds policy data by matching values against the Charity Commission's known list of 20 policy categories (Safeguarding, Risk management, Complaints handling, etc.), confirmed from a charity's own annual-return export.",
+      "This should now populate Policy correctly regardless of the exact column name in the underlying file; if it still doesn't, the server log will show exactly what's in the file for the next fix.",
+    ]},
   { v:"1.20", date:"2026-07", title:"Diagnostics for the blank Policy field",
     changes:[
       "The Policy column in Search exports is currently blank \u2014 unlike What/Who/How (now fixed against official Charity Commission reference data), the exact file/column names for Policy were never confirmed and the best-effort guess isn't matching.",

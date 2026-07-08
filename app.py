@@ -3822,24 +3822,71 @@ def _scan_area_for(reg_set):
         print(f"enrich_regs_for_export area error: {e}")
     return out
 
+# The Charity Commission's fixed set of policy category labels (confirmed from a
+# charity's own XML annual-return export). Used to detect which column in the
+# policy bulk file actually holds this data, since the column NAME itself was
+# never confirmed — the exact column can vary, but the VALUES are a fixed set.
+KNOWN_POLICY_LABELS = {
+    "bullying and harassment policy and procedures",
+    "conflicting interests",
+    "financial reserves policy and procedures",
+    "internal charity financial controls policy and procedures",
+    "internal risk management policy and procedures",
+    "investing charity funds policy and procedure",
+    "investing charity funds policy and procedures",
+    "investment",
+    "risk management",
+    "safeguarding policy and procedures",
+    "safeguarding vulnerable beneficiaries",
+    "serious incident reporting policy and procedures",
+    "trustee conflicts of interest policy and procedures",
+    "volunteer management",
+    "complaints handling",
+    "paying staff",
+    "campaigns and political activity policy and procedures",
+    "complaints policy and procedures",
+    "engaging external speakers at charity events policy and procedures",
+    "social media policy and procedures",
+    "trustee expenses policy and procedures",
+}
+
 def _scan_policy_for(reg_set):
-    """Policy — from the policy bulk file (column name best-effort)."""
+    """Policy — from the policy bulk file. The exact column name was never
+    confirmed, so instead of guessing a name, we request every column and detect
+    which one actually holds policy text by matching its values against the known
+    set of Charity Commission policy labels."""
     out = {}
     try:
-        cols = {"registered_charity_number","policy_type","policy_desc",
-                "charity_policy_type","charity_policy_desc","policy"}
         tmp = {}
-        for row in stream_zip_csv(POLICY_URL, cols):
+        policy_col = None
+        rows_seen = 0
+        sample_row = None
+        for row in stream_zip_csv(POLICY_URL, None):  # None = keep every column
+            rows_seen += 1
+            if sample_row is None: sample_row = row
             reg = row.get("registered_charity_number","").strip()
             if reg not in reg_set: continue
-            desc = (row.get("policy_type") or row.get("policy_desc") or
-                    row.get("charity_policy_type") or row.get("charity_policy_desc") or
-                    row.get("policy") or "").strip()
+            desc = ""
+            # Once we've identified the right column, use it directly (fast path)
+            if policy_col and row.get(policy_col, "").strip().lower() in KNOWN_POLICY_LABELS:
+                desc = row[policy_col].strip()
+            else:
+                # Find the column whose value matches a known policy label
+                for col, val in row.items():
+                    if val and val.strip().lower() in KNOWN_POLICY_LABELS:
+                        desc = val.strip()
+                        if not policy_col:
+                            policy_col = col
+                            print(f"  [policy] detected policy column: {col!r}")
+                        break
             if not desc: continue
             tmp.setdefault(reg, [])
             if desc not in tmp[reg]: tmp[reg].append(desc)
         for reg, lst in tmp.items():
             out[reg] = {"policy": ", ".join(lst)}
+        if not tmp:
+            print(f"  [policy] WARNING: no matches found among {rows_seen} rows scanned. "
+                  f"Sample row columns/values: {sample_row}")
     except Exception as e:
         print(f"enrich_regs_for_export policy error: {e}")
     return out
