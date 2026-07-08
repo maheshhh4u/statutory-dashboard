@@ -3554,59 +3554,6 @@ def load_classif_cache():
         print(f"load_classif_cache error: {e}")
         _classif_loaded = True  # Don't retry on error
 
-# CC classification code → human readable name maps
-CC_WHAT_CODES = {
-    "101":"accommodation/housing","102":"education/training",
-    "103":"the prevention or relief of poverty","104":"overseas aid/famine relief",
-    "105":"accommodation/housing","106":"religious activities",
-    "107":"arts/culture/heritage/science","108":"amateur sport",
-    "109":"animals","110":"environment/conservation/heritage",
-    "111":"economic/community development/employment","112":"other charitable purposes",
-    "113":"general charitable purposes","114":"the advancement of health or saving of lives",
-    "115":"disability","116":"the prevention or relief of poverty",
-    "117":"accommodation/housing","118":"religious activities",
-    "119":"arts/culture/heritage/science","120":"amateur sport",
-    "121":"animals","122":"environment/conservation/heritage",
-    "123":"economic/community development/employment",
-    "124":"human rights/religious or racial harmony/equality or diversity",
-    "125":"recreation","200":"general charitable purposes",
-    "201":"education/training","202":"the prevention or relief of poverty",
-    "203":"overseas aid/famine relief","204":"accommodation/housing",
-    "205":"religious activities","206":"arts/culture/heritage/science",
-    "207":"amateur sport","208":"animals",
-    "209":"environment/conservation/heritage",
-    "210":"economic/community development/employment",
-    "211":"other charitable purposes",
-    "212":"the advancement of health or saving of lives","213":"disability",
-    "214":"human rights/religious or racial harmony/equality or diversity",
-    "215":"recreation",
-    "301":"children/young people","302":"elderly/old people",
-    "303":"people with disabilities","304":"people of a particular ethnic or racial origin",
-    "305":"other charities or voluntary bodies","306":"other defined groups",
-    "307":"the general public/mankind",
-    "401":"makes grants to individuals","402":"makes grants to organisations",
-    "403":"provides services","404":"provides facilities",
-    "405":"provides buildings/facilities/open space","406":"provides human resources",
-    "407":"provides other finance","408":"other charitable activities",
-    "409":"acts as an umbrella or resource body","410":"provides advocacy/advice/information",
-    "411":"sponsors or undertakes research",
-}
-
-def get_charity_classification(reg_no):
-    """Get what/who/how for a charity from CC bulk classification data."""
-    load_classif_cache()
-    entry = _classif_cache.get(str(reg_no), {})
-    if not entry:
-        return {"what":"","who":"","how":""}
-    # Convert codes to human-readable names
-    def codes_to_names(codes):
-        return ",".join(CC_WHAT_CODES.get(c, c) for c in codes if c)
-    return {
-        "what": codes_to_names(entry.get("what",[])),
-        "who":  codes_to_names(entry.get("who",[])),
-        "how":  codes_to_names(entry.get("how",[])),
-    }
-
 
 # ── CC API lookup ────────────────────────────────────────────────────────────
 _cc_detail_cache = {}  # Cache CC API results by reg_number
@@ -3773,16 +3720,17 @@ def load_classif_cache():
 
 # CC classification code → name (from CC bulk schema)
 CC_CODE_MAP = {
-    # What
+    # What — per Charity Commission API reference data (classification_type='What')
     "101":"general charitable purposes","102":"education/training",
-    "103":"the prevention or relief of poverty","104":"overseas aid/famine relief",
-    "105":"accommodation/housing","106":"religious activities",
-    "107":"arts/culture/heritage/science","108":"amateur sport","109":"animals",
-    "110":"environment/conservation/heritage",
-    "111":"economic/community development/employment",
-    "112":"the advancement of health or saving of lives","113":"disability",
-    "114":"human rights/religious or racial harmony/equality or diversity",
-    "115":"recreation","116":"other charitable purposes",
+    "103":"the advancement of health or saving of lives","104":"disability",
+    "105":"the prevention or relief of poverty","106":"overseas aid/famine relief",
+    "107":"accommodation/housing","108":"religious activities",
+    "109":"arts/culture/heritage/science","110":"amateur sport","111":"animals",
+    "112":"environment/conservation/heritage",
+    "113":"economic/community development/employment",
+    "114":"armed forces/emergency service efficiency",
+    "115":"human rights/religious or racial harmony/equality or diversity",
+    "116":"recreation","117":"other charitable purposes",
     # Who
     "201":"children/young people","202":"elderly/old people",
     "203":"people with disabilities",
@@ -3791,11 +3739,10 @@ CC_CODE_MAP = {
     "207":"the general public/mankind",
     # How
     "301":"makes grants to individuals","302":"makes grants to organisations",
-    "303":"provides services","304":"provides facilities",
-    "305":"provides buildings/facilities/open space","306":"provides human resources",
-    "307":"provides other finance","308":"other charitable activities",
-    "309":"acts as an umbrella or resource body",
-    "310":"provides advocacy/advice/information","311":"sponsors or undertakes research",
+    "303":"provides other finance","304":"provides human resources",
+    "305":"provides buildings/facilities/open space","306":"provides services",
+    "307":"provides advocacy/advice/information","308":"sponsors or undertakes research",
+    "309":"acts as an umbrella or resource body","310":"other charitable activities",
 }
 
 def get_charity_classification(reg_no):

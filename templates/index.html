@@ -2572,10 +2572,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.18";
+const APP_VERSION = "1.19";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.19", date:"2026-07", title:"Fixed incorrect What/Who/How labels",
+    changes:[
+      "Fixed the What classification codes \u2014 the mapping was shifted/incorrect for codes 103 and above (e.g. a charity classified as \u2018Disability\u2019 could show as \u2018Health\u2019, and code 117 \u2018Other charitable purposes\u2019 had no label at all and showed as a bare \u201C117\u201D). Corrected using the Charity Commission\u2019s own reference data.",
+      "Removed an invalid, non-existent \u2018How\u2019 code (311) and corrected the How code order (303\u2013310).",
+      "Who codes were already correct and are unchanged.",
+    ]},
   { v:"1.18", date:"2026-07", title:"Search export enrichment now covers much larger exports",
     changes:[
       "Raised the Search CSV export enrichment cap from 1,000 to 25,000 charities \u2014 the 1,000 figure was overly cautious; the underlying lookup only ever holds data for the charities being exported, not the whole country, so it scales safely to much larger exports.",
