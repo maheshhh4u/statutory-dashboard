@@ -1929,6 +1929,7 @@ def followups_list():
     dfrom = str(request.args.get("from","")).strip()
     dto   = str(request.args.get("to","")).strip()
     today = datetime.utcnow().strftime("%Y-%m-%d")
+    now_full = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     try:
         if dfrom or dto:
             where=["done=0"]; params=[]
@@ -1949,7 +1950,9 @@ def followups_list():
         return jsonify({"followups": [
             {"id": r[0], "reg_number": r[1], "name": r[2], "page": r[3],
              "follow_up_at": r[4], "caller": r[5], "notes": r[6],
-             "overdue": (str(r[4])[:10] < today) if r[4] else False} for r in rows]})
+             # Overdue = scheduled date+time already passed (not just the date), so a
+             # today's follow-up whose time slot has gone by also counts as overdue.
+             "overdue": bool(r[4]) and str(r[4]) < now_full} for r in rows]})
     except Exception as e:
         return jsonify({"followups": [], "error": str(e)[:120]})
 

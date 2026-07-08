@@ -263,8 +263,8 @@ select:focus{outline:none;border-color:var(--green)}
 .modal-bg.open{display:flex}
 @keyframes overdueBlink{0%,100%{background:#fdecea;border-color:#e74c3c}50%{background:#fff;border-color:#f5b7b1}}
 .overdue-fu{animation:overdueBlink 1.15s ease-in-out infinite;border:1.5px solid #e74c3c!important;border-radius:6px;margin-bottom:6px;padding:8px 10px!important}
-.overdue-badge{display:inline-block;background:#e74c3c;color:#fff;font-size:10px;font-weight:800;border-radius:10px;padding:1px 8px;letter-spacing:.03em;animation:overdueBlink 1.15s ease-in-out infinite;border:1px solid #c0392b}
-@media (prefers-reduced-motion: reduce){.overdue-fu,.overdue-badge{animation:none}}
+.overdue-badge{display:inline-block;background:#fde2df;color:#1e3a5f;font-size:10px;font-weight:800;border-radius:10px;padding:1px 8px;letter-spacing:.03em;border:1px solid #e74c3c;white-space:nowrap}
+@media (prefers-reduced-motion: reduce){.overdue-fu{animation:none}}
 .modal{background:var(--surface);border-radius:12px;padding:22px;max-width:440px;width:95%;box-shadow:0 8px 40px rgba(0,0,0,.2)}
 .modal h3{font-size:15px;font-weight:700;margin-bottom:14px}
 .modal-field{margin-bottom:10px}
@@ -2572,10 +2572,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.14";
+const APP_VERSION = "1.15";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.15", date:"2026-07", title:"Overdue follow-up refinements",
+    changes:[
+      "Fixed the overdue badge/count going white-on-white mid-blink \u2014 the badge text is now a fixed dark navy on a solid pink background, always legible; only the row itself keeps the red pulse.",
+      "\u201CWas due\u201D now shows the time as well as the date.",
+      "A follow-up scheduled for later today now also flips into the overdue group the moment its scheduled time passes, showing \u201CX min/h overdue\u201D instead of waiting for the next calendar day.",
+    ]},
   { v:"1.14", date:"2026-07", title:"Overdue follow-ups highlighted",
     changes:[
       "Overdue follow-ups now appear at the very top of the follow-up list on Daily Calling, above today\u2019s, with a gently blinking red highlight and a \u201CN days overdue\u201D badge so they can\u2019t be missed.",
@@ -3529,24 +3535,37 @@ function loadScheduledCalls(){
       const time=(f.follow_up_at||'').slice(11,16)||'—';
       const isOd=!!f.overdue;
       const dateStr=(f.follow_up_at||'').slice(0,10);
-      let odText='';
+      const timeStr=(f.follow_up_at||'').slice(11,16);
+      let odText='', wasDueText='';
       if(isOd){
         try{
-          const days=Math.floor((new Date().setHours(0,0,0,0)-new Date(dateStr+'T00:00:00').setHours(0,0,0,0))/86400000);
-          odText=days<=0?'due today':(days===1?'1 day overdue':days+' days overdue');
-        }catch(e){ odText='overdue'; }
+          const todayMid=new Date(); todayMid.setHours(0,0,0,0);
+          const schedMid=new Date(dateStr+'T00:00:00');
+          const dayDiff=Math.floor((todayMid-schedMid)/86400000);
+          if(dayDiff>0){
+            // Overdue from an earlier calendar day
+            odText=dayDiff===1?'1 day overdue':dayDiff+' days overdue';
+            wasDueText='was due '+dateStr+(timeStr?' '+timeStr:'');
+          } else {
+            // Due today, but the scheduled time has already passed
+            const schedDT=new Date((f.follow_up_at||'').replace(' ','T'));
+            const minsAgo=Math.max(1,Math.floor((new Date()-schedDT)/60000));
+            odText=minsAgo<60?(minsAgo+' min overdue'):(Math.floor(minsAgo/60)+'h overdue');
+            wasDueText='was due today at '+(timeStr||'—');
+          }
+        }catch(e){ odText='overdue'; wasDueText='was due '+dateStr; }
       }
       const rowAttr=isOd
         ? 'class="overdue-fu" style="display:flex;align-items:center;gap:10px"'
         : 'style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f0e6c8"';
       const timeCol=isOd
-        ? `<span style="min-width:66px;text-align:center"><span class="overdue-badge" title="${esc(dateStr)}">${esc(odText)}</span></span>`
+        ? `<span style="min-width:80px;text-align:center"><span class="overdue-badge" title="${esc(wasDueText)}">${esc(odText)}</span></span>`
         : `<span style="font-family:monospace;font-weight:700;color:#1e3a5f;min-width:46px">${esc(time)}</span>`;
       return `<div ${rowAttr}>
         ${timeCol}
         <span style="flex:1">
           <strong style="${isOd?'color:#c0392b':''}">${esc(f.name||('Reg '+f.reg_number))}</strong>
-          <span style="color:var(--t3);font-size:11px"> · Reg ${esc(f.reg_number)}${f.caller?' · '+esc(f.caller):''}${isOd?' · was due '+esc(dateStr):''}</span>
+          <span style="color:var(--t3);font-size:11px"> · Reg ${esc(f.reg_number)}${f.caller?' · '+esc(f.caller):''}${isOd?' · '+esc(wasDueText):''}</span>
           ${f.notes?`<div style="font-size:11px;color:var(--t3);margin-top:2px">${esc(f.notes).slice(0,140)}</div>`:''}
         </span>
         <button class="btn btn-green btn-sm" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','')">📞 Call</button>
