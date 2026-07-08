@@ -261,6 +261,10 @@ select:focus{outline:none;border-color:var(--green)}
 /* MODAL */
 .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:500;align-items:center;justify-content:center}
 .modal-bg.open{display:flex}
+@keyframes overdueBlink{0%,100%{background:#fdecea;border-color:#e74c3c}50%{background:#fff;border-color:#f5b7b1}}
+.overdue-fu{animation:overdueBlink 1.15s ease-in-out infinite;border:1.5px solid #e74c3c!important;border-radius:6px;margin-bottom:6px;padding:8px 10px!important}
+.overdue-badge{display:inline-block;background:#e74c3c;color:#fff;font-size:10px;font-weight:800;border-radius:10px;padding:1px 8px;letter-spacing:.03em;animation:overdueBlink 1.15s ease-in-out infinite;border:1px solid #c0392b}
+@media (prefers-reduced-motion: reduce){.overdue-fu,.overdue-badge{animation:none}}
 .modal{background:var(--surface);border-radius:12px;padding:22px;max-width:440px;width:95%;box-shadow:0 8px 40px rgba(0,0,0,.2)}
 .modal h3{font-size:15px;font-weight:700;margin-bottom:14px}
 .modal-field{margin-bottom:10px}
@@ -450,7 +454,7 @@ select:focus{outline:none;border-color:var(--green)}
   </div>
 
   <div id="scheduledCalls" style="display:none;margin-bottom:14px;border:1.5px solid #e8b339;border-radius:8px;padding:12px 14px;background:#fffdf5">
-    <div style="font-weight:700;color:#1e3a5f;margin-bottom:8px;font-size:14px">📅 Scheduled follow-up calls — today</div>
+    <div style="font-weight:700;color:#1e3a5f;margin-bottom:8px;font-size:14px">📅 Follow-up calls — overdue &amp; today</div>
     <div id="scheduledCallsBody"></div>
   </div>
 
@@ -2568,10 +2572,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.13";
+const APP_VERSION = "1.14";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.14", date:"2026-07", title:"Overdue follow-ups highlighted",
+    changes:[
+      "Overdue follow-ups now appear at the very top of the follow-up list on Daily Calling, above today\u2019s, with a gently blinking red highlight and a \u201CN days overdue\u201D badge so they can\u2019t be missed.",
+      "A red \u201C\u26a0 N OVERDUE\u201D banner summarises how many need actioning.",
+    ]},
   { v:"1.13", date:"2026-07", title:"Keep call active while editing contacts",
     changes:[
       "Editing a contact during a call no longer loses the call window \u2014 the call automatically minimises to the corner (keeping duration, outcome and notes), and reopens automatically when you save or cancel the contact edit.",
@@ -3503,16 +3512,41 @@ function loadScheduledCalls(){
   const body=document.getElementById('scheduledCallsBody');
   if(!wrap||!body) return;
   fetch('/api/followups?scope=today').then(r=>r.json()).then(d=>{
-    const list=(d&&d.followups)||[];
+    let list=(d&&d.followups)||[];
     if(!list.length){ wrap.style.display='none'; return; }
+    // Overdue first (oldest at the very top), then today's by time
+    const overdue=list.filter(f=>f.overdue).sort((a,b)=>(a.follow_up_at||'').localeCompare(b.follow_up_at||''));
+    const todays=list.filter(f=>!f.overdue).sort((a,b)=>(a.follow_up_at||'').localeCompare(b.follow_up_at||''));
+    list=overdue.concat(todays);
     wrap.style.display='block';
-    body.innerHTML=list.map(f=>{
+    const banner=overdue.length
+      ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+           <span class="overdue-badge">⚠ ${overdue.length} OVERDUE</span>
+           <span style="font-size:11px;color:#c0392b;font-weight:600">Please action these follow-ups first.</span>
+         </div>`
+      : '';
+    body.innerHTML=banner+list.map(f=>{
       const time=(f.follow_up_at||'').slice(11,16)||'—';
-      return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f0e6c8">
-        <span style="font-family:monospace;font-weight:700;color:#1e3a5f;min-width:46px">${esc(time)}</span>
+      const isOd=!!f.overdue;
+      const dateStr=(f.follow_up_at||'').slice(0,10);
+      let odText='';
+      if(isOd){
+        try{
+          const days=Math.floor((new Date().setHours(0,0,0,0)-new Date(dateStr+'T00:00:00').setHours(0,0,0,0))/86400000);
+          odText=days<=0?'due today':(days===1?'1 day overdue':days+' days overdue');
+        }catch(e){ odText='overdue'; }
+      }
+      const rowAttr=isOd
+        ? 'class="overdue-fu" style="display:flex;align-items:center;gap:10px"'
+        : 'style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f0e6c8"';
+      const timeCol=isOd
+        ? `<span style="min-width:66px;text-align:center"><span class="overdue-badge" title="${esc(dateStr)}">${esc(odText)}</span></span>`
+        : `<span style="font-family:monospace;font-weight:700;color:#1e3a5f;min-width:46px">${esc(time)}</span>`;
+      return `<div ${rowAttr}>
+        ${timeCol}
         <span style="flex:1">
-          <strong>${esc(f.name||('Reg '+f.reg_number))}</strong>
-          <span style="color:var(--t3);font-size:11px"> · Reg ${esc(f.reg_number)}${f.caller?' · '+esc(f.caller):''}</span>
+          <strong style="${isOd?'color:#c0392b':''}">${esc(f.name||('Reg '+f.reg_number))}</strong>
+          <span style="color:var(--t3);font-size:11px"> · Reg ${esc(f.reg_number)}${f.caller?' · '+esc(f.caller):''}${isOd?' · was due '+esc(dateStr):''}</span>
           ${f.notes?`<div style="font-size:11px;color:var(--t3);margin-top:2px">${esc(f.notes).slice(0,140)}</div>`:''}
         </span>
         <button class="btn btn-green btn-sm" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','')">📞 Call</button>

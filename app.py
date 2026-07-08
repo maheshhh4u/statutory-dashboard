@@ -1941,12 +1941,15 @@ def followups_list():
                                FROM follow_ups WHERE done=0 AND substr(follow_up_at,1,10)>=?
                                ORDER BY follow_up_at ASC""", (today,))
         else:
+            # "today" now also includes OVERDUE follow-ups (dates before today that
+            # are still not done), so the caller is nudged to clear them.
             rows = db_query("""SELECT id,reg_number,name,page,follow_up_at,caller,notes
-                               FROM follow_ups WHERE done=0 AND substr(follow_up_at,1,10)=?
+                               FROM follow_ups WHERE done=0 AND substr(follow_up_at,1,10)<=?
                                ORDER BY follow_up_at ASC""", (today,))
         return jsonify({"followups": [
             {"id": r[0], "reg_number": r[1], "name": r[2], "page": r[3],
-             "follow_up_at": r[4], "caller": r[5], "notes": r[6]} for r in rows]})
+             "follow_up_at": r[4], "caller": r[5], "notes": r[6],
+             "overdue": (str(r[4])[:10] < today) if r[4] else False} for r in rows]})
     except Exception as e:
         return jsonify({"followups": [], "error": str(e)[:120]})
 
