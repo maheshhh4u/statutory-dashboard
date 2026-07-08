@@ -964,11 +964,6 @@ select:focus{outline:none;border-color:var(--green)}
           </div>
         </div>
       </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <label style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Promo emails sent</label>
-        <input type="number" id="rpt-promo" min="0" value="0" style="width:70px;padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:inherit">
-        <span style="font-size:10px;color:var(--t3)">(enter manually)</span>
-      </div>
       <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="loadReport()">Generate Report</button>
       <button class="btn btn-sm" style="background:#1d7a3a;color:#fff" onclick="exportReportExcel()">⬇ Export to Excel</button>
     </div>
@@ -1899,6 +1894,7 @@ function renderReport(d, promoEmails){
   const gold='#c89a1a',green='#1d7a3a',navy='#1e3a5f',purple='#5a4fbf',red='#c0392b';
   const avgDur=d.calls_made>0?Math.round(d.total_duration_sec/d.calls_made):0;
   document.getElementById('rpt-kpis').innerHTML=[
+    rptKpiCard('Actual Calls',            d.actual_calls,            'Spoke to someone (excl. no answer/voicemail)',green),
     rptKpiCard('Calls Made',              d.calls_made,              'Avg '+fmtDur(avgDur)+' per call',navy),
     rptKpiCard('Hours on RC',             d.hours_on_rc+'h',         'Total '+fmtDur(d.total_duration_sec),navy),
     rptKpiCard('Conversations >2min',     d.conversations_2min,      (d.calls_made?Math.round(d.conversations_2min/d.calls_made*100):0)+'% of calls',green),
@@ -1906,7 +1902,8 @@ function renderReport(d, promoEmails){
     rptKpiCard('Meetings Booked',         d.meetings_booked,         '',gold),
     rptKpiCard('A-Grade Calls',           d.a_grade_calls,           'Interested or Meeting secured >2min',gold),
     rptKpiCard('Follow-ups Set',          d.followups_set,           '',purple),
-    rptKpiCard('Promo Emails Sent',       promoEmails,               'Manually entered',purple),
+    rptKpiCard('Overdue Follow-ups',      d.followup_overdue||0,     'Past their due date, not done',(d.followup_overdue>0?red:green)),
+    rptKpiCard('Follow-up Emails Sent',   d.email_followups||0,      'Email Sent + SLT Unavailable',purple),
     rptKpiCard('Newsletter Sign-ups',     d.newsletter_signups,      '',green),
     rptKpiCard('No Answer / Voicemail',   d.no_answer+d.voicemail,   d.no_answer+' no answer · '+d.voicemail+' voicemail',red),
   ].join('');
@@ -2001,7 +1998,8 @@ function renderReportTail(d, promoEmails){
     '⭐ <b>'+d.meaningful_interactions+'</b> meaningful interactions<br>'+
     '🤝 <b>'+d.meetings_booked+'</b> meetings booked<br>'+
     '📅 <b>'+d.followups_set+'</b> follow-ups set<br>'+
-    '📧 <b>'+promoEmails+'</b> promo emails sent<br>'+
+    '⏰ <b>'+(d.followup_overdue||0)+'</b> overdue follow-ups<br>'+
+    '📧 <b>'+(d.email_followups||0)+'</b> follow-up emails sent<br>'+
     '📰 <b>'+d.newsletter_signups+'</b> newsletter sign-ups'+
     '</div></div>';
   // Store for view switching + render the currently-active view's extra dashboards
@@ -2508,10 +2506,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.11";
+const APP_VERSION = "1.12";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.12", date:"2026-07", title:"Overview dashboard refinements",
+    changes:[
+      "Added an \u201CActual Calls\u201D tile (calls where she actually spoke to someone \u2014 excludes No Answer and Voicemail), shown before Calls Made.",
+      "Added an \u201COverdue Follow-ups\u201D tile to the Overview (was only on Efficiency).",
+      "Replaced the manual \u201CPromo Emails Sent\u201D figure with an automatic \u201CFollow-up Emails Sent\u201D count (Email Sent Follow Up + SLT Unavailable), and removed the manual promo input from the filter bar.",
+    ]},
   { v:"1.11", date:"2026-07", title:"Source Detail in Call History",
     changes:[
       "Added the \u201CSource Detail\u201D column to the Call History view (alongside Last Called / Follow-up).",

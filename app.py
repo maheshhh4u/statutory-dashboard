@@ -1255,6 +1255,14 @@ def api_report():
     a_grade         = (q(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Interested','Meeting secured')", bp) or [[0]])[0][0]
     voicemail       = (q(f"SELECT COUNT(*) {base} AND outcome='Voicemail'", bp) or [[0]])[0][0]
     no_answer       = (q(f"SELECT COUNT(*) {base} AND outcome='No Answer'", bp) or [[0]])[0][0]
+    # Actual calls = calls where she actually spoke to someone (exclude no-answer/voicemail
+    # and other non-conversation outcomes). Anything that reached a person counts.
+    actual_calls    = (q(f"""SELECT COUNT(*) {base} AND outcome IN
+        ('Connected','Engaged','Interested','Meeting secured','Not Interested','No Budget',
+         'Info Requested - Will Reach Out','SLT Unavailable - Send Email')""", bp) or [[0]])[0][0]
+    # Follow-up / SLT emails sent (replaces the manual promo-email figure)
+    email_followups = (q(f"""SELECT COUNT(*) {base} AND outcome IN
+        ('Email Sent Follow Up','SLT Unavailable - Send Email')""", bp) or [[0]])[0][0]
     # Outcome breakdown
     outcome_rows = q(f"SELECT outcome, COUNT(*) {base} AND outcome IS NOT NULL AND outcome!='' GROUP BY outcome", bp)
     outcomes = {r[0]:r[1] for r in (outcome_rows or [])}
@@ -1412,6 +1420,8 @@ def api_report():
         "period": {"from": date_from, "to": date_to},
         "caller": caller or "All callers",
         "calls_made": calls_made,
+        "actual_calls": actual_calls,
+        "email_followups": email_followups,
         "total_duration_sec": total_dur_sec,
         "hours_on_rc": hours_on_rc,
         "conversations_2min": conv_2min,
