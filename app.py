@@ -3818,19 +3818,16 @@ def get_charity_classification(reg_no):
 # and caused repeated out-of-memory crashes. This version instead does a single
 # bounded, targeted pass per export — filtered down to just the charities actually
 # being exported (capped) — and never retains data for charities outside that set.
-EXPORT_ENRICH_MAX = 1000  # hard cap on how many charities one export can enrich
+# This only bounds an extreme edge case (e.g. exporting the entire national
+# register with no filters at all). The retained memory for a normal export scales
+# with the export size itself (a few bytes per charity), not with this ceiling, so
+# it's set generously high rather than tightly — the earlier 1,000 cap was overly
+# cautious for a mechanism that was already safe well beyond that.
+EXPORT_ENRICH_MAX = 25000  # hard cap on how many charities one export can enrich
 
-def enrich_regs_for_export(regs):
-    """Look up What/Who/How, Region/Local Authority/Country, and Policy for a
-    bounded list of specific charities (used only when exporting search results to
-    CSV — never for a live/on-screen search). Streams each CC bulk file once and
-    keeps data only for the requested reg numbers, so memory stays proportional to
-    the export size rather than the whole national register."""
-    reg_set = {str(r).strip() for r in regs if str(r).strip()}
-    out = {r: {"what":"","who":"","how":"","region":"","local_authority":"","country":"","policy":""} for r in reg_set}
-    if not reg_set:
-        return out
-    # What / Who / How — from the classification bulk file
+def _scan_classification_for(reg_set):
+    """What / Who / How — from the classification bulk file, filtered to reg_set."""
+    out = {}
     try:
         cols = {"registered_charity_number","classification_code","classification_type"}
         tmp = {}
@@ -3844,12 +3841,16 @@ def enrich_regs_for_export(regs):
             if ctype in ("what","who","how"):
                 tmp[reg][ctype].append(CC_CODE_MAP.get(code, code))
         for reg, d in tmp.items():
-            out[reg]["what"] = ",".join(dict.fromkeys(d["what"]))
-            out[reg]["who"]  = ",".join(dict.fromkeys(d["who"]))
-            out[reg]["how"]  = ",".join(dict.fromkeys(d["how"]))
+            out[reg] = {"what": ",".join(dict.fromkeys(d["what"])),
+                        "who":  ",".join(dict.fromkeys(d["who"])),
+                        "how":  ",".join(dict.fromkeys(d["how"]))}
     except Exception as e:
         print(f"enrich_regs_for_export classification error: {e}")
-    # Region / Local Authority / Country — from the area-of-operation bulk file
+    return out
+
+def _scan_area_for(reg_set):
+    """Region / Local Authority / Country — from the area-of-operation bulk file."""
+    out = {}
     try:
         cols = {"registered_charity_number","geographic_area_type","geographic_area_description"}
         tmp = {}
@@ -3864,12 +3865,16 @@ def enrich_regs_for_export(regs):
             if bucket and adesc not in tmp[reg][bucket]:
                 tmp[reg][bucket].append(adesc)
         for reg, d in tmp.items():
-            out[reg]["region"] = ", ".join(d["region"])
-            out[reg]["local_authority"] = ", ".join(d["local_authority"])
-            out[reg]["country"] = ", ".join(d["country"])
+            out[reg] = {"region": ", ".join(d["region"]),
+                        "local_authority": ", ".join(d["local_authority"]),
+                        "country": ", ".join(d["country"])}
     except Exception as e:
         print(f"enrich_regs_for_export area error: {e}")
-    # Policy — from the policy bulk file (column name best-effort, see note below)
+    return out
+
+def _scan_policy_for(reg_set):
+    """Policy — from the policy bulk file (column name best-effort)."""
+    out = {}
     try:
         cols = {"registered_charity_number","policy_type","policy_desc",
                 "charity_policy_type","charity_policy_desc","policy"}
@@ -3884,9 +3889,31 @@ def enrich_regs_for_export(regs):
             tmp.setdefault(reg, [])
             if desc not in tmp[reg]: tmp[reg].append(desc)
         for reg, lst in tmp.items():
-            out[reg]["policy"] = ", ".join(lst)
+            out[reg] = {"policy": ", ".join(lst)}
     except Exception as e:
         print(f"enrich_regs_for_export policy error: {e}")
+    return out
+
+def enrich_regs_for_export(regs):
+    """Look up What/Who/How, Region/Local Authority/Country, and Policy for a
+    bounded list of specific charities (used only when exporting search results to
+    CSV — never for a live/on-screen search). Streams each CC bulk file once and
+    keeps data only for the requested reg numbers, so memory stays proportional to
+    the export size rather than the whole national register. The three source
+    files are independent, so they're scanned in parallel to keep total wait time
+    close to the slowest single file rather than the sum of all three."""
+    reg_set = {str(r).strip() for r in regs if str(r).strip()}
+    out = {r: {"what":"","who":"","how":"","region":"","local_authority":"","country":"","policy":""} for r in reg_set}
+    if not reg_set:
+        return out
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        fut_cls = ex.submit(_scan_classification_for, reg_set)
+        fut_area = ex.submit(_scan_area_for, reg_set)
+        fut_pol = ex.submit(_scan_policy_for, reg_set)
+        for reg, d in fut_cls.result().items(): out[reg].update(d)
+        for reg, d in fut_area.result().items(): out[reg].update(d)
+        for reg, d in fut_pol.result().items(): out[reg].update(d)
     return out
 
 def mx_hdrs():

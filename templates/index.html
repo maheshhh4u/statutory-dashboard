@@ -2572,10 +2572,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.17";
+const APP_VERSION = "1.18";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.18", date:"2026-07", title:"Search export enrichment now covers much larger exports",
+    changes:[
+      "Raised the Search CSV export enrichment cap from 1,000 to 25,000 charities \u2014 the 1,000 figure was overly cautious; the underlying lookup only ever holds data for the charities being exported, not the whole country, so it scales safely to much larger exports.",
+      "The three Charity Commission lookups (classification, area of operation, policy) now run in parallel instead of one after another, cutting total wait time for large exports.",
+    ]},
   { v:"1.17", date:"2026-07", title:"Critical fix: out-of-memory crash on Search export",
     changes:[
       "Fixed a server crash (\u201COut of memory\u201D, \u201CUnexpected end of JSON input\u201D) caused by the v1.16 Search export fields \u2014 they were being computed for every matching charity during the search itself, and permanently cached for the whole of England & Wales, which could exceed the server\u2019s memory limit on a broad search or saved search.",
@@ -2990,7 +2995,7 @@ function dlSearch(btn){
   const regs=sAll.map(c=>c.reg_number);
   const origLabel=btn?btn.innerHTML:null;
   if(btn){ btn.disabled=true; btn.innerHTML='⏳ Preparing…'; }
-  cToast('Fetching Charity Commission detail for export… this can take a little while.');
+  cToast('Fetching Charity Commission detail for '+regs.length+' charit'+(regs.length===1?'y':'ies')+'… for larger exports this can take a minute or two.');
   fetch('/api/search/enrich_export',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({regs})})
     .then(r=>r.json())
