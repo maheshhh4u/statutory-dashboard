@@ -1367,6 +1367,19 @@ function ctEditForce(td){ ctEdit(td, null); }
 
 // Edit up to 3 contacts manually (name, role, phone, email each)
 function editContacts(reg){
+  // If a call window is open (has the call form), minimize it to the dock first so
+  // the in-progress call details (duration, outcome, notes) are preserved. We'll
+  // restore it automatically after the contact edit is saved or cancelled.
+  const callFormOpen = !!document.getElementById('call-outcome') &&
+                       document.getElementById('generic-modal') &&
+                       document.getElementById('generic-modal').classList.contains('open');
+  if(callFormOpen){
+    window._resumeCallAfterContacts = true;
+    // Minimise the live call to the dock (keeps the form + timer intact in the DOM).
+    minimizeCallWindow();
+  } else {
+    window._resumeCallAfterContacts = false;
+  }
   const ov=contactOverrides[reg]||{};
   let list=(ov.contacts&&ov.contacts.length)?ov.contacts.slice(0,3):[];
   // Seed from single fields if no array yet
@@ -1384,14 +1397,58 @@ function editContacts(reg){
         <input id="ec-email-${i}" placeholder="Email" value="${esc(c.email||'')}" style="padding:6px;border:1px solid var(--bd);border-radius:4px;font-size:12px">
       </div>
     </div>`;
+  const resumeNote = window._resumeCallAfterContacts
+    ? '<div style="background:#eef4fb;border:1px solid #d5e2f0;border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:12px;color:#1e3a5f">📞 Your call is still active and minimised at the bottom-right. It will reopen automatically when you save or cancel here.</div>'
+    : '';
   const html=`<div style="max-height:60vh;overflow-y:auto">
+    ${resumeNote}
     <p style="font-size:12px;color:var(--t3);margin:0 0 12px">Add or edit up to 3 contacts (most senior first). Leave blank to skip.</p>
     ${list.map(row).join('')}
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
-      <button class="btn btn-outline btn-sm" onclick="closeGenericModal(true)">Cancel</button>
+      <button class="btn btn-outline btn-sm" onclick="cancelEditContacts()">Cancel</button>
       <button class="btn btn-green btn-sm" onclick="saveContacts('${esc(reg)}')">Save contacts</button>
     </div></div>`;
-  showModal('👥 Edit Contacts — Reg '+esc(reg), html);
+  showContactsModal('👥 Edit Contacts — Reg '+esc(reg), html);
+}
+// Restore the call window if we minimised it to edit contacts
+function resumeCallIfNeeded(){
+  if(window._resumeCallAfterContacts){
+    window._resumeCallAfterContacts=false;
+    restoreCallWindow();
+    return true;
+  }
+  return false;
+}
+function cancelEditContacts(){
+  closeContactsModal();
+  resumeCallIfNeeded();
+}
+// Dedicated modal for the contacts editor, separate from the call/generic modal so it
+// never overwrites an in-progress call form (duration, outcome, notes stay intact).
+function showContactsModal(title, html){
+  let m=document.getElementById('contacts-modal');
+  if(!m){
+    m=document.createElement('div');
+    m.id='contacts-modal';
+    m.className='modal-bg';
+    m.innerHTML=`<div class="modal" style="max-width:560px;max-height:80vh;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <h3 id="cm-title" style="margin:0"></h3>
+        <button onclick="cancelEditContacts()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--t3);padding:0 6px;line-height:1">×</button>
+      </div>
+      <div id="cm-body"></div>
+    </div>`;
+    document.body.appendChild(m);
+    m.addEventListener('mousedown', function(e){ m._mdownBg=(e.target===m); });
+    m.addEventListener('click', function(e){ if(e.target===m && m._mdownBg) cancelEditContacts(); });
+  }
+  document.getElementById('cm-title').innerHTML=title;
+  document.getElementById('cm-body').innerHTML=html;
+  m.classList.add('open');
+}
+function closeContactsModal(){
+  const m=document.getElementById('contacts-modal');
+  if(m) m.classList.remove('open');
 }
 function saveContacts(reg){
   const out=[];
@@ -1413,10 +1470,15 @@ function saveContacts(reg){
       ov.contacts=out;
       if(out[0]){ ov.name=out[0].name; ov.role=out[0].role; ov.cphone=out[0].phone; ov.cemail=out[0].email; }
       contactOverrides[reg]=ov;
-      closeGenericModal(true);
+      closeContactsModal();
       rerenderContactCols(reg);
       updateContactCells(reg);
-      cToast('✓ Contacts saved');
+      // If we minimised an active call to edit contacts, bring it back up
+      if(!resumeCallIfNeeded()){
+        cToast('✓ Contacts saved');
+      } else {
+        cToast('✓ Contacts saved — call reopened');
+      }
     }).catch(e=>alert('Save failed: '+e.message));
 }
 // Re-render all four contact columns for a charity (name/role/cphone/cemail)
@@ -2506,10 +2568,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.12";
+const APP_VERSION = "1.13";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.13", date:"2026-07", title:"Keep call active while editing contacts",
+    changes:[
+      "Editing a contact during a call no longer loses the call window \u2014 the call automatically minimises to the corner (keeping duration, outcome and notes), and reopens automatically when you save or cancel the contact edit.",
+      "The contact editor now opens in its own window so it never overwrites an in-progress call.",
+    ]},
   { v:"1.12", date:"2026-07", title:"Overview dashboard refinements",
     changes:[
       "Added an \u201CActual Calls\u201D tile (calls where she actually spoke to someone \u2014 excludes No Answer and Voicemail), shown before Calls Made.",
