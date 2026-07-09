@@ -2572,10 +2572,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.21";
+const APP_VERSION = "1.22";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.22", date:"2026-07", title:"Maximizer sync: Policy, Country & Gift Aid; richer Search export",
+    changes:[
+      "Maximizer sync now pushes Policy (all of a charity\u2019s policies, not just one), Country, and Gift Aid \u2014 previously Policy was missing from new entries and only sent one value on updates, and Country/Gift Aid weren\u2019t sent at all.",
+      "Verified all Maximizer field mappings (What/Who/How/Region/Local Authority/Policy) against the official UDF option lists \u2014 all were already correct; added a full Country map (279 countries) built the same way.",
+      "Search export (Simple and Advanced) now also includes Organisation Number, Company Number, Charity Suffix, Charity Type, Date Registered, Total Expenditure, Financial Year Start/End, Gift Aid, and Land and Property.",
+    ]},
   { v:"1.21", date:"2026-07", title:"Policy field detection now value-based, not column-name-based",
     changes:[
       "The Policy lookup no longer guesses the source file's column name \u2014 it now reads every column and detects which one holds policy data by matching values against the Charity Commission's known list of 20 policy categories (Safeguarding, Risk management, Complaints handling, etc.), confirmed from a charity's own annual-return export.",
@@ -3031,11 +3037,11 @@ function dlSearch(btn){
     .finally(()=>{ if(btn){ btn.disabled=false; btn.innerHTML=origLabel; } });
 }
 function buildSearchCsv(enrichMap){
-  const hdrs=["Reg No","Name","Status","Income","Gov Grants","Gov Contracts","Stat%","Town","County","Phone","Email","Website","Lists","Call Status","Comment","Called","What","Who","How","Region","Local Authority","Country","Policy","Activities"];
+  const hdrs=["Reg No","Organisation Number","Company Number","Charity Suffix","Charity Type","Name","Status","Date Registered","Income","Total Expenditure","Financial Year Start","Financial Year End","Gov Grants","Gov Contracts","Stat%","Town","County","Phone","Email","Website","Lists","Call Status","Comment","Called","What","Who","How","Region","Local Authority","Country","Policy","Gift Aid","Land and Property","Activities"];
   const rows=sAll.map(c=>{
     const f=c.financials||{};
     const e=enrichMap[c.reg_number]||{};
-    return[c.reg_number,c.name,c.status,f.total_income||c.latest_income,f.gov_grants,f.gov_contracts,f.stat_pct,c.town,c.county,c.phone,c.email,c.website,(c.lists||[]).join('; '),statuses['search|'+c.reg_number]||'',comments['search|'+c.reg_number]||'',isCalled('search',c.reg_number)?'Yes':'No',e.what||'',e.who||'',e.how||'',e.region||'',e.local_authority||'',e.country||'',e.policy||'',c.activities||''];
+    return[c.reg_number,c.organisation_number||'',c.company_number||'',c.charity_suffix||'0',c.charity_type||'',c.name,c.status,c.date_registered||'',f.total_income||c.latest_income,c.latest_expenditure||'',c.fin_year_start||'',c.fin_year_end||'',f.gov_grants,f.gov_contracts,f.stat_pct,c.town,c.county,c.phone,c.email,c.website,(c.lists||[]).join('; '),statuses['search|'+c.reg_number]||'',comments['search|'+c.reg_number]||'',isCalled('search',c.reg_number)?'Yes':'No',e.what||'',e.who||'',e.how||'',e.region||'',e.local_authority||'',e.country||'',e.policy||'',c.gift_aid||'',c.has_land||'',c.activities||''];
   });
   dlB(toCSV(rows,hdrs),'Charity_Search_'+today()+'.csv');
 }

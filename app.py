@@ -608,7 +608,10 @@ def api_search():
     COLS={"registered_charity_number","charity_name","charity_registration_status",
           "charity_contact_web","charity_contact_phone","charity_contact_email",
           "charity_contact_address3","charity_contact_address4","date_of_removal",
-          "charity_activities"}
+          "charity_activities","organisation_number","charity_company_registration_number",
+          "linked_charity_number","date_of_registration","charity_type",
+          "latest_acc_fin_period_start_date","latest_acc_fin_period_end_date",
+          "latest_expenditure","charity_gift_aid","charity_has_land"}
     results=[]; is_num=term.isdigit()
     for row in stream_zip_csv(CHARITY_URL,COLS):
         reg=row.get("registered_charity_number","").strip()
@@ -622,7 +625,17 @@ def api_search():
                         "phone":row.get("charity_contact_phone",""),"email":row.get("charity_contact_email",""),
                         "town":row.get("charity_contact_address3",""),"county":row.get("charity_contact_address4",""),
                         "website":row.get("charity_contact_web",""),"financials":{},"lists":[],
-                        "activities":row.get("charity_activities","")})
+                        "activities":row.get("charity_activities",""),
+                        "organisation_number":row.get("organisation_number",""),
+                        "company_number":row.get("charity_company_registration_number",""),
+                        "charity_suffix":row.get("linked_charity_number","") or "0",
+                        "date_registered":row.get("date_of_registration","")[:10],
+                        "charity_type":row.get("charity_type",""),
+                        "fin_year_start":row.get("latest_acc_fin_period_start_date","")[:10],
+                        "fin_year_end":row.get("latest_acc_fin_period_end_date","")[:10],
+                        "latest_expenditure":row.get("latest_expenditure",""),
+                        "gift_aid":row.get("charity_gift_aid",""),
+                        "has_land":row.get("charity_has_land","")})
         if len(results)>=25: break
     return jsonify(results)
 
@@ -645,7 +658,10 @@ def _run_advanced_search(criteria, limit=50000):
           "date_of_registration","date_of_removal","charity_contact_web",
           "charity_contact_phone","charity_contact_email",
           "charity_contact_address3","charity_contact_address4",
-          "charity_contact_postcode","charity_activities","charity_type","latest_income"}
+          "charity_contact_postcode","charity_activities","charity_type","latest_income",
+          "organisation_number","charity_company_registration_number","linked_charity_number",
+          "latest_acc_fin_period_start_date","latest_acc_fin_period_end_date",
+          "latest_expenditure","charity_gift_aid","charity_has_land"}
     results=[]
     truncated=False
     for row in stream_zip_csv(CHARITY_URL,COLS):
@@ -675,7 +691,15 @@ def _run_advanced_search(criteria, limit=50000):
                         "phone":row.get("charity_contact_phone",""),"email":row.get("charity_contact_email",""),
                         "town":row.get("charity_contact_address3",""),"county":row.get("charity_contact_address4",""),
                         "postcode":pc,"activities":row.get("charity_activities",""),
-                        "charity_type":row.get("charity_type",""),"financials":{},"lists":[]})
+                        "charity_type":row.get("charity_type",""),"financials":{},"lists":[],
+                        "organisation_number":row.get("organisation_number",""),
+                        "company_number":row.get("charity_company_registration_number",""),
+                        "charity_suffix":row.get("linked_charity_number","") or "0",
+                        "fin_year_start":row.get("latest_acc_fin_period_start_date","")[:10],
+                        "fin_year_end":row.get("latest_acc_fin_period_end_date","")[:10],
+                        "latest_expenditure":row.get("latest_expenditure",""),
+                        "gift_aid":row.get("charity_gift_aid",""),
+                        "has_land":row.get("charity_has_land","")})
         if len(results)>=limit:
             truncated=True
             break
@@ -3515,6 +3539,105 @@ POLICY_MAP = {
     "trustee expenses policy and procedures":"20",
 }
 
+COUNTRY_MAP = {
+    "abu dhabi":"1","afghanistan":"2","ajman":"3",
+    "akrotiri":"4","aland islands":"5","albania":"6",
+    "algeria":"7","american samoa":"8","andorra":"9",
+    "angola":"10","anguilla":"11","antarctica":"12",
+    "antigua and barbuda":"13","argentina":"14","armenia":"15",
+    "aruba":"16","ascension":"17","australia":"18",
+    "austria":"19","azerbaijan":"20","bahrain":"21",
+    "baker island":"22","bangladesh":"23","barbados":"24",
+    "belarus":"25","belgium":"26","belize":"27",
+    "benin":"28","bermuda":"29","bhutan":"30",
+    "bolivia":"31","bonaire":"32","bosnia and herzegovina":"33",
+    "botswana":"34","bouvet island":"35","brazil":"36",
+    "british antarctic territory":"37","british indian ocean territory":"38","british virgin islands":"39",
+    "brunei":"40","bulgaria":"41","burkina faso":"42",
+    "burma":"43","burundi":"44","cambodia":"45",
+    "cameroon":"46","canada":"47","cape verde":"48",
+    "cayman islands":"49","central african republic":"50","ceuta":"51",
+    "chad":"52","chile":"53","china":"54",
+    "christmas island":"55","cocos (keeling) islands":"56","colombia":"57",
+    "comoros":"58","congo":"59","congo (democratic republic)":"60",
+    "cook islands":"61","costa rica":"62","croatia":"63",
+    "cuba":"64","cyprus":"65","czech republic":"66",
+    "denmark":"67","dhekelia":"68","djibouti":"69",
+    "dominica":"70","dominican republic":"71","dubai":"72",
+    "east timor":"73","easter island":"74","ecuador":"75",
+    "egypt":"76","el salvador":"77","equatorial guinea":"78",
+    "eritrea":"79","estonia":"80","eswatini":"81",
+    "ethiopia":"82","falkland islands":"83","faroe islands":"84",
+    "fiji":"85","finland":"86","france":"87",
+    "french guiana":"88","french polynesia":"89","french southern territories":"90",
+    "fujairah":"91","gabon":"92","georgia":"93",
+    "germany":"94","ghana":"95","gibraltar":"96",
+    "greece":"97","greenland":"98","grenada":"99",
+    "guadeloupe":"100","guam":"101","guatemala":"102",
+    "guernsey":"103","guinea":"104","guinea-bissau":"105",
+    "guyana":"106","haiti":"107","heard island and mcdonald islands":"108",
+    "honduras":"109","hong kong":"110","howland island":"111",
+    "hungary":"112","iceland":"113","india":"114",
+    "indonesia":"115","iran":"116","iraq":"117",
+    "ireland":"118","isle of man":"119","israel":"120",
+    "italy":"121","ivory coast":"122","jamaica":"123",
+    "japan":"124","jarvis island":"125","jersey":"126",
+    "johnston atoll":"127","jordan":"128","kazakhstan":"129",
+    "kenya":"130","kingman reef":"131","kiribati":"132",
+    "kosovo":"133","kuwait":"134","kyrgyzstan":"135",
+    "laos":"136","latvia":"137","lebanon":"138",
+    "lesotho":"139","liberia":"140","libya":"141",
+    "liechtenstein":"142","lithuania":"143","luxembourg":"144",
+    "macau":"145","macedonia":"146","madagascar":"147",
+    "malawi":"148","malaysia":"149","maldives":"150",
+    "mali":"151","malta":"152","marshall islands":"153",
+    "martinique":"154","mauritania":"155","mauritius":"156",
+    "mayotte":"157","melilla":"158","mexico":"159",
+    "micronesia":"160","midway islands":"161","moldova":"162",
+    "monaco":"163","mongolia":"164","montenegro":"165",
+    "montserrat":"166","morocco":"167","mozambique":"168",
+    "namibia":"169","nauru":"170","navassa island":"171",
+    "nepal":"172","netherlands":"173","netherlands antilles":"174",
+    "new caledonia":"175","new zealand":"176","nicaragua":"177",
+    "niger":"178","nigeria":"179","niue":"180",
+    "norfolk island":"181","north korea":"182","northern ireland":"183",
+    "northern mariana islands":"184","norway":"185","occupied palestinian territories":"186",
+    "oman":"187","pakistan":"188","palau":"189",
+    "palmyra atoll":"190","panama":"191","papua new guinea":"192",
+    "paraguay":"193","peru":"194","philippines":"195",
+    "pitcairn, henderson, ducie and oeno islands":"196","poland":"197","portugal":"198",
+    "puerto rico":"199","qatar":"200","reunion":"201",
+    "ras al-khaimah":"202","romania":"203","russia":"204",
+    "rwanda":"205","são tomé and principe":"206","saba":"207",
+    "saint barthélemy":"208","saint helena":"209","saint pierre and miquelon":"210",
+    "saint vincent":"211","saint-martin":"212","samoa":"213",
+    "san marino":"214","saudi arabia":"215","scotland":"216",
+    "senegal":"217","serbia":"218","seychelles":"219",
+    "sierra leone":"220","singapore":"221","sint eustatius":"222",
+    "sint maarten":"223","slovakia":"224","slovenia":"225",
+    "solomon islands":"226","somalia":"227","south africa":"228",
+    "south georgia and south sandwich islands":"229","south korea":"230","south sudan":"231",
+    "spain":"232","sri lanka":"233","st kitts and nevis":"234",
+    "st lucia":"235","sudan":"236","suriname":"237",
+    "svalbard and jan mayen":"238","sweden":"239","switzerland":"240",
+    "syria":"241","taiwan":"242","tajikistan":"243",
+    "tanzania":"244","thailand":"245","the bahamas":"246",
+    "the gambia":"247","togo":"248","tokelau":"249",
+    "tonga":"250","trinidad and tobago":"251","tristan da cunha":"252",
+    "tunisia":"253","turkey":"254","turkmenistan":"255",
+    "turks and caicos islands":"256","tuvalu":"257","uganda":"258",
+    "ukraine":"259","umm al-quwain":"260","united arab emirates":"261",
+    "united states":"262","united states virgin islands":"263","uruguay":"264",
+    "uzbekistan":"265","vanuatu":"266","vatican city":"267",
+    "venezuela":"268","vietnam":"269","wake island":"270",
+    "wallis and futuna":"271","western sahara":"272","yemen":"273",
+    "zambia":"274","zimbabwe":"275","ducie and oeno islands":"276",
+    "henderson":"277","pitcairn":"278","réunion":"279",
+    "saint barthélemy":"280",
+}
+
+GIFT_AID_MAP = {"no":"1","yes":"2"}
+
 def _lookup(mapping, text):
     if not text: return None
     return mapping.get(str(text).lower().strip())
@@ -3558,71 +3681,6 @@ def load_classif_cache():
         _classif_loaded = True  # Don't retry on error
 
 
-# ── CC API lookup ────────────────────────────────────────────────────────────
-_cc_detail_cache = {}  # Cache CC API results by reg_number
-
-def fetch_cc_charity(reg_no):
-    """Fetch full charity details from CC API including what/who/how, address."""
-    reg_no = str(reg_no)
-    if reg_no in _cc_detail_cache:
-        return _cc_detail_cache[reg_no]
-    hdrs = {"Ocp-Apim-Subscription-Key": API_KEY}
-    try:
-        # Try suffix 0 first (main charity), then no suffix
-        r = requests.get(f"{CC_API_BASE}/allcharitydetails/{reg_no}/0",
-                         headers=hdrs, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            _cc_detail_cache[reg_no] = data
-            return data
-    except Exception as e:
-        print(f"fetch_cc_charity({reg_no}): {e}")
-    return {}
-
-def enrich_charity_from_cc(c):
-    """Enrich a charity dict with full CC API data."""
-    reg_no = str(c.get("reg_number","")).strip()
-    if not reg_no:
-        return c
-    cc = fetch_cc_charity(reg_no)
-    if not cc:
-        return c
-    # Basic fields
-    if not c.get("phone")   and cc.get("phone"):   c["phone"]   = cc["phone"]
-    if not c.get("email")   and cc.get("email"):   c["email"]   = cc["email"]
-    if not c.get("website") and cc.get("web"):     c["website"] = cc["web"]
-    # Address
-    if not c.get("address1"): c["address1"] = cc.get("address_line_one","")
-    if not c.get("address2"): c["address2"] = cc.get("address_line_two","")
-    c["postcode"] = cc.get("address_post_code","")
-    # City/Town = address_line_five (London) or address_line_four (City of London)
-    c["city"]   = cc.get("address_line_five","") or cc.get("address_line_four","")
-    c["county"] = cc.get("address_line_four","")
-    # Date of registration
-    dor = cc.get("date_of_registration","")
-    if dor: c["date_of_registration"] = dor[:10]  # YYYY-MM-DD
-    # Organisation number
-    c["organisation_number"] = str(cc.get("organisation_number",""))
-    # Linked Charity: group_subsid_suffix != 0 means it's a linked charity
-    c["linked_charity"] = "Yes" if cc.get("group_subsid_suffix",0) != 0 else ""
-    # Latest income/expenditure
-    c["latest_income"]      = cc.get("latest_income","")
-    c["latest_expenditure"] = cc.get("latest_expenditure","")
-    # Financial year dates
-    c["fin_year_start"] = (cc.get("latest_acc_fin_year_start_date","") or "")[:10]
-    c["fin_year_end"]   = (cc.get("latest_acc_fin_year_end_date","") or "")[:10]
-    # What/Who/How from who_what_where
-    wwh = cc.get("who_what_where", [])
-    whats = [x["classification_desc"] for x in wwh if x.get("classification_type","").lower()=="what"]
-    whos  = [x["classification_desc"] for x in wwh if x.get("classification_type","").lower()=="who"]
-    hows  = [x["classification_desc"] for x in wwh if x.get("classification_type","").lower()=="how"]
-    if whats: c["what"] = ",".join(whats)
-    if whos:  c["who"]  = ",".join(whos)
-    if hows:  c["how"]  = ",".join(hows)
-    # Local Authority from CharityAoOLocalAuthority
-    la_list = cc.get("CharityAoOLocalAuthority",[])
-    if la_list: c["local_authority"] = la_list[0].get("local_authority","")
-    return c
 
 # ── CC API — full charity detail lookup ──────────────────────────────────────
 _cc_detail_cache = {}
@@ -3644,6 +3702,38 @@ def fetch_cc_charity(reg_no):
     except Exception as e:
         print(f"  fetch_cc_charity({reg_no}): {e}")
     return {}
+
+_cc_policy_cache = {}  # per-charity live policy lookup cache
+
+def fetch_cc_policy(reg_no):
+    """Fetch a single charity's policies from the CC API (a separate endpoint from
+    allcharitydetails). Used for one charity at a time — e.g. Daily Calling AI
+    insight or a Maximizer sync trigger — never for bulk search exports, which use
+    the bounded bulk-file scan instead. The exact response shape isn't confirmed,
+    so we defensively look for text anywhere in the response that matches a known
+    policy label, the same value-matching approach used for the bulk export."""
+    reg_no = str(reg_no)
+    if reg_no in _cc_policy_cache:
+        return _cc_policy_cache[reg_no]
+    hdrs = {"Ocp-Apim-Subscription-Key": API_KEY}
+    found = []
+    try:
+        r = requests.get(f"{CC_API_BASE}/charitypolicyinformation/{reg_no}/0",
+                         headers=hdrs, timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            items = data if isinstance(data, list) else ([data] if isinstance(data, dict) else [])
+            for item in items:
+                if not isinstance(item, dict): continue
+                for val in item.values():
+                    if isinstance(val, str) and val.strip().lower() in KNOWN_POLICY_LABELS:
+                        if val.strip() not in found: found.append(val.strip())
+        else:
+            print(f"  fetch_cc_policy({reg_no}): HTTP {r.status_code}")
+    except Exception as e:
+        print(f"  fetch_cc_policy({reg_no}): {e}")
+    _cc_policy_cache[reg_no] = found
+    return found
 
 def enrich_charity_from_cc(c):
     """Enrich a charity dict with full CC API data."""
@@ -3688,12 +3778,33 @@ def enrich_charity_from_cc(c):
     if whats: c["what"] = ",".join(whats)
     if whos:  c["who"]  = ",".join(whos)
     if hows:  c["how"]  = ",".join(hows)
-    # Local Authority
+    # Local Authority / Region / Country — embedded arrays in the same response
     la_list = cc.get("CharityAoOLocalAuthority") or []
     if isinstance(la_list, list) and la_list and isinstance(la_list[0], dict):
         c["local_authority"] = la_list[0].get("local_authority","")
+    region_list = cc.get("CharityAoORegion") or []
+    if isinstance(region_list, list) and region_list:
+        names = [r.get("region","") for r in region_list if isinstance(r, dict) and r.get("region")]
+        if names: c["region"] = ", ".join(dict.fromkeys(names))
+    country_list = cc.get("CharityAoOCountryContinent") or []
+    if isinstance(country_list, list) and country_list:
+        names = [r.get("country","") for r in country_list if isinstance(r, dict) and r.get("country")]
+        if names: c["country"] = ", ".join(dict.fromkeys(names))
+    # Gift Aid / Land & property — try a few plausible field names defensively,
+    # since these aren't confirmed in the live API response the way others are.
+    ga = cc.get("gift_aid")
+    if ga is None: ga = cc.get("charity_gift_aid")
+    if ga is not None: c["gift_aid"] = "Yes" if ga in (True,"true","True","Y","1",1) else "No"
+    hl = cc.get("has_land")
+    if hl is None: hl = cc.get("charity_has_land")
+    if hl is not None: c["has_land"] = "Yes" if hl in (True,"true","True","Y","1",1) else "No"
+    # Policy — separate live endpoint (not part of allcharitydetails)
+    pol = fetch_cc_policy(reg_no)
+    if pol: c["policy"] = ", ".join(pol)
     print(f"  CC enriched: what={(c.get('what') or '')[:30]} who={(c.get('who') or '')[:20]} "
-          f"la={c.get('local_authority') or ''} addr={(c.get('address1') or '')[:20]}")
+          f"la={c.get('local_authority') or ''} region={c.get('region') or ''} "
+          f"country={c.get('country') or ''} policy={(c.get('policy') or '')[:30]} "
+          f"addr={(c.get('address1') or '')[:20]}")
     return c
 
 # ── CC classification cache (what/who/how) ────────────────────────────────────
@@ -4118,6 +4229,25 @@ def build_charity_data_full(c):
     if rk: data["/AbEntry/Udf/$TYPEID(109)"] = rk
     lk = _lookup(LOCAL_AUTH_MAP, la)
     if lk: data["/AbEntry/Udf/$TYPEID(108)"] = lk
+    # Policy is multi-select, same as What/Who/How — a charity commonly has several
+    policy = c.get("policy","") or fin.get("policy","")
+    policy_keys = _multi_keys(POLICY_MAP, policy)
+    if policy_keys: data["/AbEntry/Udf/$TYPEID(261)"] = policy_keys
+    # Country (area of operation outside England/Wales, where applicable)
+    country = str(c.get("country","") or "").strip()
+    if country:
+        # A charity can operate in several countries; take the first that maps —
+        # Country appears to be single-select in Maximizer's UDF schema.
+        for one in country.split(","):
+            ck = _lookup(COUNTRY_MAP, one.strip())
+            if ck:
+                data["/AbEntry/Udf/$TYPEID(107)"] = ck
+                break
+    # Gift Aid (Yes/No)
+    ga = str(c.get("gift_aid","") or "").strip()
+    if ga:
+        gk = _lookup(GIFT_AID_MAP, ga)
+        if gk: data["/AbEntry/Udf/$TYPEID(243)"] = gk
     # Linked Charity: "1"=No (main charity, suffix=0), "2"=Yes (linked, suffix>0)
     linked_value = "2" if int(c.get("charity_suffix", 0) or 0) > 0 else "1"
     data["/AbEntry/Udf/$TYPEID(264)"] = linked_value
@@ -4217,10 +4347,25 @@ def build_charity_udfs(c, key):
     lk = _lookup(LOCAL_AUTH_MAP, la)
     if lk: upd(108, lk)
 
-    policy = str(c.get("policy","") or "").strip()
-    if policy:
-        pk = _lookup(POLICY_MAP, policy)
-        if pk: upd(261, pk)
+    # Policy is multi-select, same as What/Who/How — a charity commonly has several
+    policy = c.get("policy","") or fin.get("policy","")
+    policy_keys = _multi_keys(POLICY_MAP, policy)
+    if policy_keys: updates.append({"Key": key, "/AbEntry/Udf/$TYPEID(261)": policy_keys})
+
+    # Country (area of operation outside England/Wales, where applicable)
+    country = str(c.get("country","") or "").strip()
+    if country:
+        for one in country.split(","):
+            ck = _lookup(COUNTRY_MAP, one.strip())
+            if ck:
+                upd(107, ck)
+                break
+
+    # Gift Aid (Yes/No)
+    ga = str(c.get("gift_aid","") or "").strip()
+    if ga:
+        gk = _lookup(GIFT_AID_MAP, ga)
+        if gk: upd(243, gk)
 
     # Linked Charity: "1"=No, "2"=Yes based on suffix
     linked_v = "2" if int(c.get("charity_suffix", 0) or 0) > 0 else "1"
