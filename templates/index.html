@@ -442,6 +442,23 @@ select:focus{outline:none;border-color:var(--green)}
       <option value="yes">✓ Called</option>
       <option value="no">Not called</option>
     </select>
+    <select id="cf-outcome" onchange="filterCalling()">
+      <option value="">Outcome: all</option>
+      <option value="__none__">— No outcome yet —</option>
+      <option value="Connected">✓ Connected</option>
+      <option value="Engaged">💬 Engaged</option>
+      <option value="Voicemail">📧 Voicemail</option>
+      <option value="No Answer">📵 No Answer</option>
+      <option value="Wrong Number">⚠ Wrong Number</option>
+      <option value="Busy">⏱ Busy</option>
+      <option value="Line Dropped">📴 Line Dropped</option>
+      <option value="Email Sent Follow Up">✉ Email Sent Follow Up</option>
+      <option value="SLT Unavailable - Send Email">📩 SLT Unavailable - Send Email</option>
+      <option value="No Budget">💷 No Budget</option>
+      <option value="Info Requested - Will Reach Out">📨 Info Requested – Will Reach Out</option>
+      <option value="Not Interested">✗ Not Interested</option>
+      <option value="Interested">★ Interested — Follow Up</option>
+    </select>
     <select id="cf-news" onchange="filterCalling()">
       <option value="">Newsletter: all</option>
       <option value="yes">Newsletter ✓</option>
@@ -474,6 +491,7 @@ select:focus{outline:none;border-color:var(--green)}
           <th>Statutory</th>
           <th>Source</th>
           <th style="min-width:150px" title="Which data from the source (e.g. anniversary milestone, how late)">Source Detail</th>
+          <th style="min-width:130px" title="The outcome selected the last time she called">Call Outcome</th>
           <th style="width:140px">Stage</th>
           <th style="min-width:180px">Comment</th>
           <th style="width:80px">Called</th>
@@ -484,7 +502,7 @@ select:focus{outline:none;border-color:var(--green)}
         </tr>
       </thead>
       <tbody id="callingBody">
-        <tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>
+        <tr><td colspan="25" style="text-align:center;padding:30px;color:var(--t3)">Loading priority contacts…</td></tr>
       </tbody>
     </table>
   </div>
@@ -510,6 +528,23 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-outline btn-sm" onclick="clearCallHistoryFilters()">Clear</button>
       <button class="btn btn-sm" style="background:#1d7a3a;color:#fff" onclick="exportHistoryExcel()">⬇ Export to Excel</button>
       <input type="text" id="ch2-search" placeholder="Filter name / reg…" oninput="filterHistoryTable()" style="width:160px;padding:6px;border:1px solid var(--bd);border-radius:4px">
+      <select id="ch2-outcome" onchange="filterHistoryTable()" style="padding:6px;border:1px solid var(--bd);border-radius:4px">
+        <option value="">Outcome: all</option>
+        <option value="__none__">— No outcome yet —</option>
+        <option value="Connected">✓ Connected</option>
+        <option value="Engaged">💬 Engaged</option>
+        <option value="Voicemail">📧 Voicemail</option>
+        <option value="No Answer">📵 No Answer</option>
+        <option value="Wrong Number">⚠ Wrong Number</option>
+        <option value="Busy">⏱ Busy</option>
+        <option value="Line Dropped">📴 Line Dropped</option>
+        <option value="Email Sent Follow Up">✉ Email Sent Follow Up</option>
+        <option value="SLT Unavailable - Send Email">📩 SLT Unavailable - Send Email</option>
+        <option value="No Budget">💷 No Budget</option>
+        <option value="Info Requested - Will Reach Out">📨 Info Requested – Will Reach Out</option>
+        <option value="Not Interested">✗ Not Interested</option>
+        <option value="Interested">★ Interested — Follow Up</option>
+      </select>
       <div style="margin-left:auto;font-size:12px;color:var(--t3)" id="ch2-count"></div>
     </div>
     <div class="tbl-wrap tbl-scroll" id="historyScroll" style="max-height:74vh;overflow:auto">
@@ -527,6 +562,7 @@ select:focus{outline:none;border-color:var(--green)}
             <th>Source</th>
             <th style="min-width:150px" title="Which data from the source (e.g. anniversary milestone, how late)">Source Detail</th>
             <th style="min-width:150px">Last Called / Follow-up</th>
+            <th style="min-width:130px" title="The outcome selected the last time she called">Call Outcome</th>
             <th style="width:140px">Stage</th>
             <th style="min-width:180px">Comment</th>
             <th style="width:80px">Called</th>
@@ -537,7 +573,7 @@ select:focus{outline:none;border-color:var(--green)}
           </tr>
         </thead>
         <tbody id="historyBody">
-          <tr><td colspan="25" style="text-align:center;padding:30px;color:var(--t3)">Loading previously-called charities…</td></tr>
+          <tr><td colspan="26" style="text-align:center;padding:30px;color:var(--t3)">Loading previously-called charities…</td></tr>
         </tbody>
       </table>
     </div>
@@ -2577,10 +2613,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.23";
+const APP_VERSION = "1.24";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.24", date:"2026-07", title:"Fixed Actual Calls tile; added Call Outcome column & filter",
+    changes:[
+      "Fixed \u201CActual Calls\u201D on the report Overview \u2014 it now correctly equals Calls Made minus No Answer minus Voicemail (it was previously undercounting by excluding valid outcomes like Wrong Number and Busy).",
+      "Added a \u201CCall Outcome\u201D column to Daily Calling and Call History, showing the outcome selected on the last call \u2014 colour-coded for quick scanning.",
+      "Added a matching \u201COutcome\u201D filter to both the Daily Calling and Call History filter bars.",
+    ]},
   { v:"1.23", date:"2026-07", title:"Fixed missing phone numbers on Follow-up calls",
     changes:[
       "Fixed a bug where the Call popup opened from \u201CFollow-up calls \u2014 overdue & today\u201D had no phone number at all, so calls couldn\u2019t be placed. The follow-up list now carries full charity data, including phone.",
@@ -3679,7 +3721,7 @@ function toggleFuExpand(id){
           <th style="width:30px"></th><th style="width:44px">📞</th><th style="width:44px">#</th><th style="width:90px">Priority</th>
           <th>Charity Name</th><th>Phone</th><th>Email</th><th>Website</th>
           <th>🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
-          <th>Total Income</th><th>Statutory</th><th>Source</th><th>Source Detail</th>
+          <th>Total Income</th><th>Statutory</th><th>Source</th><th>Source Detail</th><th>Call Outcome</th>
           <th style="width:140px">Stage</th><th style="min-width:180px">Comment</th><th style="width:80px">Called</th>
           <th style="width:72px">Newsletter</th><th style="width:50px">Excl.</th><th style="width:90px">Caller</th><th>Also in</th>
         </tr></thead>
@@ -3871,10 +3913,10 @@ function loadCalling(retryCount){
   note.style.display='none';
   // Only show the "loading" message on the first attempt; keep it calm on retries
   if(retryCount===0){
-    body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">Loading your calling list…</td></tr>';
+    body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px;color:var(--t3)">Loading your calling list…</td></tr>';
   } else if(retryCount>=2){
     // After a couple of silent retries, reassure the user it\'s waking up
-    body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">'+
+    body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px;color:var(--t3)">'+
       '⏳ Connecting to the server… one moment<br><span style="font-size:11px">(this can take up to a minute after a quiet period)</span></td></tr>';
   }
   // Per-attempt timeout so a hung request doesn\'t block the retry chain
@@ -3884,7 +3926,7 @@ function loadCalling(retryCount){
     .then(r=>{ clearTimeout(tmo); if(!r.ok) throw new Error('Server responded '+r.status); return r.json(); })
     .then(d=>{
       if(d.error && !d.has_batch && !(d.charities&&d.charities.length)){
-        body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(d.error)+
+        body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(d.error)+
           '<br><button class="btn btn-sm" style="margin-top:10px;background:#1e3a5f;color:#fff" onclick="loadCalling()">↻ Try again</button></div></td></tr>';
         return;
       }
@@ -3906,7 +3948,7 @@ function loadCalling(retryCount){
         setTimeout(()=>loadCalling(retryCount+1), wait);
         return;
       }
-      body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px"><div class="err-box">⚠ Couldn\'t reach the server after several attempts.'+
+      body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px"><div class="err-box">⚠ Couldn\'t reach the server after several attempts.'+
         '<br><span style="font-size:11px">The server may be restarting. Wait a moment and try again.</span>'+
         '<br><button class="btn btn-sm" style="margin-top:10px;background:#1e3a5f;color:#fff" onclick="loadCalling()">↻ Try again</button></div></td></tr>';
     });
@@ -4035,7 +4077,7 @@ function autoLoadAndGenerate(cat, mode){
     alert('This source can\'t be auto-loaded. Please open its tab once, then generate.');
     loadCalling(); return;
   }
-  body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">⏳ Loading source data… first load can take up to a minute.</td></tr>';
+  body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px;color:var(--t3)">⏳ Loading source data… first load can take up to a minute.</td></tr>';
   let chain=Promise.resolve();
   eps.forEach(u=>{ chain=chain.then(()=>warmEndpoint(u)); });
   chain.then(()=>runGenerate(cat,mode)).then(d=>{
@@ -4048,7 +4090,7 @@ function doGenerate(cat, mode){
   closeGenericModal(true);
   callingScroll=null;
   const body=document.getElementById('callingBody');
-  body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">⏳ Generating your list of 100…</td></tr>';
+  body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px;color:var(--t3)">⏳ Generating your list of 100…</td></tr>';
   runGenerate(cat,mode).then(d=>{
     if(d.status==='not_loaded'){
       if(cat==='search'){
@@ -4082,18 +4124,24 @@ function filterCalling(){
   const called=_gv('cf-called');
   const news=_gv('cf-news');
   const caller=_gv('cf-caller').toLowerCase().trim();
+  const outcome=_gv('cf-outcome');
   let shown=0;
   document.querySelectorAll('#callingBody tr').forEach(tr=>{
     const tds=tr.children;
     if(!tds||tds.length<21) return;
     const nameTxt=(tds[4].textContent||'').toLowerCase();
     const srcTxt=(tds[15].textContent||'').toLowerCase();
-    const sel=tds[16].querySelector('select');
+    // Use robust class/id-based lookups (not raw column index) so this keeps
+    // working even as columns are added/reordered.
+    const sel=tr.querySelector('select.ssel');
     const stageVal=sel?sel.value:'';
     const isCalled=tr.classList.contains('row-called')||tr.classList.contains('called-today-row');
-    const nlCb=tds[19].querySelector('input[type=checkbox]');
+    const nlCb=tr.querySelector('.nl-cb');
     const isNews=nlCb?nlCb.checked:false;
-    const callerTxt=(tds[20].textContent||'').toLowerCase();
+    const callerEl=tr.querySelector('[id^="cc-col-calling-"]');
+    const callerTxt=(callerEl?callerEl.textContent:'').toLowerCase();
+    const outcomeEl=tr.querySelector('.fu-outcome-cell');
+    const outcomeTxt=(outcomeEl?outcomeEl.textContent:'').trim();
     let show=true;
     if(name && !nameTxt.includes(name)) show=false;
     if(src && !srcTxt.includes(src)) show=false;
@@ -4103,14 +4151,16 @@ function filterCalling(){
     if(news==='yes' && !isNews) show=false;
     if(news==='no' && isNews) show=false;
     if(caller && !callerTxt.includes(caller)) show=false;
+    if(outcome==='__none__' && outcomeTxt && outcomeTxt!=='—') show=false;
+    if(outcome && outcome!=='__none__' && outcomeTxt!==outcome) show=false;
     tr.style.display=show?'':'none';
     if(show) shown++;
   });
   const cc=document.getElementById('cf-count');
-  if(cc){ const anyF=name||src||stage||called||news||caller; cc.textContent=anyF?(shown+' shown'):''; }
+  if(cc){ const anyF=name||src||stage||called||news||caller||outcome; cc.textContent=anyF?(shown+' shown'):''; }
 }
 function clearCallingFilter(){
-  ['cf-name','cf-source','cf-caller','cf-stage','cf-called','cf-news'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  ['cf-name','cf-source','cf-caller','cf-stage','cf-called','cf-news','cf-outcome'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   filterCalling();
 }
 function callingFilterActive(){
@@ -4192,26 +4242,26 @@ function switchCallingSub(which){
   }
 }
 function clearCallHistoryFilters(){
-  ['ch2-called-from','ch2-called-to','ch2-fu-from','ch2-fu-to','ch2-search'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  ['ch2-called-from','ch2-called-to','ch2-fu-from','ch2-fu-to','ch2-search','ch2-outcome'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   loadCallHistoryList(0);
 }
 function loadCallHistoryList(page){
   if(page==null) page=0;
   historyPage=page;
   const body=document.getElementById('historyBody');
-  body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px;color:var(--t3)">Loading call history…</td></tr>';
+  body.innerHTML='<tr><td colspan="26" style="text-align:center;padding:30px;color:var(--t3)">Loading call history…</td></tr>';
   const size=getHistoryPageSize();
   const f=getHistoryFilters();
   const qs=new URLSearchParams({...f, limit:size, offset:page*size}).toString();
   fetch('/api/call_history_list?'+qs)
     .then(r=>r.json()).then(d=>{
-      if(d.error){ body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(d.error)+'</div></td></tr>'; return; }
+      if(d.error){ body.innerHTML='<tr><td colspan="26" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(d.error)+'</div></td></tr>'; return; }
       historyData=d.charities||[];
       historyTotal=d.total_filtered||d.total_called||0;
       mergeHistoryIntoCalling(historyData);
       renderHistoryList(d);
     })
-    .catch(e=>{ body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(e.message)+'</div></td></tr>'; });
+    .catch(e=>{ body.innerHTML='<tr><td colspan="26" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(e.message)+'</div></td></tr>'; });
 }
 function historyGoto(page){
   const size=getHistoryPageSize();
@@ -4228,7 +4278,7 @@ function renderHistoryList(d){
   const body=document.getElementById('historyBody');
   const cnt=document.getElementById('ch2-count');
   if(!historyData.length){
-    body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px;color:var(--t3)">No previously-called charities match these filters.</td></tr>';
+    body.innerHTML='<tr><td colspan="26" style="text-align:center;padding:30px;color:var(--t3)">No previously-called charities match these filters.</td></tr>';
     if(cnt) cnt.innerHTML='';
     renderHistoryPager();
     return;
@@ -4265,11 +4315,18 @@ function renderHistoryPager(){
 }
 function filterHistoryTable(){
   const q=((document.getElementById('ch2-search')||{}).value||'').toLowerCase().trim();
+  const outcome=((document.getElementById('ch2-outcome')||{}).value||'');
   const rows=document.querySelectorAll('#historyBody tr');
   rows.forEach(tr=>{
-    if(!q){ tr.style.display=''; return; }
-    const txt=tr.textContent.toLowerCase();
-    tr.style.display=txt.includes(q)?'':'none';
+    let show=true;
+    if(q && !tr.textContent.toLowerCase().includes(q)) show=false;
+    if(outcome){
+      const outcomeEl=tr.querySelector('.fu-outcome-cell');
+      const outcomeTxt=(outcomeEl?outcomeEl.textContent:'').trim();
+      if(outcome==='__none__'){ if(outcomeTxt && outcomeTxt!=='—') show=false; }
+      else if(outcomeTxt!==outcome) show=false;
+    }
+    tr.style.display=show?'':'none';
   });
 }
 function getHistorySelectedRegs(){
@@ -4322,6 +4379,18 @@ function doExportHistory(which){
     .catch(e=>alert('Export failed: '+e.message));
 }
 
+function outcomeChip(oc){
+  if(!oc) return '<span style="color:var(--t3);font-size:11px">—</span>';
+  const positive=['Connected','Engaged','Interested','Meeting secured'];
+  const negative=['Not Interested','Wrong Number'];
+  const followup=['Email Sent Follow Up','SLT Unavailable - Send Email','Info Requested - Will Reach Out'];
+  let bg='#eef1f4', border='#d5dae0', color='#445';
+  if(positive.includes(oc)){ bg='#e7f6ea'; border='#a8dab5'; color='#1d7a3a'; }
+  else if(negative.includes(oc)){ bg='#fdecea'; border='#f3b7b0'; color='#c0392b'; }
+  else if(followup.includes(oc)){ bg='#eef4fb'; border='#c3d8ef'; color='#1e3a5f'; }
+  else if(oc==='No Budget'){ bg='#fff6e0'; border='#f0d78c'; color='#8a6d1a'; }
+  return `<span style="background:${bg};border:1px solid ${border};color:${color};border-radius:6px;padding:2px 8px;font-size:11px;display:inline-block;white-space:nowrap">${esc(oc)}</span>`;
+}
 function callingRowHtml(c, i, opts){
   opts = opts || {};
   // History rows are all previously-called, so always show the strong "called" green.
@@ -4360,6 +4429,7 @@ function callingRowHtml(c, i, opts){
     <td class="mono">${fmt(c.statutory)}</td>
     <td><span class="src-chip">${esc(c.source||'')}</span></td>
     ${detailCell}
+    <td class="fu-outcome-cell">${outcomeChip(c.outcome||c.latest_outcome)}</td>
     <td>${sSelect('calling',c.reg_number)}</td>
     <td>${cmBox('calling',c.reg_number)}</td>
     <td>${cBtn('calling',c.reg_number,c.name||'')}</td>
@@ -4382,7 +4452,7 @@ function renderCalling(d){
     else gb.innerHTML='🔄 Generate New List';
   }
   if(!callingData.length){
-    body.innerHTML='<tr><td colspan="24" style="text-align:center;padding:30px;color:var(--t3)">'
+    body.innerHTML='<tr><td colspan="25" style="text-align:center;padding:30px;color:var(--t3)">'
       +(d.has_batch?'This list is empty.':'No active list yet — pick a source above and click <strong>Generate List</strong>.')+'</td></tr>';
     return;
   }

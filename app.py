@@ -1318,11 +1318,9 @@ def api_report():
     a_grade         = (q(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Interested','Meeting secured')", bp) or [[0]])[0][0]
     voicemail       = (q(f"SELECT COUNT(*) {base} AND outcome='Voicemail'", bp) or [[0]])[0][0]
     no_answer       = (q(f"SELECT COUNT(*) {base} AND outcome='No Answer'", bp) or [[0]])[0][0]
-    # Actual calls = calls where she actually spoke to someone (exclude no-answer/voicemail
-    # and other non-conversation outcomes). Anything that reached a person counts.
-    actual_calls    = (q(f"""SELECT COUNT(*) {base} AND outcome IN
-        ('Connected','Engaged','Interested','Meeting secured','Not Interested','No Budget',
-         'Info Requested - Will Reach Out','SLT Unavailable - Send Email')""", bp) or [[0]])[0][0]
+    # Actual calls = Calls Made minus No Answer minus Voicemail (every other outcome
+    # means she actually got through to someone, even if it was a quick decline).
+    actual_calls    = max(0, calls_made - voicemail - no_answer)
     # Follow-up / SLT emails sent (replaces the manual promo-email figure)
     email_followups = (q(f"""SELECT COUNT(*) {base} AND outcome IN
         ('Email Sent Follow Up','SLT Unavailable - Send Email')""", bp) or [[0]])[0][0]
@@ -1984,6 +1982,15 @@ def save_call():
     return jsonify({"ok": True, "synced_to_maximizer": synced, "sync_error": sync_error,
                     "rc_duration_pending": fetch_rc_duration})
 
+def _latest_outcomes_map():
+    """reg_number -> most recent call outcome, from call_log. Used to show a Call
+    Outcome column/filter on both Daily Calling and Call History."""
+    out = {}
+    for reg, ts, oc in (db_query(
+            "SELECT reg_number, timestamp, outcome FROM call_log ORDER BY timestamp ASC") or []):
+        if reg and oc: out[reg] = oc  # ascending scan, last write = most recent
+    return out
+
 def _charity_snapshots_for_regs(regs):
     """Build full charity row dicts (same shape as Daily Calling rows) for a specific
     set of reg numbers, using whatever data we already have on file (calling_batch
@@ -2009,6 +2016,7 @@ def _charity_snapshots_for_regs(regs):
             "SELECT reg_number, timestamp, phone_used FROM call_log ORDER BY timestamp ASC") or []):
         if reg in regset and phone:
             last_dialled[reg] = phone  # ascending order → ends up holding the most recent
+    outcomes = _latest_outcomes_map()
     out = {}
     for reg in regset:
         base = dict(batch_data.get(reg, {}))
@@ -2022,6 +2030,7 @@ def _charity_snapshots_for_regs(regs):
         base["called_today"] = _called_today(reg)
         base["ever_called"]  = _ever_called(reg)
         base["last_dialled"] = last_dialled.get(reg, "") or base.get("phone","")
+        base["outcome"]      = outcomes.get(reg, "")
         # Closest available proxy for "who we last spoke to" — the contact on file
         contacts = ov.get("contacts") or []
         if contacts:
@@ -3020,6 +3029,7 @@ def api_daily_calling():
 def _load_active_batch():
     """Read the active batch from DB, freshen called/contact state, return list."""
     rows = db_query("SELECT reg_number,position,completed,data FROM calling_batch WHERE active=1 ORDER BY position ASC")
+    outcomes = _latest_outcomes_map()
     out = []
     for reg, pos, completed, data in rows:
         try: c = json.loads(data) if data else {}
@@ -3032,6 +3042,7 @@ def _load_active_batch():
         c["completed"]    = int(completed or 0)
         c["called_today"] = _called_today(reg)
         c["ever_called"]  = _ever_called(reg)
+        c["outcome"]      = outcomes.get(reg, "")
         out.append(c)
     return out
 
@@ -3174,6 +3185,7 @@ def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="")
     names = {}
     for reg, nm in (db_query("SELECT reg_number, name FROM called_log") or []):
         if nm: names[reg] = nm
+    outcomes = _latest_outcomes_map()
     rows = []
     for reg in regs:
         lc = last_called.get(reg, "")
@@ -3198,7 +3210,8 @@ def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="")
         base["ever_called"]  = True
         base["last_called"]  = lc
         base["follow_up_at"] = fu_next or ""
-        base["latest_outcome"] = ""
+        base["outcome"]        = outcomes.get(reg, "")
+        base["latest_outcome"] = outcomes.get(reg, "")
         # Ensure a Source Detail: use the stored one, else reconstruct from stored
         # fields (milestone / months_late / date_registered), else a light fallback.
         if not base.get("source_detail"):
