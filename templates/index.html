@@ -1652,7 +1652,8 @@ function openCallModal(pg,reg,name,ccPhone){
   const currentPhone=overridePhone||ccPhone||'';
   const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
   const callerWarn=caller?'':'<div style="color:var(--red);font-size:11px;margin-bottom:8px">⚠ Select your name from "Calling as:" dropdown first.</div>';
-  // Look up this charity's source + source detail so the caller sees why it's on the list
+  // Look up this charity's source + source detail, plus last-dialled number and
+  // last known contact, so the caller has full context before dialling.
   let srcInfo='';
   try{
     const cd=(typeof callingData!=='undefined')?callingData.find(x=>String(x.reg_number)===String(reg)):null;
@@ -1660,7 +1661,11 @@ function openCallModal(pg,reg,name,ccPhone){
       const bits=[];
       if(cd.source) bits.push(esc(cd.source));
       if(cd.source_detail) bits.push('<span style="background:#eef4fb;border:1px solid #d5e2f0;border-radius:6px;padding:1px 7px;margin-left:4px">'+esc(cd.source_detail)+'</span>');
-      if(bits.length) srcInfo='<div style="font-size:11px;color:var(--t3);margin-bottom:10px">From: '+bits.join(' ')+'</div>';
+      if(bits.length) srcInfo+='<div style="font-size:11px;color:var(--t3);margin-bottom:4px">From: '+bits.join(' ')+'</div>';
+      const extra=[];
+      if(cd.last_dialled && cd.last_dialled!==currentPhone) extra.push('📱 Last dialled: <b>'+esc(cd.last_dialled)+'</b>');
+      if(cd.last_contact_name) extra.push('🗣️ Last known contact: <b>'+esc(cd.last_contact_name)+'</b>'+(cd.last_contact_role?' ('+esc(cd.last_contact_role)+')':''));
+      if(extra.length) srcInfo+='<div style="font-size:11px;color:var(--t2);margin-bottom:10px">'+extra.join(' &nbsp;·&nbsp; ')+'</div>';
     }
   }catch(e){}
   const html=`
@@ -2572,10 +2577,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.22";
+const APP_VERSION = "1.23";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.23", date:"2026-07", title:"Fixed missing phone numbers on Follow-up calls",
+    changes:[
+      "Fixed a bug where the Call popup opened from \u201CFollow-up calls \u2014 overdue & today\u201D had no phone number at all, so calls couldn\u2019t be placed. The follow-up list now carries full charity data, including phone.",
+      "The Call popup now also shows the last-dialled number (if different) and the last known contact person, when on file.",
+      "Added a \u201C\u25be Details\u201D toggle to each item in the Follow-up list \u2014 expands to show the same full set of columns as the main Daily Calling table (contacts, income, source, stage, comment, etc.) right there, with full call/AI/edit functionality.",
+    ]},
   { v:"1.22", date:"2026-07", title:"Maximizer sync: Policy, Country & Gift Aid; richer Search export",
     changes:[
       "Maximizer sync now pushes Policy (all of a charity\u2019s policies, not just one), Country, and Gift Aid \u2014 previously Policy was missing from new entries and only sent one value on updates, and Country/Gift Aid weren\u2019t sent at all.",
@@ -3579,6 +3590,7 @@ function loadMilestones(){
 
 // ── Daily Calling ───────────────────────────────────────────────────────────────
 let callingData=[];
+let fuData={};  // id -> full followup+charity data, for the expand panels
 function loadScheduledCalls(){
   const wrap=document.getElementById('scheduledCalls');
   const body=document.getElementById('scheduledCallsBody');
@@ -3591,6 +3603,13 @@ function loadScheduledCalls(){
     const todays=list.filter(f=>!f.overdue).sort((a,b)=>(a.follow_up_at||'').localeCompare(b.follow_up_at||''));
     list=overdue.concat(todays);
     wrap.style.display='block';
+    fuData={};
+    // Merge each follow-up's charity data into callingData so the expand panel's
+    // Call / AI / Contacts controls (which look charities up there) work correctly.
+    if(typeof callingData!=='undefined'){
+      const have=new Set(callingData.map(c=>String(c.reg_number)));
+      list.forEach(f=>{ if(!have.has(String(f.reg_number))){ callingData.push(f); have.add(String(f.reg_number)); } });
+    }
     const banner=overdue.length
       ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
            <span class="overdue-badge">⚠ ${overdue.length} OVERDUE</span>
@@ -3598,6 +3617,7 @@ function loadScheduledCalls(){
          </div>`
       : '';
     body.innerHTML=banner+list.map(f=>{
+      fuData[f.id]=f;
       const time=(f.follow_up_at||'').slice(11,16)||'—';
       const isOd=!!f.overdue;
       const dateStr=(f.follow_up_at||'').slice(0,10);
@@ -3627,20 +3647,57 @@ function loadScheduledCalls(){
       const timeCol=isOd
         ? `<span style="min-width:80px;text-align:center"><span class="overdue-badge" title="${esc(wasDueText)}">${esc(odText)}</span></span>`
         : `<span style="font-family:monospace;font-weight:700;color:#1e3a5f;min-width:46px">${esc(time)}</span>`;
-      return `<div ${rowAttr}>
+      const phone=f.phone||f.last_dialled||'';
+      return `<div>
+        <div ${rowAttr}>
         ${timeCol}
         <span style="flex:1">
           <strong style="${isOd?'color:#c0392b':''}">${esc(f.name||('Reg '+f.reg_number))}</strong>
           <span style="color:var(--t3);font-size:11px"> · Reg ${esc(f.reg_number)}${f.caller?' · '+esc(f.caller):''}${isOd?' · '+esc(wasDueText):''}</span>
           ${f.notes?`<div style="font-size:11px;color:var(--t3);margin-top:2px">${esc(f.notes).slice(0,140)}</div>`:''}
         </span>
-        <button class="btn btn-green btn-sm" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','')">📞 Call</button>
+        <button class="btn btn-outline btn-sm" id="fu-toggle-${f.id}" onclick="toggleFuExpand(${f.id})" title="Show full charity details">▾ Details</button>
+        <button class="btn btn-green btn-sm" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','${esc(phone)}')" ${phone?'':'title="No phone number on file — expand Details to add one"'}>📞 Call</button>
         <button class="btn btn-sm" style="background:#fff;border:1px solid var(--bd);color:#1e3a5f" onclick="rescheduleFollowup(${f.id},'${esc(f.follow_up_at||'')}')" title="Change date/time">✏ Reschedule</button>
         <button class="btn btn-outline btn-sm" onclick="markFollowupDone(${f.id},this)">✓ Done</button>
         <button class="btn btn-sm" style="background:#fff;border:1px solid #e0a0a0;color:#c0392b" onclick="deleteFollowup(${f.id})" title="Delete this follow-up">🗑</button>
+        </div>
+        <div id="fu-expand-${f.id}" style="display:none;margin:2px 0 10px;overflow-x:auto"></div>
       </div>`;
     }).join('');
   }).catch(()=>{ wrap.style.display='none'; });
+}
+function toggleFuExpand(id){
+  const panel=document.getElementById('fu-expand-'+id);
+  const btn=document.getElementById('fu-toggle-'+id);
+  if(!panel) return;
+  if(panel.style.display==='none'){
+    const f=fuData[id];
+    if(f && !panel.dataset.built){
+      panel.innerHTML=`<table style="width:100%;border-collapse:collapse;font-size:12px" class="fu-mini-table">
+        <thead><tr>
+          <th style="width:30px"></th><th style="width:44px">📞</th><th style="width:44px">#</th><th style="width:90px">Priority</th>
+          <th>Charity Name</th><th>Phone</th><th>Email</th><th>Website</th>
+          <th>🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
+          <th>Total Income</th><th>Statutory</th><th>Source</th><th>Source Detail</th>
+          <th style="width:140px">Stage</th><th style="min-width:180px">Comment</th><th style="width:80px">Called</th>
+          <th style="width:72px">Newsletter</th><th style="width:50px">Excl.</th><th style="width:90px">Caller</th><th>Also in</th>
+        </tr></thead>
+        <tbody>${callingRowHtml(f,0,{})}</tbody>
+      </table>
+      <div style="font-size:11px;color:var(--t3);margin-top:4px;display:flex;gap:16px;flex-wrap:wrap">
+        ${f.last_dialled?'<span>📱 Last dialled: <b>'+esc(f.last_dialled)+'</b></span>':''}
+        ${f.last_contact_name?'<span>🗣️ Last known contact: <b>'+esc(f.last_contact_name)+'</b>'+(f.last_contact_role?' ('+esc(f.last_contact_role)+')':'')+'</span>':''}
+      </div>`;
+      panel.dataset.built='1';
+      refreshCalled();
+    }
+    panel.style.display='block';
+    if(btn) btn.innerHTML='▴ Hide';
+  } else {
+    panel.style.display='none';
+    if(btn) btn.innerHTML='▾ Details';
+  }
 }
 function markFollowupDone(id,btn){
   fetch('/api/followup/done',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -4009,9 +4066,11 @@ function doGenerate(cat, mode){
 }
 
 function prioBadge(band,score){
+  if(band==null && score==null) return '<span style="color:var(--t3);font-size:11px">—</span>';
   const cls=band==='high'?'prio-high':band==='med'?'prio-med':'prio-low';
   const dot=band==='high'?'🔴':band==='med'?'🟠':'⚪';
-  return`<span class="prio-badge ${cls}">${dot} ${band==='high'?'High':band==='med'?'Med':'Low'}<span class="prio-score">${Math.round(score)}</span></span>`;
+  const scoreTxt=(typeof score==='number'&&!isNaN(score))?Math.round(score):'—';
+  return`<span class="prio-badge ${cls}">${dot} ${band==='high'?'High':band==='med'?'Med':'Low'}<span class="prio-score">${scoreTxt}</span></span>`;
 }
 
 let callingScroll=null;

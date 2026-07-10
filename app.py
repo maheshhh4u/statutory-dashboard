@@ -1984,6 +1984,57 @@ def save_call():
     return jsonify({"ok": True, "synced_to_maximizer": synced, "sync_error": sync_error,
                     "rc_duration_pending": fetch_rc_duration})
 
+def _charity_snapshots_for_regs(regs):
+    """Build full charity row dicts (same shape as Daily Calling rows) for a specific
+    set of reg numbers, using whatever data we already have on file (calling_batch
+    snapshot, contact overrides, called_log name, call_log for last-dialled number).
+    Used to enrich the follow-up list so the caller always has a phone number to
+    dial and can see full charity info, even if the charity isn't in today's
+    active 100."""
+    regset = {str(r) for r in regs if r}
+    if not regset: return {}
+    batch_data = {}
+    for reg, data in (db_query("SELECT reg_number, data FROM calling_batch") or []):
+        if reg not in regset or reg in batch_data: continue
+        try:
+            o = json.loads(data) if data else {}
+            if o: batch_data[reg] = o
+        except Exception: pass
+    names = {}
+    for reg, nm in (db_query("SELECT reg_number, name FROM called_log") or []):
+        if reg in regset and nm: names[reg] = nm
+    # Last dialled number per charity — most recent call_log entry that has a number
+    last_dialled = {}
+    for reg, ts, phone in (db_query(
+            "SELECT reg_number, timestamp, phone_used FROM call_log ORDER BY timestamp ASC") or []):
+        if reg in regset and phone:
+            last_dialled[reg] = phone  # ascending order → ends up holding the most recent
+    out = {}
+    for reg in regset:
+        base = dict(batch_data.get(reg, {}))
+        base["reg_number"] = reg
+        if not base.get("name"): base["name"] = names.get(reg, reg)
+        ov = _contact_overrides.get(reg) or {}
+        if ov.get("phone"):   base["phone"]   = ov["phone"]
+        if ov.get("email"):   base["email"]   = ov["email"]
+        if ov.get("website"): base["website"] = ov["website"]
+        base["completed"]    = 1 if _ever_called(reg) else base.get("completed", 0)
+        base["called_today"] = _called_today(reg)
+        base["ever_called"]  = _ever_called(reg)
+        base["last_dialled"] = last_dialled.get(reg, "") or base.get("phone","")
+        # Closest available proxy for "who we last spoke to" — the contact on file
+        contacts = ov.get("contacts") or []
+        if contacts:
+            base["last_contact_name"] = contacts[0].get("name","")
+            base["last_contact_role"] = contacts[0].get("role","")
+        else:
+            base["last_contact_name"] = ov.get("name","")
+            base["last_contact_role"] = ov.get("role","")
+        if not base.get("source_detail"):
+            base["source_detail"] = "📞 " + (base.get("source") or "Follow-up")
+        out[reg] = base
+    return out
+
 @app.route("/api/followups")
 def followups_list():
     """Upcoming follow-ups. ?scope=today (default), ?scope=all (today + future),
@@ -2010,12 +2061,21 @@ def followups_list():
             rows = db_query("""SELECT id,reg_number,name,page,follow_up_at,caller,notes
                                FROM follow_ups WHERE done=0 AND substr(follow_up_at,1,10)<=?
                                ORDER BY follow_up_at ASC""", (today,))
-        return jsonify({"followups": [
-            {"id": r[0], "reg_number": r[1], "name": r[2], "page": r[3],
-             "follow_up_at": r[4], "caller": r[5], "notes": r[6],
-             # Overdue = scheduled date+time already passed (not just the date), so a
-             # today's follow-up whose time slot has gone by also counts as overdue.
-             "overdue": bool(r[4]) and str(r[4]) < now_full} for r in rows]})
+        followup_rows = rows or []
+        snapshots = _charity_snapshots_for_regs([r[1] for r in followup_rows])
+        out = []
+        for r in followup_rows:
+            fid, reg, nm, pg, fat, caller, notes = r
+            snap = dict(snapshots.get(str(reg)) or {})
+            # follow_ups.name is the reliable fallback if no snapshot name is on file
+            if not snap.get("name"): snap["name"] = nm or str(reg)
+            item = {"id": fid, "reg_number": reg, "name": snap.get("name"), "page": pg,
+                    "follow_up_at": fat, "caller": caller, "notes": notes,
+                    "overdue": bool(fat) and str(fat) < now_full}
+            item.update(snap)  # phone, email, website, source, source_detail, income, etc.
+            item["reg_number"] = reg  # keep original (snap could theoretically differ)
+            out.append(item)
+        return jsonify({"followups": out})
     except Exception as e:
         return jsonify({"followups": [], "error": str(e)[:120]})
 
