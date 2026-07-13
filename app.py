@@ -2135,7 +2135,7 @@ def _charity_snapshots_for_regs(regs):
         if ov.get("phone"):   base["phone"]   = ov["phone"]
         if ov.get("email"):   base["email"]   = ov["email"]
         if ov.get("website"): base["website"] = ov["website"]
-        base["completed"]    = 1 if _ever_called(reg) else base.get("completed", 0)
+        base["completed"]    = 1 if _called_today(reg) else 0
         base["called_today"] = _called_today(reg)
         base["ever_called"]  = _ever_called(reg)
         base["last_dialled"] = last_dialled.get(reg, "") or base.get("phone","")
@@ -2942,14 +2942,16 @@ import math as _math
 
 def _called_today(reg):
     """True if this charity was called today (UTC), per call_log timestamps."""
+    reg = str(reg)
     today = datetime.utcnow().strftime("%Y-%m-%d")
     for v in _called_log.values():
-        if v.get("reg_number")==reg and str(v.get("timestamp","")).startswith(today):
+        if str(v.get("reg_number"))==reg and str(v.get("timestamp","")).startswith(today):
             return True
     return False
 
 def _ever_called(reg):
-    return any(v.get("reg_number")==reg for v in _called_log.values())
+    reg = str(reg)
+    return any(str(v.get("reg_number"))==reg for v in _called_log.values())
 
 def priority_score(c):
     """
@@ -3228,6 +3230,14 @@ def _load_active_batch():
         c["retry_at"]        = rs.get("retry_at", "")
         c["retry_due"]       = rs.get("retry_due", False)
         c["retry_exhausted"] = rs.get("retry_exhausted", False)
+        # One-time correction: an earlier version of this code force-marked ANY
+        # ever-called charity as completed, including retry-due ones carried
+        # forward from a previous day. A charity with a pending retry state that
+        # wasn't actually called today should never be marked completed — correct
+        # that both in this response and permanently in the database.
+        if c["completed"] and not c["called_today"] and rs:
+            c["completed"] = 0
+            db_exec("UPDATE calling_batch SET completed=0 WHERE active=1 AND reg_number=?", (reg,))
         out.append(c)
     return out
 
@@ -3484,15 +3494,19 @@ def api_calling_batch():
                             "note": "No active calling list yet. Pick a source and generate your first 100."})
         meta = db_query("SELECT batch_no,created_at,category FROM calling_batch WHERE active=1 LIMIT 1")
         batch_no, created_at, category = (meta[0] if meta else (1, "", "all"))
-        # A charity counts as "done" if it's been called in ANY way the row shows green:
-        # the batch completed flag, OR logged as called today, OR ever called.
-        # This keeps the X/100 counter in sync with the green "Called" marks.
-        done = sum(1 for c in batch if c.get("completed") or c.get("called_today") or c.get("ever_called"))
-        # Self-heal: if a row is called but its completed flag is unset, set it so the
-        # count is consistent on future loads and across users.
+        # A charity counts as "done" if it's been called TODAY, in this batch —
+        # NOT simply "ever called", since a retry-due charity can be legitimately
+        # ever_called (from days ago) while still being pending a fresh attempt
+        # today. Using ever_called here would wrongly count retry-due charities
+        # as done and make the X/Y counter (and green highlighting) misleading.
+        done = sum(1 for c in batch if c.get("completed") or c.get("called_today"))
+        # Self-heal: if a row was called TODAY but its completed flag is unset, set
+        # it so the count stays consistent on future loads and across users. Does
+        # NOT use ever_called, for the same reason as above — a retry-due charity
+        # from a previous day must not be force-marked completed today.
         try:
             for c in batch:
-                if (c.get("called_today") or c.get("ever_called")) and not c.get("completed"):
+                if c.get("called_today") and not c.get("completed"):
                     db_exec("UPDATE calling_batch SET completed=1 WHERE active=1 AND reg_number=?", (c["reg_number"],))
                     c["completed"] = 1
         except Exception as _e:
