@@ -187,6 +187,11 @@ body.wrap-off .ct-cell .ct-val{white-space:nowrap;overflow:hidden;text-overflow:
 .prio-score{font-size:10px;font-weight:700;opacity:.7;margin-left:2px}
 tr.called-today-row{background:#f3faf4}
 tr.called-today-row td{color:var(--t3)}
+tr.retry-due-row{background:#fff9e0 !important;border-left:3px solid #e8b339}
+tr.retry-exhausted-row{background:#fdf2f1 !important;border-left:3px solid #e07a70}
+tr.retry-exhausted-row td{color:var(--t3)}
+.retry-badge{display:inline-block;background:#fff3cd;color:#8a6d1a;border:1px solid #e8b339;border-radius:6px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap}
+.retry-exhausted-badge{display:inline-block;background:#fdecea;color:#c0392b;border:1px solid #e07a70;border-radius:6px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap}
 .called-chip{display:inline-block;margin-left:8px;font-size:10px;font-weight:800;color:#1d7a3a;background:#e3f5e8;padding:2px 7px;border-radius:99px;vertical-align:middle}
 .src-chip{display:inline-block;font-size:11px;font-weight:600;color:var(--navy);background:var(--s2);padding:3px 9px;border-radius:6px;white-space:nowrap}
 .cell-link{color:var(--navy);text-decoration:none;font-size:13px}
@@ -1727,7 +1732,7 @@ function openCallModal(pg,reg,name,ccPhone){
     <div id="call-status" style="font-size:12px;margin-bottom:14px;display:none;padding:8px 10px;border-radius:4px;line-height:1.4"></div>
 
     <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Call Outcome</label>
-    <select id="call-outcome" style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;margin-bottom:10px">
+    <select id="call-outcome" onchange="onCallOutcomeChange()" style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;margin-bottom:10px">
       <option value="">— Select outcome —</option>
       <option value="Connected">✓ Connected</option>
       <option value="Engaged">💬 Engaged</option>
@@ -1743,6 +1748,16 @@ function openCallModal(pg,reg,name,ccPhone){
       <option value="Not Interested">✗ Not Interested</option>
       <option value="Interested">★ Interested — Follow Up</option>
     </select>
+
+    <div id="call-retry-box" style="display:none;background:#fff9e0;border:1px solid #e8b339;border-radius:6px;padding:8px 10px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:700;color:#8a6d1a;text-transform:uppercase;display:block;margin-bottom:4px">🔁 Retry after</label>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input type="date" id="call-retry-date" style="padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:12px">
+        <input type="time" id="call-retry-time" style="padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:12px">
+        <button type="button" onclick="setDefaultRetryTime()" style="background:none;border:1px solid var(--bd);border-radius:4px;cursor:pointer;padding:5px 9px;font-size:11px">Reset to 24h</button>
+      </div>
+      <div style="font-size:10px;color:#8a6d1a;margin-top:4px">Defaults to 24 hours from now — this charity will show in yellow and be eligible to call again once this time passes. After 3 such attempts it's marked exhausted rather than retried again.</div>
+    </div>
 
     <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Duration (mm:ss)</label>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
@@ -1821,6 +1836,27 @@ function emailCharity(pg,reg,name){
   window.open(url,'_blank');
 }
 
+const RETRY_OUTCOMES=['No Answer','Voicemail','Busy','Line Dropped'];
+function setDefaultRetryTime(){
+  const d=new Date(Date.now()+24*60*60*1000);
+  const pad=n=>String(n).padStart(2,'0');
+  const dEl=document.getElementById('call-retry-date'), tEl=document.getElementById('call-retry-time');
+  if(dEl) dEl.value=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  if(tEl) tEl.value=`${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function onCallOutcomeChange(){
+  const oc=document.getElementById('call-outcome').value;
+  const box=document.getElementById('call-retry-box');
+  if(!box) return;
+  if(RETRY_OUTCOMES.includes(oc)){
+    box.style.display='block';
+    // Only set the default if it's currently empty, so switching outcomes back
+    // and forth doesn't clobber a time the caller already customised.
+    if(!document.getElementById('call-retry-date').value) setDefaultRetryTime();
+  } else {
+    box.style.display='none';
+  }
+}
 function saveCall(pg,reg,ccPhone){
   const phone=document.getElementById('call-phone').value.trim();
   const outcome=document.getElementById('call-outcome').value;
@@ -1834,6 +1870,14 @@ function saveCall(pg,reg,ccPhone){
   const fuTime=document.getElementById('call-fu-time').value;
   let fuAt='';
   if(fuDate){ fuAt=fuDate+' '+(fuTime||'09:00'); }
+  // Retry-after date/time (only meaningful for No Answer/Voicemail/Busy/Line Dropped;
+  // if left blank the server defaults to 24 hours from now)
+  let retryAt='';
+  if(RETRY_OUTCOMES.includes(outcome)){
+    const rDate=(document.getElementById('call-retry-date')||{}).value;
+    const rTime=(document.getElementById('call-retry-time')||{}).value;
+    if(rDate) retryAt=rDate+' '+(rTime||'09:00');
+  }
   // Parse duration mm:ss → seconds
   let durSec=0;
   if(durStr){
@@ -1865,7 +1909,7 @@ function saveCall(pg,reg,ccPhone){
   fetch('/api/call',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({reg_number:reg,page:pg,phone:phone,outcome:outcome,notes:notes,
                           duration_sec:durSec,caller:caller,status:status,
-                          follow_up_at:fuAt,name:nm,charity:charity})})
+                          follow_up_at:fuAt,retry_at:retryAt,name:nm,charity:charity})})
     .then(r=>r.json()).then(d=>{
       resetCallTimer();
       refreshCalled();
@@ -2613,10 +2657,17 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.25";
+const APP_VERSION = "1.26";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.26", date:"2026-07", title:"Retry cooldown for No Answer / Voicemail / Busy / Line Dropped",
+    changes:[
+      "Charities marked No Answer, Voicemail, Busy, or Line Dropped are no longer treated as permanently done \u2014 they become eligible for a retry after a cooling-off period (24 hours by default), shown in yellow with a \ud83d\udd01 Retry due badge.",
+      "The call popup now shows an optional \u201CRetry after\u201D date/time when one of these outcomes is selected, pre-filled to 24 hours but fully editable.",
+      "After 3 unanswered attempts, a charity is marked \u2717 Exhausted (light red) instead of being retried again or falsely marked done \u2014 a signal to try another channel, e.g. email.",
+      "Retry-due charities can be pulled back into a freshly generated Daily Calling list; still-cooling-down and exhausted charities are not.",
+    ]},
   { v:"1.25", date:"2026-07", title:"Fixed follow-up note mix-ups; History search now finds any page",
     changes:[
       "Hardened the Follow-up list so a follow-up\u2019s own note, date, and caller can never be overwritten by unrelated charity data; the note is now also shown clearly labelled as \u201CFollow-up note\u201D in the expanded Details panel, separate from the charity\u2019s general Comment.",
@@ -4422,9 +4473,23 @@ function callingRowHtml(c, i, opts){
   // History rows are all previously-called, so always show the strong "called" green.
   // (Avoids relying on refreshCalled(), whose getElementById lookup can be shadowed by
   // duplicate ss-calling-<reg> ids when the same charity is also in today's Daily list.)
-  const rowCls=opts.history ? 'row-called' : ((c.completed||c.called_today)?'called-today-row':'');
+  const rowCls=opts.history ? 'row-called'
+    : (c.retry_exhausted ? 'retry-exhausted-row'
+       : (c.retry_due ? 'retry-due-row'
+          : ((c.completed||c.called_today)?'called-today-row':'')));
   const nm=esc(c.name||'');
-  const calledChip=c.completed?'<span class="called-chip">✓ done</span>':(c.called_today?'<span class="called-chip">✓ called today</span>':'');
+  let calledChip;
+  if(c.retry_exhausted){
+    calledChip=' <span class="retry-exhausted-badge" title="'+(c.retry_count||3)+' attempts made — no answer each time. Consider trying another channel (e.g. email).">✗ Exhausted '+(c.retry_count||3)+' attempts</span>';
+  } else if(c.retry_due){
+    calledChip=' <span class="retry-badge" title="Last attempt: '+esc(c.outcome||'')+'. Due for a retry now.">🔁 Retry due (attempt '+((c.retry_count||0)+1)+')</span>';
+  } else if(c.completed){
+    calledChip='<span class="called-chip">✓ done</span>';
+  } else if(c.called_today){
+    calledChip='<span class="called-chip">✓ called today</span>';
+  } else {
+    calledChip='';
+  }
   const otherPgs=['prospects','new','late','old','search','milestones'].filter(p=>isCalled(p,c.reg_number));
   const pgL={'prospects':'Prospects','new':'Newly Reg.','late':'Late Accts','old':'40+ Yrs','search':'Search','milestones':'Milestones'};
   const cc=otherPgs.map(p=>`<span class="tag tag-purple" style="font-size:9px" title="Called in ${pgL[p]}">★ ${pgL[p]}</span>`).join(' ');

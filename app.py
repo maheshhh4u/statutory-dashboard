@@ -103,6 +103,11 @@ def db_init():
             synced_to_maximizer INTEGER DEFAULT 0
         )""")
         client.execute("CREATE INDEX IF NOT EXISTS idx_call_reg ON call_log(reg_number)")
+        # Retry cooldown: when a call outcome is one that means "didn't get through"
+        # (No Answer / Voicemail / Busy / Line Dropped), retry_at holds when this
+        # charity becomes eligible to be called again.
+        try: client.execute("ALTER TABLE call_log ADD COLUMN retry_at TEXT")
+        except Exception: pass
         # Follow-up calls scheduled during a call
         client.execute("""CREATE TABLE IF NOT EXISTS follow_ups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1916,6 +1921,7 @@ def save_call():
     caller  = str(data.get("caller","")).strip() or "Unknown"
     status  = str(data.get("status","")).strip()
     fu_at   = str(data.get("follow_up_at","")).strip()   # "YYYY-MM-DD HH:MM"
+    retry_at_in = str(data.get("retry_at","")).strip()   # optional custom retry time
     name    = str(data.get("name","")).strip()
     try: duration = max(0, int(data.get("duration_sec", 0) or 0))
     except: duration = 0
@@ -1925,11 +1931,21 @@ def save_call():
     # Flag: should we try to fetch duration from RC call log?
     fetch_rc_duration = (duration == 0 and phone and _rc_configured())
 
+    # Retry cooldown: for "didn't get through" outcomes, work out when this
+    # charity becomes eligible to be called again — the caller's own custom time
+    # if they set one, otherwise the default cooldown from now.
+    retry_at = ""
+    if outcome in RETRY_OUTCOMES:
+        if retry_at_in:
+            retry_at = retry_at_in if len(retry_at_in) > 10 else retry_at_in + " 09:00"
+        else:
+            retry_at = (datetime.utcnow() + timedelta(hours=DEFAULT_RETRY_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+
     # 1) Log the call (synced=0 — the sync below will push it)
     db_exec("""INSERT INTO call_log
-        (reg_number,page,phone_used,outcome,notes,duration_sec,caller,timestamp,synced_to_maximizer)
-        VALUES(?,?,?,?,?,?,?,?,0)""",
-        (reg, page, phone, outcome, notes, duration, caller, ts))
+        (reg_number,page,phone_used,outcome,notes,duration_sec,caller,timestamp,synced_to_maximizer,retry_at)
+        VALUES(?,?,?,?,?,?,?,?,0,?)""",
+        (reg, page, phone, outcome, notes, duration, caller, ts, retry_at or None))
 
     # 2) Capture the call notes as a dashboard comment (so it shows in comment history
     #    AND gets pushed to Maximizer as a Note by the sync below)
@@ -1982,6 +1998,52 @@ def save_call():
     return jsonify({"ok": True, "synced_to_maximizer": synced, "sync_error": sync_error,
                     "rc_duration_pending": fetch_rc_duration})
 
+# ── Retry cooldown for "didn't get through" outcomes ─────────────────────────
+# No Answer / Voicemail / Busy / Line Dropped all mean the charity was never
+# actually reached, so — rather than marking them permanently done — they're
+# eligible for a fresh attempt after a cooling-off period, up to a capped
+# number of attempts, then treated as exhausted (needs another channel, e.g.
+# email) rather than falsely marked "done" as if a real conversation happened.
+RETRY_OUTCOMES = {"No Answer", "Voicemail", "Busy", "Line Dropped"}
+DEFAULT_RETRY_HOURS = 24
+MAX_RETRY_ATTEMPTS = 3
+
+def _retry_states_map():
+    """reg_number -> {retry_count, retry_at, retry_due, retry_exhausted}, computed
+    from the most recent CONSECUTIVE retry-eligible calls per charity (a real
+    conversation outcome resets the streak). One query, one pass — no N+1s."""
+    rows = db_query("""SELECT reg_number, timestamp, outcome, retry_at FROM call_log
+                        WHERE reg_number IS NOT NULL AND reg_number!=''
+                        ORDER BY reg_number ASC, timestamp DESC""") or []
+    now_full = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    out = {}
+    i, n = 0, len(rows)
+    while i < n:
+        reg = rows[i][0]
+        streak = 0
+        latest_retry_at = None
+        j = i
+        while j < n and rows[j][0] == reg:
+            ts, oc, retry_at = rows[j][1], rows[j][2], rows[j][3]
+            if oc in RETRY_OUTCOMES:
+                streak += 1
+                if latest_retry_at is None:
+                    latest_retry_at = retry_at or ts  # most recent row for this reg
+                if streak >= MAX_RETRY_ATTEMPTS:
+                    j += 1
+                    break
+                j += 1
+            else:
+                break  # a real outcome — streak ends here
+        if streak > 0:
+            exhausted = streak >= MAX_RETRY_ATTEMPTS
+            due = (not exhausted) and bool(latest_retry_at) and str(latest_retry_at) <= now_full
+            out[reg] = {"retry_count": streak, "retry_at": latest_retry_at,
+                        "retry_due": due, "retry_exhausted": exhausted}
+        while i < n and rows[i][0] == reg:
+            i += 1
+    return out
+
 def _latest_outcomes_map():
     """reg_number -> most recent call outcome, from call_log. Used to show a Call
     Outcome column/filter on both Daily Calling and Call History."""
@@ -2017,6 +2079,7 @@ def _charity_snapshots_for_regs(regs):
         if reg in regset and phone:
             last_dialled[reg] = phone  # ascending order → ends up holding the most recent
     outcomes = _latest_outcomes_map()
+    retry_states = _retry_states_map()
     out = {}
     for reg in regset:
         base = dict(batch_data.get(reg, {}))
@@ -2031,6 +2094,11 @@ def _charity_snapshots_for_regs(regs):
         base["ever_called"]  = _ever_called(reg)
         base["last_dialled"] = last_dialled.get(reg, "") or base.get("phone","")
         base["outcome"]      = outcomes.get(reg, "")
+        rs = retry_states.get(reg) or {}
+        base["retry_count"]     = rs.get("retry_count", 0)
+        base["retry_at"]        = rs.get("retry_at", "")
+        base["retry_due"]       = rs.get("retry_due", False)
+        base["retry_exhausted"] = rs.get("retry_exhausted", False)
         # Closest available proxy for "who we last spoke to" — the contact on file
         contacts = ov.get("contacts") or []
         if contacts:
@@ -3041,6 +3109,7 @@ def _load_active_batch():
     """Read the active batch from DB, freshen called/contact state, return list."""
     rows = db_query("SELECT reg_number,position,completed,data FROM calling_batch WHERE active=1 ORDER BY position ASC")
     outcomes = _latest_outcomes_map()
+    retry_states = _retry_states_map()
     out = []
     for reg, pos, completed, data in rows:
         try: c = json.loads(data) if data else {}
@@ -3054,6 +3123,11 @@ def _load_active_batch():
         c["called_today"] = _called_today(reg)
         c["ever_called"]  = _ever_called(reg)
         c["outcome"]      = outcomes.get(reg, "")
+        rs = retry_states.get(reg) or {}
+        c["retry_count"]     = rs.get("retry_count", 0)
+        c["retry_at"]        = rs.get("retry_at", "")
+        c["retry_due"]       = rs.get("retry_due", False)
+        c["retry_exhausted"] = rs.get("retry_exhausted", False)
         out.append(c)
     return out
 
@@ -3202,6 +3276,7 @@ def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="",
     for reg, nm in (db_query("SELECT reg_number, name FROM called_log") or []):
         if nm: names[reg] = nm
     outcomes = _latest_outcomes_map()
+    retry_states = _retry_states_map()
     rows = []
     for reg in regs:
         lc = last_called.get(reg, "")
@@ -3228,6 +3303,11 @@ def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="",
         base["follow_up_at"] = fu_next or ""
         base["outcome"]        = outcomes.get(reg, "")
         base["latest_outcome"] = outcomes.get(reg, "")
+        rs = retry_states.get(reg) or {}
+        base["retry_count"]     = rs.get("retry_count", 0)
+        base["retry_at"]        = rs.get("retry_at", "")
+        base["retry_due"]       = rs.get("retry_due", False)
+        base["retry_exhausted"] = rs.get("retry_exhausted", False)
         # Ensure a Source Detail: use the stored one, else reconstruct from stored
         # fields (milestone / months_late / date_registered), else a light fallback.
         if not base.get("source_detail"):
@@ -3401,7 +3481,17 @@ def api_calling_batch_generate():
         leftovers.append(c)
     leftover_regs = set(c["reg_number"] for c in leftovers)
 
-    pool = [c for c in scored if not _ever_called(c["reg_number"]) and not _name_excluded(c) and c["reg_number"] not in _calling_excl]
+    # A charity is eligible for a fresh list if it's never been called, OR its
+    # retry cooldown has passed (retry_due). Charities still cooling down, or
+    # that have exhausted their 3 retry attempts, stay excluded — exhausted ones
+    # are shown separately (in light red) rather than silently vanishing.
+    retry_states = _retry_states_map()
+    def _retry_ok(reg):
+        if not _ever_called(reg): return True
+        rs = retry_states.get(reg)
+        return bool(rs and rs.get("retry_due"))
+
+    pool = [c for c in scored if _retry_ok(c["reg_number"]) and not _name_excluded(c) and c["reg_number"] not in _calling_excl]
 
     # ── Source-specific filters (Anniversary milestone/timing, Late months, New days) ──
     def _num(v, default=None):
