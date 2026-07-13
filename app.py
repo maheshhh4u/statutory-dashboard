@@ -147,6 +147,16 @@ def db_init():
             excluded_by TEXT,
             excluded_at TEXT
         )""")
+        # Saved, shareable column layout presets (Daily Calling / Call History)
+        client.execute("""CREATE TABLE IF NOT EXISTS column_presets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            config_json TEXT,
+            created_by TEXT,
+            created_at TEXT,
+            visibility TEXT DEFAULT 'private',
+            allowed_users_json TEXT
+        )""")
         # Seed default user if empty
         try:
             rs = client.execute("SELECT COUNT(*) FROM users")
@@ -2617,6 +2627,60 @@ def save_search():
     _saved_searches[name]=criteria
     db_exec("INSERT OR REPLACE INTO saved_searches(name,criteria) VALUES(?,?)", (name, json.dumps(criteria)))
     return jsonify({"ok":True})
+
+# ── Column layout presets (Daily Calling / Call History — shareable) ────────────
+@app.route("/api/column_presets", methods=["GET"])
+def list_column_presets():
+    """Return presets visible to the given caller: their own private ones, all
+    public ones, and any 'selected' ones that name them."""
+    caller = str(request.args.get("caller","")).strip()
+    rows = db_query("SELECT id,name,config_json,created_by,created_at,visibility,allowed_users_json FROM column_presets") or []
+    out = []
+    for pid, name, cfg, creator, created_at, vis, allowed_json in rows:
+        vis = vis or "private"
+        if vis == "public":
+            visible = True
+        elif vis == "private":
+            visible = (creator == caller)
+        else:  # 'selected'
+            try: allowed = json.loads(allowed_json) if allowed_json else []
+            except Exception: allowed = []
+            visible = (creator == caller) or (caller in allowed)
+        if not visible: continue
+        try: config = json.loads(cfg) if cfg else {}
+        except Exception: config = {}
+        out.append({"id": pid, "name": name, "config": config, "created_by": creator,
+                    "created_at": created_at, "visibility": vis,
+                    "allowed_users": (json.loads(allowed_json) if allowed_json else []),
+                    "mine": (creator == caller)})
+    out.sort(key=lambda x: x["created_at"] or "", reverse=True)
+    return jsonify(out)
+
+@app.route("/api/column_presets", methods=["POST"])
+def save_column_preset():
+    data = request.json or {}
+    name = str(data.get("name","")).strip()
+    config = data.get("config") or {}
+    creator = str(data.get("created_by","")).strip() or "Unknown"
+    visibility = str(data.get("visibility","private")).strip().lower()
+    if visibility not in ("private","public","selected"): visibility = "private"
+    allowed_users = data.get("allowed_users") or []
+    if not name: return jsonify({"ok": False, "error": "Name is required"}), 400
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    db_exec("""INSERT INTO column_presets(name,config_json,created_by,created_at,visibility,allowed_users_json)
+               VALUES(?,?,?,?,?,?)""",
+            (name, json.dumps(config), creator, now, visibility, json.dumps(allowed_users)))
+    return jsonify({"ok": True})
+
+@app.route("/api/column_presets/<int:pid>", methods=["DELETE"])
+def delete_column_preset(pid):
+    caller = str(request.args.get("caller","")).strip()
+    row = db_query("SELECT created_by FROM column_presets WHERE id=?", (pid,))
+    if not row: return jsonify({"ok": False, "error": "Not found"}), 404
+    if row[0][0] != caller:
+        return jsonify({"ok": False, "error": "Only the creator can delete this preset"}), 403
+    db_exec("DELETE FROM column_presets WHERE id=?", (pid,))
+    return jsonify({"ok": True})
 
 @app.route("/api/saved_searches/<name>",methods=["GET"])
 def get_saved_search(name):

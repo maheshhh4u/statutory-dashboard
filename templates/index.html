@@ -2666,10 +2666,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.34";
+const APP_VERSION = "1.35";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.35", date:"2026-07", title:"Column reordering & shareable named setups",
+    changes:[
+      "Added ↑/↓ buttons in the Columns menu to reorder columns (moving a column up the list moves it left in the table), on top of the existing show/hide.",
+      "Column layouts can now be saved as a named, shareable setup \u2014 stored on the server (not just this browser), so anyone can reuse someone else's layout. Records who created it and when.",
+      "Choose who can use a saved setup: only you, everyone, or specific people picked from the caller list. Only the creator can delete their own setup.",
+    ]},
   { v:"1.34", date:"2026-07", title:"Custom columns for Daily Calling & Call History",
     changes:[
       "Fixed the \u201CActual Calls\u201D tile subtitle to mention Engaged is also excluded.",
@@ -3855,6 +3861,7 @@ function toggleFuExpand(id){
       </div>`;
       panel.dataset.built='1';
       refreshCalled();
+      applyColumnOrder(getColumnConfig().order);
     }
     panel.style.display='block';
     if(btn) btn.innerHTML='▴ Hide';
@@ -4422,6 +4429,7 @@ function renderHistoryList(d){
   if(cnt) cnt.innerHTML='Showing <b>'+start+'–'+end+'</b> of <b>'+historyTotal+'</b> called';
   filterHistoryTable();
   renderHistoryPager();
+  applyColumnOrder(getColumnConfig().order);
 }
 function renderHistoryPager(){
   let pager=document.getElementById('history-pager');
@@ -4541,7 +4549,9 @@ function outcomeChip(oc){
   return `<span style="background:${bg};border:1px solid ${border};color:${color};border-radius:6px;padding:2px 8px;font-size:11px;display:inline-block;white-space:nowrap">${esc(oc)}</span>`;
 }
 // ── Column customisation (Daily Calling / Call History / follow-up details) ──
-// Charity Name and the Call button are always shown — everything else is optional.
+// Charity Name and the Call button are always shown — everything else is optional
+// and can be shown/hidden AND reordered, with the layout optionally saved as a
+// named, shareable setup (private / public / selected people).
 const COLUMN_DEFS = [
   {id:'num', label:'# (row number)'},
   {id:'priority', label:'Priority'},
@@ -4567,64 +4577,198 @@ const COLUMN_DEFS = [
   {id:'caller', label:'Caller'},
   {id:'alsoin', label:'Also in / Elsewhere'},
 ];
-const COL_STORAGE_KEY='sp_column_prefs_v1';
-function getColumnPrefs(){
+const COL_STORAGE_KEY='sp_column_config_v2';  // {hidden:[...], order:[...]}
+const ANCHOR_COLS=['sync','call','name'];  // never hidden, never reordered — always first
+
+function getColumnConfig(){
   try{
     const raw=localStorage.getItem(COL_STORAGE_KEY);
     if(raw) return JSON.parse(raw);
   }catch(e){}
-  return {};  // empty = everything visible (default)
+  return {hidden:[], order:[]};
 }
-function saveColumnPrefs(prefs){
-  try{ localStorage.setItem(COL_STORAGE_KEY, JSON.stringify(prefs)); }catch(e){}
+function saveColumnConfig(cfg){
+  try{ localStorage.setItem(COL_STORAGE_KEY, JSON.stringify(cfg)); }catch(e){}
 }
-function applyColumnPrefs(){
-  const prefs=getColumnPrefs();
+function getOrderedColumnDefs(cfg){
+  if(!cfg.order || !cfg.order.length) return COLUMN_DEFS.slice();
+  const map={}; COLUMN_DEFS.forEach(c=>map[c.id]=c);
+  const ordered=cfg.order.map(id=>map[id]).filter(Boolean);
+  COLUMN_DEFS.forEach(c=>{ if(cfg.order.indexOf(c.id)===-1) ordered.push(c); });  // future-proof new columns
+  return ordered;
+}
+function applyColumnVisibility(hiddenIds){
   let styleEl=document.getElementById('col-visibility-style');
-  if(!styleEl){
-    styleEl=document.createElement('style');
-    styleEl.id='col-visibility-style';
-    document.head.appendChild(styleEl);
-  }
-  const hiddenIds=COLUMN_DEFS.filter(c=>prefs[c.id]===false).map(c=>c.id);
+  if(!styleEl){ styleEl=document.createElement('style'); styleEl.id='col-visibility-style'; document.head.appendChild(styleEl); }
   const scopes=['#callingTable','#historyTable','.fu-mini-table'];
   let css='';
-  hiddenIds.forEach(id=>{
-    scopes.forEach(scope=>{ css += scope+' [data-col="'+id+'"]{display:none !important;} '; });
-  });
+  (hiddenIds||[]).forEach(id=>{ scopes.forEach(scope=>{ css += scope+' [data-col="'+id+'"]{display:none !important;} '; }); });
   styleEl.textContent=css;
 }
-function openColumnSettings(){
-  const prefs=getColumnPrefs();
-  const html=`<div style="max-height:60vh;overflow-y:auto">
-    <p style="font-size:12px;color:var(--t3);margin:0 0 12px">Choose which columns to show in Daily Calling and Call History. Charity name and the call button are always shown. Your choice is saved to this browser.</p>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px">
-      ${COLUMN_DEFS.map(c=>`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
-        <input type="checkbox" data-colid="${c.id}" ${prefs[c.id]!==false?'checked':''}> ${esc(c.label)}
-      </label>`).join('')}
-    </div>
-    <div style="display:flex;gap:8px;justify-content:space-between;margin-top:16px">
-      <button class="btn btn-outline btn-sm" onclick="resetColumnSettingsModal()">Show all</button>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-outline btn-sm" onclick="closeGenericModal(true)">Cancel</button>
-        <button class="btn btn-green btn-sm" onclick="saveColumnSettingsFromModal()">Save</button>
-      </div>
-    </div>
-  </div>`;
-  showModal('⚙ Customise Columns', html);
+function applyColumnOrder(order){
+  if(!order || !order.length) return;  // default order — nothing to move
+  ['#callingTable','#historyTable','.fu-mini-table'].forEach(tblSel=>{
+    document.querySelectorAll(tblSel+' tr').forEach(tr=>{
+      const cells={};
+      tr.querySelectorAll('[data-col]').forEach(td=>{
+        const id=td.getAttribute('data-col');
+        if(ANCHOR_COLS.indexOf(id)===-1) cells[id]=td;
+      });
+      order.forEach(colId=>{ if(cells[colId]) tr.appendChild(cells[colId]); });
+    });
+  });
 }
-function saveColumnSettingsFromModal(){
-  const prefs={};
-  document.querySelectorAll('[data-colid]').forEach(cb=>{ prefs[cb.getAttribute('data-colid')]=cb.checked; });
-  saveColumnPrefs(prefs);
-  applyColumnPrefs();
-  closeGenericModal(true);
-  cToast('✓ Column preferences saved');
+function applyColumnConfig(){
+  const cfg=getColumnConfig();
+  applyColumnVisibility(cfg.hidden);
+  applyColumnOrder(cfg.order);
+}
+
+let _colModalState=null;  // working copy while the modal is open, {hidden:[...], order:[...]}
+
+function renderColumnListHtml(state){
+  const defs=getOrderedColumnDefs(state);
+  return defs.map((c,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid #f0f0f0">
+      <input type="checkbox" onchange="toggleColumnVis('${c.id}',this.checked)" ${state.hidden.indexOf(c.id)===-1?'checked':''}>
+      <span style="flex:1;font-size:13px">${esc(c.label)}</span>
+      <button type="button" class="btn btn-outline btn-sm" style="padding:1px 8px" onclick="moveColumnRow('${c.id}',-1)" ${i===0?'disabled':''} title="Move left">↑</button>
+      <button type="button" class="btn btn-outline btn-sm" style="padding:1px 8px" onclick="moveColumnRow('${c.id}',1)" ${i===defs.length-1?'disabled':''} title="Move right">↓</button>
+    </div>`).join('');
+}
+function toggleColumnVis(colId, visible){
+  if(visible){ _colModalState.hidden=_colModalState.hidden.filter(id=>id!==colId); }
+  else if(_colModalState.hidden.indexOf(colId)===-1){ _colModalState.hidden.push(colId); }
+}
+function moveColumnRow(colId, dir){
+  const ids=getOrderedColumnDefs(_colModalState).map(c=>c.id);
+  const idx=ids.indexOf(colId), newIdx=idx+dir;
+  if(newIdx<0 || newIdx>=ids.length) return;
+  const tmp=ids[idx]; ids[idx]=ids[newIdx]; ids[newIdx]=tmp;
+  _colModalState.order=ids;
+  const el=document.getElementById('col-list-body');
+  if(el) el.innerHTML=renderColumnListHtml(_colModalState);
 }
 function resetColumnSettingsModal(){
-  document.querySelectorAll('[data-colid]').forEach(cb=>{ cb.checked=true; });
+  _colModalState={hidden:[], order:[]};
+  const el=document.getElementById('col-list-body');
+  if(el) el.innerHTML=renderColumnListHtml(_colModalState);
 }
-applyColumnPrefs();  // apply saved preference as soon as the script loads
+function applyColumnModalChanges(){
+  saveColumnConfig(_colModalState);
+  applyColumnConfig();
+  closeGenericModal(true);
+  cToast('✓ Column layout applied');
+}
+function openColumnSettings(){
+  const cfg=getColumnConfig();
+  _colModalState={hidden:(cfg.hidden||[]).slice(), order:(cfg.order||[]).slice()};
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
+  const html=`
+    <div style="font-size:12px;color:var(--t3);margin-bottom:10px">Choose which columns to show, and use ↑/↓ to reorder them (moving a column up here moves it left in the table). Charity name and the call button always stay first. Applies to Daily Calling, Call History, and the Follow-up Details panel.</div>
+    <div id="col-list-body" style="max-height:34vh;overflow-y:auto;border:1px solid var(--bd);border-radius:6px;margin-bottom:12px">
+      ${renderColumnListHtml(_colModalState)}
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="btn btn-outline btn-sm" onclick="resetColumnSettingsModal()">Show all, default order</button>
+      <button class="btn btn-outline btn-sm" onclick="showSaveColumnPresetForm()">💾 Save as a named setup…</button>
+    </div>
+    <div style="border-top:1px solid var(--bd);padding-top:12px">
+      <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:8px">📁 Saved setups</div>
+      <div id="col-presets-list" style="font-size:12px;color:var(--t3)">Loading…</div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--bd);padding-top:12px">
+      <button class="btn btn-outline btn-sm" onclick="closeGenericModal(true)">Close</button>
+      <button class="btn btn-green btn-sm" onclick="applyColumnModalChanges()">Apply</button>
+    </div>`;
+  showModal('⚙ Customise Columns', html);
+  loadColumnPresetsList(caller);
+}
+function showSaveColumnPresetForm(){
+  const html=`
+    <div style="margin-bottom:10px">
+      <label style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;display:block;margin-bottom:4px">Setup name</label>
+      <input type="text" id="cp-name" placeholder="e.g. Muhanna's compact view" style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px">
+    </div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;display:block;margin-bottom:4px">Who can use this setup?</label>
+      <select id="cp-visibility" onchange="onPresetVisibilityChange()" style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px">
+        <option value="private">🔒 Only me</option>
+        <option value="public">🌐 Everyone</option>
+        <option value="selected">👥 Selected people</option>
+      </select>
+    </div>
+    <div id="cp-allowed-box" style="display:none;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;display:block;margin-bottom:4px">Who specifically?</label>
+      <div id="cp-allowed-list" style="display:flex;flex-direction:column;gap:4px;font-size:13px">Loading…</div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-outline btn-sm" onclick="openColumnSettings()">Back</button>
+      <button class="btn btn-green btn-sm" onclick="submitSaveColumnPreset()">Save setup</button>
+    </div>`;
+  showModal('💾 Save Column Setup', html);
+  fetch('/api/users').then(r=>r.json()).then(users=>{
+    const box=document.getElementById('cp-allowed-list');
+    if(box) box.innerHTML=(users||[]).map(u=>`<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" value="${esc(u)}" class="cp-allowed-cb"> ${esc(u)}</label>`).join('') || '<span style="color:var(--t3)">No other callers on file.</span>';
+  }).catch(()=>{ const box=document.getElementById('cp-allowed-list'); if(box) box.innerHTML='<span style="color:var(--t3)">Could not load caller list.</span>'; });
+}
+function onPresetVisibilityChange(){
+  const v=(document.getElementById('cp-visibility')||{}).value;
+  const box=document.getElementById('cp-allowed-box');
+  if(box) box.style.display=(v==='selected')?'block':'none';
+}
+function submitSaveColumnPreset(){
+  const nameEl=document.getElementById('cp-name');
+  const name=nameEl?nameEl.value.trim():'';
+  if(!name){ alert('Please give this setup a name.'); return; }
+  const visibility=(document.getElementById('cp-visibility')||{}).value||'private';
+  const allowed=Array.prototype.slice.call(document.querySelectorAll('.cp-allowed-cb:checked')).map(cb=>cb.value);
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'Unknown';
+  fetch('/api/column_presets',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:name, config:_colModalState, created_by:caller, visibility:visibility, allowed_users:allowed})})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok){ cToast('✓ Setup "'+name+'" saved'); openColumnSettings(); }
+      else alert('Could not save: '+(d.error||'unknown error'));
+    }).catch(e=>alert('Could not save: '+e.message));
+}
+function loadColumnPresetsList(caller){
+  fetch('/api/column_presets?caller='+encodeURIComponent(caller)).then(r=>r.json()).then(list=>{
+    const el=document.getElementById('col-presets-list');
+    if(!el) return;
+    if(!list || !list.length){ el.innerHTML='<div>No saved setups yet — save your current layout above to reuse or share it.</div>'; return; }
+    el.innerHTML=list.map(p=>{
+      const visIcon=p.visibility==='public'?'🌐':(p.visibility==='selected'?'👥':'🔒');
+      const dateTxt=(p.created_at||'').slice(0,16);
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid #f5f5f5">
+        <span style="flex:1;font-size:13px;color:var(--t1)"><b>${esc(p.name)}</b> <span style="color:var(--t3);font-size:11px">${visIcon} by ${esc(p.created_by)} · ${esc(dateTxt)}</span></span>
+        <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="useColumnPreset(${p.id})">Use</button>
+        ${p.mine?'<button class="btn btn-outline btn-sm" style="color:#c0392b;border-color:#e0a0a0" onclick="deleteColumnPreset('+p.id+')">Delete</button>':''}
+      </div>`;
+    }).join('');
+  }).catch(()=>{ const el=document.getElementById('col-presets-list'); if(el) el.innerHTML='Could not load saved setups.'; });
+}
+function useColumnPreset(id){
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
+  fetch('/api/column_presets?caller='+encodeURIComponent(caller)).then(r=>r.json()).then(list=>{
+    const preset=(list||[]).find(p=>p.id===id);
+    if(!preset) return;
+    const cfg={hidden:(preset.config.hidden||[]).slice(), order:(preset.config.order||[]).slice()};
+    saveColumnConfig(cfg);
+    applyColumnConfig();
+    closeGenericModal(true);
+    cToast('✓ Using "'+preset.name+'"');
+  }).catch(e=>alert('Could not load setup: '+e.message));
+}
+function deleteColumnPreset(id){
+  if(!confirm('Delete this saved column setup? This cannot be undone.')) return;
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
+  fetch('/api/column_presets/'+id+'?caller='+encodeURIComponent(caller),{method:'DELETE'})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok){ cToast('✓ Deleted'); loadColumnPresetsList(caller); }
+      else alert(d.error||'Could not delete');
+    }).catch(e=>alert('Could not delete: '+e.message));
+}
+applyColumnConfig();  // apply saved preference as soon as the script loads
 
 function callingRowHtml(c, i, opts){
   opts = opts || {};
@@ -4729,6 +4873,7 @@ function renderCalling(d){
   refreshCalled();
   filterCalling();
   setupCallingScroll();
+  applyColumnOrder(getColumnConfig().order);
 }
 function applyMF(){
   const n=(v('mf-name')||'').toLowerCase(),r=(v('mf-reg')||'').toLowerCase();
