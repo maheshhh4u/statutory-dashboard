@@ -3230,14 +3230,14 @@ def _load_active_batch():
         c["retry_at"]        = rs.get("retry_at", "")
         c["retry_due"]       = rs.get("retry_due", False)
         c["retry_exhausted"] = rs.get("retry_exhausted", False)
-        # One-time correction: an earlier version of this code force-marked ANY
-        # ever-called charity as completed, including retry-due ones carried
-        # forward from a previous day. A charity with a pending retry state that
-        # wasn't actually called today should never be marked completed — correct
-        # that both in this response and permanently in the database.
-        if c["completed"] and not c["called_today"] and rs:
-            c["completed"] = 0
-            db_exec("UPDATE calling_batch SET completed=0 WHERE active=1 AND reg_number=?", (reg,))
+        # Safe, additive-only repair: if the ground-truth call log shows this
+        # charity WAS genuinely called today but the batch row's completed flag
+        # doesn't reflect that (e.g. left over from an earlier bug), restore it.
+        # This only ever SETS completed — it never clears/resets it — so it can
+        # only repair missing data, never remove genuine progress.
+        if c["called_today"] and not c["completed"]:
+            c["completed"] = 1
+            db_exec("UPDATE calling_batch SET completed=1 WHERE active=1 AND reg_number=?", (reg,))
         out.append(c)
     return out
 
@@ -3499,18 +3499,9 @@ def api_calling_batch():
         # ever_called (from days ago) while still being pending a fresh attempt
         # today. Using ever_called here would wrongly count retry-due charities
         # as done and make the X/Y counter (and green highlighting) misleading.
+        # (The completed flag itself is kept in sync by the safe, additive-only
+        # repair inside _load_active_batch — no further self-heal needed here.)
         done = sum(1 for c in batch if c.get("completed") or c.get("called_today"))
-        # Self-heal: if a row was called TODAY but its completed flag is unset, set
-        # it so the count stays consistent on future loads and across users. Does
-        # NOT use ever_called, for the same reason as above — a retry-due charity
-        # from a previous day must not be force-marked completed today.
-        try:
-            for c in batch:
-                if c.get("called_today") and not c.get("completed"):
-                    db_exec("UPDATE calling_batch SET completed=1 WHERE active=1 AND reg_number=?", (c["reg_number"],))
-                    c["completed"] = 1
-        except Exception as _e:
-            print(f"  completed self-heal error: {_e}")
         return jsonify({
             "charities": batch, "count": len(batch), "has_batch": True,
             "batch_no": batch_no, "created_at": created_at, "category": category,

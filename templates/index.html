@@ -2668,10 +2668,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.37";
+const APP_VERSION = "1.38";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.38", date:"2026-07", title:"URGENT: fixed a bug in the previous fix that wiped call progress",
+    changes:[
+      "The previous version's correction was too aggressive \u2014 it could incorrectly reset a genuinely-called-today charity's completed status back to not-done, which is why the counter collapsed to 0/75 and \u201Cactually spoken\u201D showed 0 even though real calls had been made.",
+      "Replaced it with a safe, one-directional repair: it can only RESTORE a charity's completed status when the call log confirms it was genuinely called today \u2014 it can never clear or remove progress. Tested against the exact reported scenario before deploying.",
+      "The X/Y counter and actually-spoken count should now correctly reflect today's real progress, including charities affected by the previous bug.",
+    ]},
   { v:"1.37", date:"2026-07", title:"Fixed Daily Calling progress bar counting retry-due charities as done",
     changes:[
       "Found the real cause of the collapsed X/Y and \u201C0 actually spoken\u201D counters: retry-due charities carried forward from a previous day (e.g. called 3 days ago, now back on the list for a fresh attempt) were being counted as \u201Cdone\u201D simply because they\u2019d been called at some point in the past \u2014 even though today\u2019s attempt hadn\u2019t happened yet.",
