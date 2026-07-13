@@ -177,8 +177,9 @@ body.wrap-off .ct-cell .ct-val{white-space:nowrap;overflow:hidden;text-overflow:
 .calling-progress{flex:1;min-width:220px;max-width:360px}
 .calling-progress-label{font-size:12px;font-weight:600;color:var(--t2);margin-bottom:6px}
 .calling-progress-label span{color:var(--navy);font-weight:800}
-.calling-progress-track{height:8px;background:var(--s2);border-radius:99px;overflow:hidden}
+.calling-progress-track{height:8px;background:var(--s2);border-radius:99px;overflow:hidden;position:relative}
 .calling-progress-fill{height:100%;background:linear-gradient(90deg,var(--gold),#d49b1f);border-radius:99px;transition:width .4s ease}
+.calling-progress-fill-spoken{height:100%;background:#1d7a3a;border-radius:99px;transition:width .4s ease;position:absolute;top:0;left:0}
 .calling-note{background:#fff8e8;border:1px solid #f0d68a;color:#8a6d1f;border-radius:8px;padding:12px 16px;font-size:13px;margin-bottom:16px}
 .prio-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:800;letter-spacing:.02em}
 .prio-high{background:#fdecec;color:#c0392b}
@@ -188,7 +189,9 @@ body.wrap-off .ct-cell .ct-val{white-space:nowrap;overflow:hidden;text-overflow:
 tr.called-today-row{background:#f3faf4}
 tr.called-today-row td{color:var(--t3)}
 tr.retry-due-row{background:#fff9e0 !important;border-left:3px solid #e8b339}
+tr.retry-due-row:hover{background:#ffedb3 !important}
 tr.retry-exhausted-row{background:#fdf2f1 !important;border-left:3px solid #e07a70}
+tr.retry-exhausted-row:hover{background:#f8dcd9 !important}
 tr.retry-exhausted-row td{color:var(--t3)}
 .retry-badge{display:inline-block;background:#fff3cd;color:#8a6d1a;border:1px solid #e8b339;border-radius:6px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap}
 .retry-exhausted-badge{display:inline-block;background:#fdecea;color:#c0392b;border:1px solid #e07a70;border-radius:6px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap}
@@ -423,7 +426,7 @@ select:focus{outline:none;border-color:var(--green)}
     </div>
     <div class="calling-progress">
       <div class="calling-progress-label"><span id="callingDone">0</span> / <span id="callingTotal">0</span> completed<span id="callingSpokenNote" style="color:var(--t3);font-weight:500"></span></div>
-      <div class="calling-progress-track"><div class="calling-progress-fill" id="callingFill" style="width:0%"></div></div>
+      <div class="calling-progress-track"><div class="calling-progress-fill" id="callingFill" style="width:0%"></div><div class="calling-progress-fill-spoken" id="callingFillSpoken" style="width:0%" title="Actually spoken to"></div></div>
     </div>
   </div>
 
@@ -2659,10 +2662,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.27";
+const APP_VERSION = "1.28";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.28", date:"2026-07", title:"Hardened retry colour logic; stacked progress bar",
+    changes:[
+      "Rewrote the retry-state calculation to group and sort each charity\u2019s calls in a way that can\u2019t be affected by database sort-order quirks \u2014 removes a possible source of the yellow highlight appearing on charities it shouldn\u2019t.",
+      "Fixed the yellow/red retry highlight turning grey on mouse hover \u2014 a generic hover style was overriding it; hovering a retry-due row now shows a darker yellow, and an exhausted row a darker red.",
+      "The Daily Calling progress bar is now a stacked bar \u2014 the green segment shows how many were actually spoken to, nested within the gold \u201Ccalled\u201D segment.",
+    ]},
   { v:"1.27", date:"2026-07", title:"Fixed retry colour override; added actually-spoken count",
     changes:[
       "Fixed retry-due and exhausted charities showing green instead of yellow/red \u2014 a separate repaint step was force-applying the green \u201Ccalled\u201D colour over the top on every refresh.",
@@ -4545,9 +4554,14 @@ function renderCalling(d){
   document.getElementById('callingFill').style.width=(total?Math.round(done/total*100):0)+'%';
   // "Actually spoken to" — called charities whose outcome means she genuinely
   // reached someone (excludes No Answer / Voicemail / Busy / Line Dropped).
+  // Shown both as a green segment stacked within the progress bar (spoken is a
+  // subset of done, so its share of the TOTAL width sits inside the gold part)
+  // and as a short text note.
+  const spoken=(callingData||[]).filter(c=>(c.completed||c.called_today) && c.outcome && !RETRY_OUTCOMES.includes(c.outcome)).length;
+  const fillSpoken=document.getElementById('callingFillSpoken');
+  if(fillSpoken) fillSpoken.style.width=(total?Math.round(spoken/total*100):0)+'%';
   const spokenNote=document.getElementById('callingSpokenNote');
   if(spokenNote){
-    const spoken=(callingData||[]).filter(c=>(c.completed||c.called_today) && c.outcome && !RETRY_OUTCOMES.includes(c.outcome)).length;
     spokenNote.innerHTML=done?(' (<span style="color:#1d7a3a;font-weight:700">'+spoken+'</span> of '+done+' actually spoken to)'):'';
   }
   const gb=document.getElementById('genListBtn');

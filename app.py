@@ -2011,37 +2011,35 @@ MAX_RETRY_ATTEMPTS = 3
 def _retry_states_map():
     """reg_number -> {retry_count, retry_at, retry_due, retry_exhausted}, computed
     from the most recent CONSECUTIVE retry-eligible calls per charity (a real
-    conversation outcome resets the streak). One query, one pass — no N+1s."""
-    rows = db_query("""SELECT reg_number, timestamp, outcome, retry_at FROM call_log
-                        WHERE reg_number IS NOT NULL AND reg_number!=''
-                        ORDER BY reg_number ASC, timestamp DESC""") or []
+    conversation outcome resets the streak). Groups and sorts in Python rather
+    than relying on the database's multi-column ORDER BY, so grouping is always
+    correct regardless of how reg_number is stored/typed."""
+    rows = db_query("SELECT reg_number, timestamp, outcome, retry_at FROM call_log") or []
     now_full = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    by_reg = {}
+    for reg, ts, oc, retry_at in rows:
+        reg = str(reg or "").strip()
+        if not reg: continue
+        by_reg.setdefault(reg, []).append((str(ts or ""), str(oc or "").strip(), retry_at))
     out = {}
-    i, n = 0, len(rows)
-    while i < n:
-        reg = rows[i][0]
+    for reg, calls in by_reg.items():
+        calls.sort(key=lambda x: x[0], reverse=True)  # most recent call first, guaranteed
         streak = 0
         latest_retry_at = None
-        j = i
-        while j < n and rows[j][0] == reg:
-            ts, oc, retry_at = rows[j][1], rows[j][2], rows[j][3]
+        for ts, oc, retry_at in calls:
             if oc in RETRY_OUTCOMES:
                 streak += 1
                 if latest_retry_at is None:
                     latest_retry_at = retry_at or ts  # most recent row for this reg
                 if streak >= MAX_RETRY_ATTEMPTS:
-                    j += 1
                     break
-                j += 1
             else:
-                break  # a real outcome — streak ends here
+                break  # a real outcome (or blank) — streak ends here
         if streak > 0:
             exhausted = streak >= MAX_RETRY_ATTEMPTS
             due = (not exhausted) and bool(latest_retry_at) and str(latest_retry_at) <= now_full
             out[reg] = {"retry_count": streak, "retry_at": latest_retry_at,
                         "retry_due": due, "retry_exhausted": exhausted}
-        while i < n and rows[i][0] == reg:
-            i += 1
     return out
 
 def _latest_outcomes_map():
