@@ -2082,7 +2082,18 @@ def followups_list():
                     "follow_up_at": fat, "caller": caller, "notes": notes,
                     "overdue": bool(fat) and str(fat) < now_full}
             item.update(snap)  # phone, email, website, source, source_detail, income, etc.
-            item["reg_number"] = reg  # keep original (snap could theoretically differ)
+            # Re-assert the follow-up's OWN fields after the merge — this specific
+            # follow-up's id/date/caller/note must never be silently overwritten by
+            # data from the charity snapshot (which reflects the charity in general,
+            # not this particular scheduled follow-up).
+            item["id"] = fid
+            item["reg_number"] = reg
+            item["page"] = pg
+            item["follow_up_at"] = fat
+            item["caller"] = caller
+            item["notes"] = notes
+            item["fu_notes"] = notes  # explicit alias so the UI can label it clearly
+            item["overdue"] = bool(fat) and str(fat) < now_full
             out.append(item)
         return jsonify({"followups": out})
     except Exception as e:
@@ -3067,7 +3078,9 @@ def api_call_history_list_export():
             called_from=str(flt.get("called_from","")).strip(),
             called_to=str(flt.get("called_to","")).strip(),
             fu_from=str(flt.get("fu_from","")).strip(),
-            fu_to=str(flt.get("fu_to","")).strip())
+            fu_to=str(flt.get("fu_to","")).strip(),
+            q=str(flt.get("q","")).strip(),
+            outcome_filter=str(flt.get("outcome","")).strip())
         regs = [r["reg_number"] for r in full]
     if not regs:
         return jsonify({"error": "No charities to export"}), 400
@@ -3155,8 +3168,11 @@ def api_call_history_list_export():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=call_history_{tstamp}.xlsx"})
 
-def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to=""):
-    """Return the full filtered + sorted list of previously-called charities (no paging)."""
+def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="", q="", outcome_filter=""):
+    """Return the full filtered + sorted list of previously-called charities (no paging).
+    q filters by charity name or reg number (case-insensitive substring), applied
+    across the WHOLE history — not just whatever page happens to be loaded — so a
+    search always finds a match regardless of the chosen page size."""
     # Last-called timestamp per charity
     last_called = {}
     for reg, ts in (db_query("SELECT reg_number, MAX(timestamp) FROM call_log GROUP BY reg_number") or []):
@@ -3233,6 +3249,18 @@ def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="")
             except Exception:
                 sd = ""
             base["source_detail"] = sd or ("📞 " + (base.get("source") or "Previously called"))
+        # Name / reg number search — matches across the FULL history, not a page
+        if q:
+            ql = q.strip().lower()
+            if ql not in str(base.get("name","")).lower() and ql not in str(reg).lower():
+                continue
+        # Outcome filter
+        if outcome_filter:
+            oc = base.get("outcome","")
+            if outcome_filter == "__none__":
+                if oc: continue
+            elif oc != outcome_filter:
+                continue
         rows.append(base)
     rows.sort(key=lambda x: x.get("last_called",""), reverse=True)
     return rows
@@ -3247,12 +3275,14 @@ def api_call_history_list():
         called_to   = str(request.args.get("called_to","")).strip()
         fu_from     = str(request.args.get("fu_from","")).strip()
         fu_to       = str(request.args.get("fu_to","")).strip()
+        q           = str(request.args.get("q","")).strip()
+        outcome_f   = str(request.args.get("outcome","")).strip()
         try: limit = min(1000, max(10, int(request.args.get("limit", "100"))))
         except: limit = 100
         try: offset = max(0, int(request.args.get("offset", "0")))
         except: offset = 0
 
-        rows = _build_call_history_rows(called_from, called_to, fu_from, fu_to)
+        rows = _build_call_history_rows(called_from, called_to, fu_from, fu_to, q, outcome_f)
         total = len(rows)
         page_rows = rows[offset:offset+limit]
         return jsonify({"charities": page_rows, "count": len(page_rows),

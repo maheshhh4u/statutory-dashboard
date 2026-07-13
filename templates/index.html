@@ -527,8 +527,8 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="loadCallHistoryList(0)">🔍 Apply</button>
       <button class="btn btn-outline btn-sm" onclick="clearCallHistoryFilters()">Clear</button>
       <button class="btn btn-sm" style="background:#1d7a3a;color:#fff" onclick="exportHistoryExcel()">⬇ Export to Excel</button>
-      <input type="text" id="ch2-search" placeholder="Filter name / reg…" oninput="filterHistoryTable()" style="width:160px;padding:6px;border:1px solid var(--bd);border-radius:4px">
-      <select id="ch2-outcome" onchange="filterHistoryTable()" style="padding:6px;border:1px solid var(--bd);border-radius:4px">
+      <input type="text" id="ch2-search" placeholder="Filter name / reg…" oninput="debouncedHistorySearch()" style="width:160px;padding:6px;border:1px solid var(--bd);border-radius:4px">
+      <select id="ch2-outcome" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px">
         <option value="">Outcome: all</option>
         <option value="__none__">— No outcome yet —</option>
         <option value="Connected">✓ Connected</option>
@@ -2613,10 +2613,17 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.24";
+const APP_VERSION = "1.25";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.25", date:"2026-07", title:"Fixed follow-up note mix-ups; History search now finds any page",
+    changes:[
+      "Hardened the Follow-up list so a follow-up\u2019s own note, date, and caller can never be overwritten by unrelated charity data; the note is now also shown clearly labelled as \u201CFollow-up note\u201D in the expanded Details panel, separate from the charity\u2019s general Comment.",
+      "Fixed a race condition where rapidly reloading the Follow-up list (e.g. right after saving a call) could briefly show stale data.",
+      "Fixed Call History search \u2014 searching by name or registration number now searches the full history immediately, not just whatever page is currently loaded (previously you had to switch to a 500-per-page view to find items on later pages).",
+      "The Outcome filter in Call History is now applied the same way, and both filters carry through to \u201CExport all\u201D.",
+    ]},
   { v:"1.24", date:"2026-07", title:"Fixed Actual Calls tile; added Call Outcome column & filter",
     changes:[
       "Fixed \u201CActual Calls\u201D on the report Overview \u2014 it now correctly equals Calls Made minus No Answer minus Voicemail (it was previously undercounting by excluding valid outcomes like Wrong Number and Busy).",
@@ -3633,11 +3640,14 @@ function loadMilestones(){
 // ── Daily Calling ───────────────────────────────────────────────────────────────
 let callingData=[];
 let fuData={};  // id -> full followup+charity data, for the expand panels
+let _fuLoadToken=0;  // guards against a stale/late response overwriting a fresher one
 function loadScheduledCalls(){
   const wrap=document.getElementById('scheduledCalls');
   const body=document.getElementById('scheduledCallsBody');
   if(!wrap||!body) return;
+  const myToken=++_fuLoadToken;
   fetch('/api/followups?scope=today').then(r=>r.json()).then(d=>{
+    if(myToken!==_fuLoadToken) return;  // a newer load has since started — ignore this one
     let list=(d&&d.followups)||[];
     if(!list.length){ wrap.style.display='none'; return; }
     // Overdue first (oldest at the very top), then today's by time
@@ -3716,13 +3726,19 @@ function toggleFuExpand(id){
   if(panel.style.display==='none'){
     const f=fuData[id];
     if(f && !panel.dataset.built){
-      panel.innerHTML=`<table style="width:100%;border-collapse:collapse;font-size:12px" class="fu-mini-table">
+      const fuNote=f.fu_notes||f.notes||'';
+      panel.innerHTML=`
+      ${fuNote?`<div style="background:#fff6e0;border:1px solid #f0d78c;border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:12px">
+        <b style="color:#8a6d1a">📅 Follow-up note</b> <span style="color:var(--t3);font-size:11px">(written when this follow-up was scheduled)</span>
+        <div style="margin-top:3px">${esc(fuNote)}</div>
+      </div>`:''}
+      <table style="width:100%;border-collapse:collapse;font-size:12px" class="fu-mini-table">
         <thead><tr>
           <th style="width:30px"></th><th style="width:44px">📞</th><th style="width:44px">#</th><th style="width:90px">Priority</th>
           <th>Charity Name</th><th>Phone</th><th>Email</th><th>Website</th>
           <th>🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
           <th>Total Income</th><th>Statutory</th><th>Source</th><th>Source Detail</th><th>Call Outcome</th>
-          <th style="width:140px">Stage</th><th style="min-width:180px">Comment</th><th style="width:80px">Called</th>
+          <th style="width:140px">Stage</th><th style="min-width:180px" title="The running general comment for this charity — separate from the follow-up note above">General Comment</th><th style="width:80px">Called</th>
           <th style="width:72px">Newsletter</th><th style="width:50px">Excl.</th><th style="width:90px">Caller</th><th>Also in</th>
         </tr></thead>
         <tbody>${callingRowHtml(f,0,{})}</tbody>
@@ -4216,12 +4232,22 @@ function setupCallingScroll(){
 let historyData=[];
 let historyPage=0;      // 0-based current page
 let historyTotal=0;     // total filtered rows
+let _historySearchTimer=null;
+function debouncedHistorySearch(){
+  // Search now runs server-side across the FULL history (not just the loaded
+  // page), so a match is found regardless of the chosen page size — debounced
+  // so it doesn't hit the server on every single keystroke.
+  clearTimeout(_historySearchTimer);
+  _historySearchTimer=setTimeout(()=>loadCallHistoryList(0), 400);
+}
 function getHistoryFilters(){
   return {
     called_from:(document.getElementById('ch2-called-from')||{}).value||'',
     called_to:(document.getElementById('ch2-called-to')||{}).value||'',
     fu_from:(document.getElementById('ch2-fu-from')||{}).value||'',
-    fu_to:(document.getElementById('ch2-fu-to')||{}).value||''
+    fu_to:(document.getElementById('ch2-fu-to')||{}).value||'',
+    q:(document.getElementById('ch2-search')||{}).value||'',
+    outcome:(document.getElementById('ch2-outcome')||{}).value||''
   };
 }
 function getHistoryPageSize(){ return parseInt((document.getElementById('ch2-limit')||{}).value||'100')||100; }
