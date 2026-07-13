@@ -422,7 +422,7 @@ select:focus{outline:none;border-color:var(--green)}
       <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="foundation" checked onchange="saveExclusions()"> Foundation</label>
     </div>
     <div class="calling-progress">
-      <div class="calling-progress-label"><span id="callingDone">0</span> / <span id="callingTotal">0</span> completed</div>
+      <div class="calling-progress-label"><span id="callingDone">0</span> / <span id="callingTotal">0</span> completed<span id="callingSpokenNote" style="color:var(--t3);font-weight:500"></span></div>
       <div class="calling-progress-track"><div class="calling-progress-fill" id="callingFill" style="width:0%"></div></div>
     </div>
   </div>
@@ -2492,7 +2492,9 @@ function refreshCalled(){
     const i=k.indexOf('|'); if(i<0) return;
     const sel=document.getElementById('ss-'+k.slice(0,i)+'-'+k.slice(i+1));
     const tr=sel&&sel.closest('tr');
-    if(tr) tr.classList.add('row-called');
+    // Don't override a retry-due (yellow) or retry-exhausted (light red) row —
+    // those colours take priority over the plain "called" green.
+    if(tr && !tr.classList.contains('retry-due-row') && !tr.classList.contains('retry-exhausted-row')) tr.classList.add('row-called');
   });
 }
 
@@ -2657,10 +2659,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.26";
+const APP_VERSION = "1.27";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.27", date:"2026-07", title:"Fixed retry colour override; added actually-spoken count",
+    changes:[
+      "Fixed retry-due and exhausted charities showing green instead of yellow/red \u2014 a separate repaint step was force-applying the green \u201Ccalled\u201D colour over the top on every refresh.",
+      "The Daily Calling progress bar now also shows how many of the called charities were actually spoken to, e.g. \u201C26 / 80 completed (3 of 26 actually spoken to)\u201D \u2014 excluding No Answer, Voicemail, Busy, and Line Dropped.",
+    ]},
   { v:"1.26", date:"2026-07", title:"Retry cooldown for No Answer / Voicemail / Busy / Line Dropped",
     changes:[
       "Charities marked No Answer, Voicemail, Busy, or Line Dropped are no longer treated as permanently done \u2014 they become eligible for a retry after a cooling-off period (24 hours by default), shown in yellow with a \ud83d\udd01 Retry due badge.",
@@ -4536,6 +4543,13 @@ function renderCalling(d){
   document.getElementById('callingDone').textContent=done;
   document.getElementById('callingTotal').textContent=total;
   document.getElementById('callingFill').style.width=(total?Math.round(done/total*100):0)+'%';
+  // "Actually spoken to" — called charities whose outcome means she genuinely
+  // reached someone (excludes No Answer / Voicemail / Busy / Line Dropped).
+  const spokenNote=document.getElementById('callingSpokenNote');
+  if(spokenNote){
+    const spoken=(callingData||[]).filter(c=>(c.completed||c.called_today) && c.outcome && !RETRY_OUTCOMES.includes(c.outcome)).length;
+    spokenNote.innerHTML=done?(' (<span style="color:#1d7a3a;font-weight:700">'+spoken+'</span> of '+done+' actually spoken to)'):'';
+  }
   const gb=document.getElementById('genListBtn');
   if(gb){
     if(!d.has_batch) gb.innerHTML='✨ Generate List';
