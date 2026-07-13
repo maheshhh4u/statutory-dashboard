@@ -2006,9 +2006,40 @@ def save_call():
 # eligible for a fresh attempt after a cooling-off period, up to a capped
 # number of attempts, then treated as exhausted (needs another channel, e.g.
 # email) rather than falsely marked "done" as if a real conversation happened.
-RETRY_OUTCOMES = {"No Answer", "Voicemail", "Busy", "Line Dropped"}
+RETRY_OUTCOMES = {"No Answer", "Voicemail", "Busy", "Line Dropped", "Engaged"}
 DEFAULT_RETRY_HOURS = 24
 MAX_RETRY_ATTEMPTS = 3
+
+_retry_backfill_done = False
+
+def _backfill_retry_at_if_needed():
+    """One-time correction for existing call_log rows: recompute retry_at from
+    each call's OWN timestamp + the standard cooldown. This fixes rows whose
+    retry_at was stored by the earlier browser-local-time-based calculation
+    (since removed), which could produce an incorrect — sometimes already-past
+    — retry time. Runs once per server lifetime, triggered lazily so it never
+    touches the early app-startup sequence."""
+    global _retry_backfill_done
+    if _retry_backfill_done: return
+    _retry_backfill_done = True
+    try:
+        placeholders = ",".join("?" for _ in RETRY_OUTCOMES)
+        rows = db_query(f"SELECT id, timestamp, outcome, retry_at FROM call_log WHERE outcome IN ({placeholders})",
+                        tuple(RETRY_OUTCOMES)) or []
+        fixed = 0
+        for rid, ts, oc, retry_at in rows:
+            if not ts: continue
+            try:
+                call_dt = datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                continue
+            correct = (call_dt + timedelta(hours=DEFAULT_RETRY_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+            if str(retry_at or "") != correct:
+                db_exec("UPDATE call_log SET retry_at=? WHERE id=?", (correct, rid))
+                fixed += 1
+        print(f"  [retry backfill] corrected {fixed} of {len(rows)} existing call_log retry_at values")
+    except Exception as e:
+        print(f"  [retry backfill] error: {e}")
 
 def _retry_states_map():
     """reg_number -> {retry_count, retry_at, retry_due, retry_exhausted}, computed
@@ -2016,6 +2047,7 @@ def _retry_states_map():
     conversation outcome resets the streak). Groups and sorts in Python rather
     than relying on the database's multi-column ORDER BY, so grouping is always
     correct regardless of how reg_number is stored/typed."""
+    _backfill_retry_at_if_needed()
     rows = db_query("SELECT reg_number, timestamp, outcome, retry_at FROM call_log") or []
     now_full = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     by_reg = {}

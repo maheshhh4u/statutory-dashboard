@@ -1840,7 +1840,7 @@ function emailCharity(pg,reg,name){
   window.open(url,'_blank');
 }
 
-const RETRY_OUTCOMES=['No Answer','Voicemail','Busy','Line Dropped'];
+const RETRY_OUTCOMES=['No Answer','Voicemail','Busy','Line Dropped','Engaged'];
 function setDefaultRetryTime(){
   const d=new Date(Date.now()+24*60*60*1000);
   const pad=n=>String(n).padStart(2,'0');
@@ -2664,10 +2664,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.31";
+const APP_VERSION = "1.32";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.32", date:"2026-07", title:"Corrected existing bad retry times; Engaged now retry-eligible",
+    changes:[
+      "Found the actual issue behind \u201Ccalled this morning, already showing due\u201D \u2014 calls made before yesterday\u2019s fix had their retry time stored incorrectly by the old browser-based calculation, and that bad value stays in the database even after the code is fixed. Added a one-time automatic correction that recalculates retry time from each call\u2019s own timestamp, fixing every existing affected charity.",
+      "Added \u201CEngaged\u201D to the retry-eligible outcomes (alongside No Answer, Voicemail, Busy, Line Dropped) \u2014 it now triggers the same cooldown and shows yellow. Note: it still counts as a positive \u201Cactually spoken to\u201D outcome in the progress bar, since that wasn't part of this request \u2014 let me know if you'd like that changed too.",
+    ]},
   { v:"1.31", date:"2026-07", title:"Retry cooldown: removed likely root cause, unified colours, clearer wording",
     changes:[
       "The call popup no longer auto-fills the retry time using the browser's own clock \u2014 it's left blank by default and the server applies its own 24-hour cooldown from its own clock, removing any risk of the browser's local time producing an incorrect date. The field is now genuinely optional, only for setting a custom time.",
@@ -4600,7 +4605,12 @@ function renderCalling(d){
   // Shown both as a green segment stacked within the progress bar (spoken is a
   // subset of done, so its share of the TOTAL width sits inside the gold part)
   // and as a short text note.
-  const spoken=(callingData||[]).filter(c=>(c.completed||c.called_today) && c.outcome && !RETRY_OUTCOMES.includes(c.outcome)).length;
+  // Deliberately kept separate from RETRY_OUTCOMES: "Engaged" now triggers a retry
+  // (per Judi/Muhanna's usage — "engaged" as in a busy/engaged line), but for
+  // "actually spoken to" purposes it still counts, since that reading of Engaged
+  // was never explicitly asked to change here.
+  const SPOKEN_EXCLUDE=['No Answer','Voicemail','Busy','Line Dropped'];
+  const spoken=(callingData||[]).filter(c=>(c.completed||c.called_today) && c.outcome && !SPOKEN_EXCLUDE.includes(c.outcome)).length;
   const fillSpoken=document.getElementById('callingFillSpoken');
   if(fillSpoken) fillSpoken.style.width=(total?Math.round(spoken/total*100):0)+'%';
   const spokenNote=document.getElementById('callingSpokenNote');
