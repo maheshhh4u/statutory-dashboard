@@ -2048,6 +2048,7 @@ def _latest_outcomes_map():
     out = {}
     for reg, ts, oc in (db_query(
             "SELECT reg_number, timestamp, outcome FROM call_log ORDER BY timestamp ASC") or []):
+        reg = str(reg or "").strip()
         if reg and oc: out[reg] = oc  # ascending scan, last write = most recent
     return out
 
@@ -2091,8 +2092,8 @@ def _charity_snapshots_for_regs(regs):
         base["called_today"] = _called_today(reg)
         base["ever_called"]  = _ever_called(reg)
         base["last_dialled"] = last_dialled.get(reg, "") or base.get("phone","")
-        base["outcome"]      = outcomes.get(reg, "")
-        rs = retry_states.get(reg) or {}
+        base["outcome"]      = outcomes.get(str(reg), "")
+        rs = retry_states.get(str(reg)) or {}
         base["retry_count"]     = rs.get("retry_count", 0)
         base["retry_at"]        = rs.get("retry_at", "")
         base["retry_due"]       = rs.get("retry_due", False)
@@ -3120,8 +3121,8 @@ def _load_active_batch():
         c["completed"]    = int(completed or 0)
         c["called_today"] = _called_today(reg)
         c["ever_called"]  = _ever_called(reg)
-        c["outcome"]      = outcomes.get(reg, "")
-        rs = retry_states.get(reg) or {}
+        c["outcome"]      = outcomes.get(str(reg), "")
+        rs = retry_states.get(str(reg)) or {}
         c["retry_count"]     = rs.get("retry_count", 0)
         c["retry_at"]        = rs.get("retry_at", "")
         c["retry_due"]       = rs.get("retry_due", False)
@@ -3299,9 +3300,9 @@ def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="",
         base["ever_called"]  = True
         base["last_called"]  = lc
         base["follow_up_at"] = fu_next or ""
-        base["outcome"]        = outcomes.get(reg, "")
-        base["latest_outcome"] = outcomes.get(reg, "")
-        rs = retry_states.get(reg) or {}
+        base["outcome"]        = outcomes.get(str(reg), "")
+        base["latest_outcome"] = outcomes.get(str(reg), "")
+        rs = retry_states.get(str(reg)) or {}
         base["retry_count"]     = rs.get("retry_count", 0)
         base["retry_at"]        = rs.get("retry_at", "")
         base["retry_due"]       = rs.get("retry_due", False)
@@ -3380,6 +3381,16 @@ def api_calling_batch():
         if not batch:
             return jsonify({"charities": [], "count": 0, "has_batch": False,
                             "note": "No active calling list yet. Pick a source and generate your first 100."})
+        # Diagnostic: log retry state for every row so we can pinpoint any mismatch
+        # between what's computed here and what's shown on screen (temporary, safe
+        # to remove once the yellow/red highlight issue is confirmed resolved).
+        print(f"  [calling_batch] {len(batch)} rows — retry state summary:")
+        for idx, c in enumerate(batch):
+            if c.get("retry_due") or c.get("retry_exhausted") or (idx < 30 or idx >= len(batch)-5):
+                print(f"    #{idx+1} reg={c.get('reg_number')} outcome={c.get('outcome')!r} "
+                      f"completed={c.get('completed')} called_today={c.get('called_today')} "
+                      f"retry_count={c.get('retry_count')} retry_due={c.get('retry_due')} "
+                      f"retry_exhausted={c.get('retry_exhausted')} stage={_statuses.get('calling|'+str(c.get('reg_number')),'')!r}")
         meta = db_query("SELECT batch_no,created_at,category FROM calling_batch WHERE active=1 LIMIT 1")
         batch_no, created_at, category = (meta[0] if meta else (1, "", "all"))
         # A charity counts as "done" if it's been called in ANY way the row shows green:
@@ -3486,7 +3497,7 @@ def api_calling_batch_generate():
     retry_states = _retry_states_map()
     def _retry_ok(reg):
         if not _ever_called(reg): return True
-        rs = retry_states.get(reg)
+        rs = retry_states.get(str(reg))
         return bool(rs and rs.get("retry_due"))
 
     pool = [c for c in scored if _retry_ok(c["reg_number"]) and not _name_excluded(c) and c["reg_number"] not in _calling_excl]

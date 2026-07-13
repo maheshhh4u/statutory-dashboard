@@ -2662,10 +2662,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.28";
+const APP_VERSION = "1.29";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.29", date:"2026-07", title:"Fixed the real cause of the green/yellow mismatch",
+    changes:[
+      "Found and fixed the actual bug: registration numbers are stored slightly differently (text vs. number) depending on which part of the app inserted them, so the retry-status lookup was silently failing to match for some charities \u2014 those ones always fell back to the old green colour regardless of their real status. All retry-status lookups now compare consistently regardless of how the number was stored.",
+      "Added temporary diagnostic logging to the calling-list endpoint to make any future mismatch easy to spot.",
+    ]},
   { v:"1.28", date:"2026-07", title:"Hardened retry colour logic; stacked progress bar",
     changes:[
       "Rewrote the retry-state calculation to group and sort each charity\u2019s calls in a way that can\u2019t be affected by database sort-order quirks \u2014 removes a possible source of the yellow highlight appearing on charities it shouldn\u2019t.",
