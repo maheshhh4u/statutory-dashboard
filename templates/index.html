@@ -2061,7 +2061,7 @@ function renderReport(d, promoEmails){
     rptKpiCard('Overdue Follow-ups',      d.followup_overdue||0,     'Past their due date, not done',(d.followup_overdue>0?red:green)),
     rptKpiCard('Follow-up Emails Sent',   d.email_followups||0,      'Email Sent + SLT Unavailable',purple),
     rptKpiCard('Newsletter Sign-ups',     d.newsletter_signups,      '',green),
-    rptKpiCard('No Answer / Voicemail',   d.no_answer+d.voicemail,   d.no_answer+' no answer · '+d.voicemail+' voicemail',red),
+    rptKpiCard('No Answer / Voicemail / Engaged',   d.no_answer+d.voicemail+(d.engaged_count||0),   d.no_answer+' no answer · '+d.voicemail+' voicemail · '+(d.engaged_count||0)+' engaged',red),
   ].join('');
   const outcomes=d.outcome_breakdown||{};
   // Outcome doughnut chart
@@ -2664,10 +2664,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.32";
+const APP_VERSION = "1.33";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.33", date:"2026-07", title:"Engaged excluded from Actual Calls everywhere",
+    changes:[
+      "\u201CEngaged\u201D (a busy/engaged line) is now excluded from \u201Cactually spoken to\u201D on the Daily Calling progress bar, matching the other non-conversation outcomes.",
+      "The Overview report's \u201CActual Calls\u201D tile now also excludes Engaged.",
+      "The \u201CNo Answer / Voicemail\u201D tile is now \u201CNo Answer / Voicemail / Engaged\u201D, with the breakdown shown for all three.",
+    ]},
   { v:"1.32", date:"2026-07", title:"Corrected existing bad retry times; Engaged now retry-eligible",
     changes:[
       "Found the actual issue behind \u201Ccalled this morning, already showing due\u201D \u2014 calls made before yesterday\u2019s fix had their retry time stored incorrectly by the old browser-based calculation, and that bad value stays in the database even after the code is fixed. Added a one-time automatic correction that recalculates retry time from each call\u2019s own timestamp, fixing every existing affected charity.",
@@ -4604,13 +4610,10 @@ function renderCalling(d){
   // reached someone (excludes No Answer / Voicemail / Busy / Line Dropped).
   // Shown both as a green segment stacked within the progress bar (spoken is a
   // subset of done, so its share of the TOTAL width sits inside the gold part)
-  // and as a short text note.
-  // Deliberately kept separate from RETRY_OUTCOMES: "Engaged" now triggers a retry
-  // (per Judi/Muhanna's usage — "engaged" as in a busy/engaged line), but for
-  // "actually spoken to" purposes it still counts, since that reading of Engaged
-  // was never explicitly asked to change here.
-  const SPOKEN_EXCLUDE=['No Answer','Voicemail','Busy','Line Dropped'];
-  const spoken=(callingData||[]).filter(c=>(c.completed||c.called_today) && c.outcome && !SPOKEN_EXCLUDE.includes(c.outcome)).length;
+  // and as a short text note. "Engaged" (a busy/engaged line) is excluded here
+  // too — confirmed it isn't a real conversation, same as the other retry
+  // outcomes, so this now matches RETRY_OUTCOMES exactly.
+  const spoken=(callingData||[]).filter(c=>(c.completed||c.called_today) && c.outcome && !RETRY_OUTCOMES.includes(c.outcome)).length;
   const fillSpoken=document.getElementById('callingFillSpoken');
   if(fillSpoken) fillSpoken.style.width=(total?Math.round(spoken/total*100):0)+'%';
   const spokenNote=document.getElementById('callingSpokenNote');

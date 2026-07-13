@@ -1323,9 +1323,11 @@ def api_report():
     a_grade         = (q(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Interested','Meeting secured')", bp) or [[0]])[0][0]
     voicemail       = (q(f"SELECT COUNT(*) {base} AND outcome='Voicemail'", bp) or [[0]])[0][0]
     no_answer       = (q(f"SELECT COUNT(*) {base} AND outcome='No Answer'", bp) or [[0]])[0][0]
-    # Actual calls = Calls Made minus No Answer minus Voicemail (every other outcome
-    # means she actually got through to someone, even if it was a quick decline).
-    actual_calls    = max(0, calls_made - voicemail - no_answer)
+    engaged_ct      = (q(f"SELECT COUNT(*) {base} AND outcome='Engaged'", bp) or [[0]])[0][0]
+    # Actual calls = Calls Made minus No Answer minus Voicemail minus Engaged (a
+    # busy/engaged line — not an actual conversation — every other outcome means
+    # she actually got through to someone, even if it was a quick decline).
+    actual_calls    = max(0, calls_made - voicemail - no_answer - engaged_ct)
     # Follow-up / SLT emails sent (replaces the manual promo-email figure)
     email_followups = (q(f"""SELECT COUNT(*) {base} AND outcome IN
         ('Email Sent Follow Up','SLT Unavailable - Send Email')""", bp) or [[0]])[0][0]
@@ -1496,6 +1498,7 @@ def api_report():
         "a_grade_calls": a_grade,
         "voicemail": voicemail,
         "no_answer": no_answer,
+        "engaged_count": engaged_ct,
         "connected": connected,
         "interested": interested,
         "clients_won": clients_won,
