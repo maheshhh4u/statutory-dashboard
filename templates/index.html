@@ -187,6 +187,8 @@ body.wrap-off .ct-cell .ct-val{white-space:nowrap;overflow:hidden;text-overflow:
 .prio-low{background:var(--s2);color:var(--t3)}
 .prio-score{font-size:10px;font-weight:700;opacity:.7;margin-left:2px}
 tr.called-today-row{background:#f3faf4}
+.col-item:hover{border-color:#1e3a5f !important;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.col-item:active{cursor:grabbing !important}
 tr.called-today-row td{color:var(--t3)}
 tr.retry-due-row{background:#fff9e0 !important;border-left:3px solid #e8b339}
 tr.retry-due-row:hover{background:#ffedb3 !important}
@@ -2666,10 +2668,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.35";
+const APP_VERSION = "1.36";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.36", date:"2026-07", title:"Redesigned Columns menu: two-box transfer with drag & drop",
+    changes:[
+      "Replaced the per-row arrows with a proper two-box layout \u2014 Available (hidden) on the left, Visible (shown, in order) on the right, with \u2192/\u2190 buttons to move a selected column between them and \u2191/\u2193 buttons to reorder within Visible.",
+      "Added full drag-and-drop \u2014 drag a column between the two boxes, or drag it to a specific spot within Visible to reorder, as an alternative to the buttons.",
+    ]},
   { v:"1.35", date:"2026-07", title:"Column reordering & shareable named setups",
     changes:[
       "Added ↑/↓ buttons in the Columns menu to reorder columns (moving a column up the list moves it left in the table), on top of the existing show/hide.",
@@ -4590,13 +4597,6 @@ function getColumnConfig(){
 function saveColumnConfig(cfg){
   try{ localStorage.setItem(COL_STORAGE_KEY, JSON.stringify(cfg)); }catch(e){}
 }
-function getOrderedColumnDefs(cfg){
-  if(!cfg.order || !cfg.order.length) return COLUMN_DEFS.slice();
-  const map={}; COLUMN_DEFS.forEach(c=>map[c.id]=c);
-  const ordered=cfg.order.map(id=>map[id]).filter(Boolean);
-  COLUMN_DEFS.forEach(c=>{ if(cfg.order.indexOf(c.id)===-1) ordered.push(c); });  // future-proof new columns
-  return ordered;
-}
 function applyColumnVisibility(hiddenIds){
   let styleEl=document.getElementById('col-visibility-style');
   if(!styleEl){ styleEl=document.createElement('style'); styleEl.id='col-visibility-style'; document.head.appendChild(styleEl); }
@@ -4625,34 +4625,97 @@ function applyColumnConfig(){
 }
 
 let _colModalState=null;  // working copy while the modal is open, {hidden:[...], order:[...]}
+let _colSelectedId=null;  // the column currently selected (click, or drag source)
 
-function renderColumnListHtml(state){
-  const defs=getOrderedColumnDefs(state);
-  return defs.map((c,i)=>`
-    <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid #f0f0f0">
-      <input type="checkbox" onchange="toggleColumnVis('${c.id}',this.checked)" ${state.hidden.indexOf(c.id)===-1?'checked':''}>
-      <span style="flex:1;font-size:13px">${esc(c.label)}</span>
-      <button type="button" class="btn btn-outline btn-sm" style="padding:1px 8px" onclick="moveColumnRow('${c.id}',-1)" ${i===0?'disabled':''} title="Move left">↑</button>
-      <button type="button" class="btn btn-outline btn-sm" style="padding:1px 8px" onclick="moveColumnRow('${c.id}',1)" ${i===defs.length-1?'disabled':''} title="Move right">↓</button>
-    </div>`).join('');
+// order[] is the FULL master order (every column id, exactly once); hidden[] is
+// the subset currently hidden. "Visible" = full order minus hidden, in order.
+function getFullOrder(state){
+  const base=(state.order && state.order.length) ? state.order.slice() : COLUMN_DEFS.map(c=>c.id);
+  COLUMN_DEFS.forEach(c=>{ if(base.indexOf(c.id)===-1) base.push(c.id); });  // future-proof new columns
+  return base;
 }
-function toggleColumnVis(colId, visible){
-  if(visible){ _colModalState.hidden=_colModalState.hidden.filter(id=>id!==colId); }
-  else if(_colModalState.hidden.indexOf(colId)===-1){ _colModalState.hidden.push(colId); }
+function getVisibleIds(state){ return getFullOrder(state).filter(id=>state.hidden.indexOf(id)===-1); }
+function getHiddenIds(state){ return getFullOrder(state).filter(id=>state.hidden.indexOf(id)!==-1); }
+function labelForCol(id){ const d=COLUMN_DEFS.find(c=>c.id===id); return d?d.label:id; }
+
+function renderDualColumnLists(){
+  const leftIds=getHiddenIds(_colModalState);
+  const rightIds=getVisibleIds(_colModalState);
+  const itemHtml=id=>{
+    const sel=(id===_colSelectedId);
+    return `<div class="col-item" draggable="true" data-colid="${id}"
+      ondragstart="onColDragStart(event)" onclick="selectColItem('${id}')"
+      ondragover="onColItemDragOver(event)" ondrop="onColDropOnItem(event,'${id}')"
+      style="padding:6px 10px;border:1px solid ${sel?'#1e3a5f':'var(--bd)'};background:${sel?'#e8f0fb':'#fff'};border-radius:4px;margin-bottom:4px;cursor:grab;font-size:13px;user-select:none">${esc(labelForCol(id))}</div>`;
+  };
+  const leftEl=document.getElementById('col-left-box'), rightEl=document.getElementById('col-right-box');
+  if(leftEl) leftEl.innerHTML = leftIds.length ? leftIds.map(itemHtml).join('') : '<div style="padding:14px;color:var(--t3);font-size:12px;text-align:center">Everything is visible</div>';
+  if(rightEl) rightEl.innerHTML = rightIds.length ? rightIds.map(itemHtml).join('') : '<div style="padding:14px;color:var(--t3);font-size:12px;text-align:center">Nothing selected to show</div>';
 }
-function moveColumnRow(colId, dir){
-  const ids=getOrderedColumnDefs(_colModalState).map(c=>c.id);
-  const idx=ids.indexOf(colId), newIdx=idx+dir;
-  if(newIdx<0 || newIdx>=ids.length) return;
-  const tmp=ids[idx]; ids[idx]=ids[newIdx]; ids[newIdx]=tmp;
-  _colModalState.order=ids;
-  const el=document.getElementById('col-list-body');
-  if(el) el.innerHTML=renderColumnListHtml(_colModalState);
+function selectColItem(id){ _colSelectedId=id; renderDualColumnLists(); }
+function moveToVisible(id){
+  _colModalState.hidden=_colModalState.hidden.filter(x=>x!==id);
+  const full=getFullOrder(_colModalState).filter(x=>x!==id);
+  full.push(id);
+  _colModalState.order=full;
+}
+function moveToHidden(id){
+  if(_colModalState.hidden.indexOf(id)===-1) _colModalState.hidden.push(id);
+}
+function moveSelected(dir){
+  if(!_colSelectedId) return;
+  if(dir==='right') moveToVisible(_colSelectedId); else moveToHidden(_colSelectedId);
+  renderDualColumnLists();
+}
+function moveSelectedUpDown(dir){
+  if(!_colSelectedId) return;
+  const visible=getVisibleIds(_colModalState);
+  const idx=visible.indexOf(_colSelectedId);
+  if(idx===-1) return;  // selected column is currently hidden — up/down only applies to visible ones
+  const newIdx=idx+dir;
+  if(newIdx<0 || newIdx>=visible.length) return;
+  const full=getFullOrder(_colModalState);
+  const a=full.indexOf(visible[idx]), b=full.indexOf(visible[newIdx]);
+  const tmp=full[a]; full[a]=full[b]; full[b]=tmp;
+  _colModalState.order=full;
+  renderDualColumnLists();
+}
+function onColDragStart(e){
+  const el=e.target.closest('[data-colid]');
+  if(!el) return;
+  const id=el.getAttribute('data-colid');
+  _colSelectedId=id;
+  e.dataTransfer.setData('text/plain', id);
+  e.dataTransfer.effectAllowed='move';
+}
+function onColDragOver(e){ e.preventDefault(); }
+function onColItemDragOver(e){ e.preventDefault(); e.stopPropagation(); }
+function onColDropToBox(e, side){
+  e.preventDefault();
+  const id=e.dataTransfer.getData('text/plain')||_colSelectedId;
+  if(!id) return;
+  if(side==='right') moveToVisible(id); else moveToHidden(id);
+  renderDualColumnLists();
+}
+function onColDropOnItem(e, targetId){
+  e.preventDefault(); e.stopPropagation();
+  const id=e.dataTransfer.getData('text/plain')||_colSelectedId;
+  if(!id || id===targetId) return;
+  // Match the dragged column's visibility to whichever box the drop target is in,
+  // and insert it immediately before the target within the master order.
+  const targetWasHidden=_colModalState.hidden.indexOf(targetId)!==-1;
+  if(targetWasHidden){ if(_colModalState.hidden.indexOf(id)===-1) _colModalState.hidden.push(id); }
+  else { _colModalState.hidden=_colModalState.hidden.filter(x=>x!==id); }
+  const full=getFullOrder(_colModalState).filter(x=>x!==id);
+  const targetIdx=full.indexOf(targetId);
+  full.splice(targetIdx,0,id);
+  _colModalState.order=full;
+  renderDualColumnLists();
 }
 function resetColumnSettingsModal(){
   _colModalState={hidden:[], order:[]};
-  const el=document.getElementById('col-list-body');
-  if(el) el.innerHTML=renderColumnListHtml(_colModalState);
+  _colSelectedId=null;
+  renderDualColumnLists();
 }
 function applyColumnModalChanges(){
   saveColumnConfig(_colModalState);
@@ -4663,11 +4726,29 @@ function applyColumnModalChanges(){
 function openColumnSettings(){
   const cfg=getColumnConfig();
   _colModalState={hidden:(cfg.hidden||[]).slice(), order:(cfg.order||[]).slice()};
+  _colSelectedId=null;
   const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
   const html=`
-    <div style="font-size:12px;color:var(--t3);margin-bottom:10px">Choose which columns to show, and use ↑/↓ to reorder them (moving a column up here moves it left in the table). Charity name and the call button always stay first. Applies to Daily Calling, Call History, and the Follow-up Details panel.</div>
-    <div id="col-list-body" style="max-height:34vh;overflow-y:auto;border:1px solid var(--bd);border-radius:6px;margin-bottom:12px">
-      ${renderColumnListHtml(_colModalState)}
+    <div style="font-size:12px;color:var(--t3);margin-bottom:10px">Click a column to select it, then use the arrows — or drag and drop columns between the two lists and within Visible to reorder them. Charity name and the call button always stay first.</div>
+    <div style="display:flex;gap:8px;align-items:stretch;margin-bottom:12px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">Available (hidden)</div>
+        <div id="col-left-box" ondragover="onColDragOver(event)" ondrop="onColDropToBox(event,'left')"
+             style="border:1px solid var(--bd);border-radius:6px;min-height:280px;max-height:280px;overflow-y:auto;padding:6px;background:#fafbfc"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;justify-content:center;gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="moveSelected('right')" title="Show selected column">→</button>
+        <button class="btn btn-outline btn-sm" onclick="moveSelected('left')" title="Hide selected column">←</button>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">Visible (top → left of table)</div>
+        <div id="col-right-box" ondragover="onColDragOver(event)" ondrop="onColDropToBox(event,'right')"
+             style="border:1px solid var(--bd);border-radius:6px;min-height:280px;max-height:280px;overflow-y:auto;padding:6px;background:#fafbfc"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;justify-content:center;gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="moveSelectedUpDown(-1)" title="Move up (left in table)">↑</button>
+        <button class="btn btn-outline btn-sm" onclick="moveSelectedUpDown(1)" title="Move down (right in table)">↓</button>
+      </div>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
       <button class="btn btn-outline btn-sm" onclick="resetColumnSettingsModal()">Show all, default order</button>
@@ -4682,6 +4763,7 @@ function openColumnSettings(){
       <button class="btn btn-green btn-sm" onclick="applyColumnModalChanges()">Apply</button>
     </div>`;
   showModal('⚙ Customise Columns', html);
+  renderDualColumnLists();
   loadColumnPresetsList(caller);
 }
 function showSaveColumnPresetForm(){
