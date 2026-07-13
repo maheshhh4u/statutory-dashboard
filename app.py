@@ -1940,6 +1940,8 @@ def save_call():
             retry_at = retry_at_in if len(retry_at_in) > 10 else retry_at_in + " 09:00"
         else:
             retry_at = (datetime.utcnow() + timedelta(hours=DEFAULT_RETRY_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"  [save_call] reg={reg} outcome={outcome!r} server_now_utc={ts!r} "
+              f"retry_at_from_client={retry_at_in!r} retry_at_stored={retry_at!r}")
 
     # 1) Log the call (synced=0 — the sync below will push it)
     db_exec("""INSERT INTO call_log

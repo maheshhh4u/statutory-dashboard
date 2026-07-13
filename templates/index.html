@@ -1754,13 +1754,13 @@ function openCallModal(pg,reg,name,ccPhone){
     </select>
 
     <div id="call-retry-box" style="display:none;background:#fff9e0;border:1px solid #e8b339;border-radius:6px;padding:8px 10px;margin-bottom:10px">
-      <label style="font-size:11px;font-weight:700;color:#8a6d1a;text-transform:uppercase;display:block;margin-bottom:4px">🔁 Retry after</label>
+      <label style="font-size:11px;font-weight:700;color:#8a6d1a;text-transform:uppercase;display:block;margin-bottom:4px">🔁 Retry after (optional)</label>
       <div style="display:flex;gap:6px;align-items:center">
         <input type="date" id="call-retry-date" style="padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:12px">
         <input type="time" id="call-retry-time" style="padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:12px">
-        <button type="button" onclick="setDefaultRetryTime()" style="background:none;border:1px solid var(--bd);border-radius:4px;cursor:pointer;padding:5px 9px;font-size:11px">Reset to 24h</button>
+        <button type="button" onclick="setDefaultRetryTime()" style="background:none;border:1px solid var(--bd);border-radius:4px;cursor:pointer;padding:5px 9px;font-size:11px">Set to 24h from now</button>
       </div>
-      <div style="font-size:10px;color:#8a6d1a;margin-top:4px">Defaults to 24 hours from now — this charity will show in yellow and be eligible to call again once this time passes. After 3 such attempts it's marked exhausted rather than retried again.</div>
+      <div style="font-size:10px;color:#8a6d1a;margin-top:4px">Leave blank to use the standard 24-hour cooldown — this charity will show in yellow and be eligible to call again once that time passes. Only fill this in if you want a different retry time for this specific charity. After 3 such attempts it's marked exhausted rather than retried again.</div>
     </div>
 
     <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Duration (mm:ss)</label>
@@ -1854,9 +1854,10 @@ function onCallOutcomeChange(){
   if(!box) return;
   if(RETRY_OUTCOMES.includes(oc)){
     box.style.display='block';
-    // Only set the default if it's currently empty, so switching outcomes back
-    // and forth doesn't clobber a time the caller already customised.
-    if(!document.getElementById('call-retry-date').value) setDefaultRetryTime();
+    // Left blank by default — the server applies its own 24-hour cooldown from
+    // its own clock. Only fill this in if the caller explicitly wants to pick
+    // a specific time (via "Set custom time" below), which avoids any risk of
+    // the browser's local time/clock producing an incorrect date.
   } else {
     box.style.display='none';
   }
@@ -2663,10 +2664,18 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.30";
+const APP_VERSION = "1.31";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.31", date:"2026-07", title:"Retry cooldown: removed likely root cause, unified colours, clearer wording",
+    changes:[
+      "The call popup no longer auto-fills the retry time using the browser's own clock \u2014 it's left blank by default and the server applies its own 24-hour cooldown from its own clock, removing any risk of the browser's local time producing an incorrect date. The field is now genuinely optional, only for setting a custom time.",
+      "Yellow now covers BOTH states \u2014 \u201Ccooling down, not due yet\u201D and \u201Cdue now\u201D \u2014 since both mean the same thing to the caller: this charity needs another attempt eventually, just shown with a badge for exactly when.",
+      "Reworded the badges to avoid the confusing \u201Cattempt N\u201D phrasing \u2014 now reads e.g. \u201C\ud83d\udd01 Retry now \u2014 missed once\u201D or \u201C\u23f3 Retry at tomorrow 10:22 \u2014 missed once\u201D.",
+      "Confirmed generating a new list from the same source/filters correctly pulls retry-due charities back in \u2014 this was already working correctly.",
+      "Added logging to the call-save endpoint showing exactly what retry time gets computed and stored, to catch anything still off immediately.",
+    ]},
   { v:"1.30", date:"2026-07", title:"Retry cooldown was working correctly \u2014 added visibility",
     changes:[
       "Investigated the yellow-highlight report using live data and confirmed the retry logic itself was correct: charities that still show green simply haven\u2019t reached their 24-hour cooldown yet, so they\u2019re not due for a retry.",
@@ -4520,18 +4529,19 @@ function callingRowHtml(c, i, opts){
   // duplicate ss-calling-<reg> ids when the same charity is also in today's Daily list.)
   const rowCls=opts.history ? 'row-called'
     : (c.retry_exhausted ? 'retry-exhausted-row'
-       : (c.retry_due ? 'retry-due-row'
+       : ((c.retry_count>0) ? 'retry-due-row'   // yellow whether cooling down or actually due
           : ((c.completed||c.called_today)?'called-today-row':'')));
   const nm=esc(c.name||'');
   let calledChip;
+  const missTxt=n=>n===1?'missed once':(n===2?'missed twice':'missed '+n+' times');
   if(c.retry_exhausted){
-    calledChip=' <span class="retry-exhausted-badge" title="'+(c.retry_count||3)+' attempts made — no answer each time. Consider trying another channel (e.g. email).">✗ Exhausted '+(c.retry_count||3)+' attempts</span>';
+    calledChip=' <span class="retry-exhausted-badge" title="No answer after '+(c.retry_count||3)+' attempts. Consider trying another channel (e.g. email).">✗ No answer after '+(c.retry_count||3)+' tries</span>';
   } else if(c.retry_due){
-    calledChip=' <span class="retry-badge" title="Last attempt: '+esc(c.outcome||'')+'. Due for a retry now.">🔁 Retry due (attempt '+((c.retry_count||0)+1)+')</span>';
+    calledChip=' <span class="retry-badge" title="Last outcome: '+esc(c.outcome||'')+'. Ready to try again now.">🔁 Retry now — '+missTxt(c.retry_count||1)+'</span>';
   } else if(c.retry_count>0 && c.retry_at){
     // Tracked for retry but the cooldown hasn't elapsed yet — show exactly when
     // it will, so this doesn't look "stuck" green with no explanation.
-    calledChip=' <span class="retry-cooldown-badge" title="Last attempt: '+esc(c.outcome||'')+'. Will become eligible for a retry at this time.">⏳ Retry at '+fmtRetryTime(c.retry_at)+'</span>';
+    calledChip=' <span class="retry-cooldown-badge" title="Last outcome: '+esc(c.outcome||'')+'. Will become eligible for another attempt at this time.">⏳ Retry at '+fmtRetryTime(c.retry_at)+' — '+missTxt(c.retry_count||1)+'</span>';
   } else if(c.completed){
     calledChip='<span class="called-chip">✓ done</span>';
   } else if(c.called_today){
