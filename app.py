@@ -3381,16 +3381,6 @@ def api_calling_batch():
         if not batch:
             return jsonify({"charities": [], "count": 0, "has_batch": False,
                             "note": "No active calling list yet. Pick a source and generate your first 100."})
-        # Diagnostic: log retry state for every row so we can pinpoint any mismatch
-        # between what's computed here and what's shown on screen (temporary, safe
-        # to remove once the yellow/red highlight issue is confirmed resolved).
-        print(f"  [calling_batch] {len(batch)} rows — retry state summary:")
-        for idx, c in enumerate(batch):
-            if c.get("retry_due") or c.get("retry_exhausted") or (idx < 30 or idx >= len(batch)-5):
-                print(f"    #{idx+1} reg={c.get('reg_number')} outcome={c.get('outcome')!r} "
-                      f"completed={c.get('completed')} called_today={c.get('called_today')} "
-                      f"retry_count={c.get('retry_count')} retry_due={c.get('retry_due')} "
-                      f"retry_exhausted={c.get('retry_exhausted')} stage={_statuses.get('calling|'+str(c.get('reg_number')),'')!r}")
         meta = db_query("SELECT batch_no,created_at,category FROM calling_batch WHERE active=1 LIMIT 1")
         batch_no, created_at, category = (meta[0] if meta else (1, "", "all"))
         # A charity counts as "done" if it's been called in ANY way the row shows green:

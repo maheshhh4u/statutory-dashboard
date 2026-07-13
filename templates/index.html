@@ -195,6 +195,7 @@ tr.retry-exhausted-row:hover{background:#f8dcd9 !important}
 tr.retry-exhausted-row td{color:var(--t3)}
 .retry-badge{display:inline-block;background:#fff3cd;color:#8a6d1a;border:1px solid #e8b339;border-radius:6px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap}
 .retry-exhausted-badge{display:inline-block;background:#fdecea;color:#c0392b;border:1px solid #e07a70;border-radius:6px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap}
+.retry-cooldown-badge{display:inline-block;background:#eef4fb;color:#1e3a5f;border:1px solid #c3d8ef;border-radius:6px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap}
 .called-chip{display:inline-block;margin-left:8px;font-size:10px;font-weight:800;color:#1d7a3a;background:#e3f5e8;padding:2px 7px;border-radius:99px;vertical-align:middle}
 .src-chip{display:inline-block;font-size:11px;font-weight:600;color:var(--navy);background:var(--s2);padding:3px 9px;border-radius:6px;white-space:nowrap}
 .cell-link{color:var(--navy);text-decoration:none;font-size:13px}
@@ -2662,10 +2663,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.29";
+const APP_VERSION = "1.30";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.30", date:"2026-07", title:"Retry cooldown was working correctly \u2014 added visibility",
+    changes:[
+      "Investigated the yellow-highlight report using live data and confirmed the retry logic itself was correct: charities that still show green simply haven\u2019t reached their 24-hour cooldown yet, so they\u2019re not due for a retry.",
+      "Added a new \u201C\u23f3 Retry at [time]\u201D badge for charities that are being tracked for retry but aren\u2019t due yet, so it\u2019s clear at a glance when each one will become actionable, instead of it looking stuck.",
+      "Removed the temporary diagnostic logging now the behaviour is confirmed correct.",
+    ]},
   { v:"1.29", date:"2026-07", title:"Fixed the real cause of the green/yellow mismatch",
     changes:[
       "Found and fixed the actual bug: registration numbers are stored slightly differently (text vs. number) depending on which part of the app inserted them, so the retry-status lookup was silently failing to match for some charities \u2014 those ones always fell back to the old green colour regardless of their real status. All retry-status lookups now compare consistently regardless of how the number was stored.",
@@ -4477,6 +4484,23 @@ function doExportHistory(which){
     .catch(e=>alert('Export failed: '+e.message));
 }
 
+function fmtRetryTime(s){
+  // "2026-07-14 10:15:00" -> "Today 10:15" / "Tomorrow 10:15" / "14 Jul, 10:15"
+  if(!s) return '';
+  try{
+    const d=new Date(String(s).replace(' ','T'));
+    if(isNaN(d.getTime())) return esc(s);
+    const now=new Date();
+    const startOfDay=x=>new Date(x.getFullYear(),x.getMonth(),x.getDate()).getTime();
+    const dayDiff=Math.round((startOfDay(d)-startOfDay(now))/86400000);
+    const pad=n=>String(n).padStart(2,'0');
+    const time=pad(d.getHours())+':'+pad(d.getMinutes());
+    if(dayDiff===0) return 'today '+time;
+    if(dayDiff===1) return 'tomorrow '+time;
+    const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return d.getDate()+' '+months[d.getMonth()]+', '+time;
+  }catch(e){ return esc(s); }
+}
 function outcomeChip(oc){
   if(!oc) return '<span style="color:var(--t3);font-size:11px">—</span>';
   const positive=['Connected','Engaged','Interested','Meeting secured'];
@@ -4504,6 +4528,10 @@ function callingRowHtml(c, i, opts){
     calledChip=' <span class="retry-exhausted-badge" title="'+(c.retry_count||3)+' attempts made — no answer each time. Consider trying another channel (e.g. email).">✗ Exhausted '+(c.retry_count||3)+' attempts</span>';
   } else if(c.retry_due){
     calledChip=' <span class="retry-badge" title="Last attempt: '+esc(c.outcome||'')+'. Due for a retry now.">🔁 Retry due (attempt '+((c.retry_count||0)+1)+')</span>';
+  } else if(c.retry_count>0 && c.retry_at){
+    // Tracked for retry but the cooldown hasn't elapsed yet — show exactly when
+    // it will, so this doesn't look "stuck" green with no explanation.
+    calledChip=' <span class="retry-cooldown-badge" title="Last attempt: '+esc(c.outcome||'')+'. Will become eligible for a retry at this time.">⏳ Retry at '+fmtRetryTime(c.retry_at)+'</span>';
   } else if(c.completed){
     calledChip='<span class="called-chip">✓ done</span>';
   } else if(c.called_today){
