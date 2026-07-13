@@ -383,6 +383,7 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-outline btn-sm" onclick="openCalendar()">📅 Calendar</button>
       <button class="btn btn-outline btn-sm" onclick="openCallHistory()">📋 Call History</button>
       <button class="btn btn-outline btn-sm" style="border-color:#6060c0;color:#6060c0" onclick="openMxModal('calling')">🔄 Sync Maximizer</button>
+      <button class="btn btn-outline btn-sm" onclick="openColumnSettings()" title="Choose which columns to show">⚙ Columns</button>
     </div>
   </div>
 
@@ -488,26 +489,26 @@ select:focus{outline:none;border-color:var(--green)}
     <table id="callingTable">
       <thead>
         <tr>
-          <th style="width:28px;text-align:center"><input type="checkbox" title="Select/deselect all on this page" onchange="toggleMxAll(this)"></th>
-          <th style="width:40px;text-align:center"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#e8b339;display:inline-block;vertical-align:middle"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg></th>
-          <th style="width:44px">#</th>
-          <th style="width:90px">Priority</th>
-          <th>Charity Name</th>
-          <th>Phone</th>
-          <th>Email</th>
-          <th>Website</th><th title="AI find contact">🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
-          <th>Total Income</th>
-          <th>Statutory</th>
-          <th>Source</th>
-          <th style="min-width:150px" title="Which data from the source (e.g. anniversary milestone, how late)">Source Detail</th>
-          <th style="min-width:130px" title="The outcome selected the last time she called">Call Outcome</th>
-          <th style="width:140px">Stage</th>
-          <th style="min-width:180px">Comment</th>
-          <th style="width:80px">Called</th>
-          <th style="width:72px" title="Newsletter opt-in">Newsletter</th>
-          <th style="width:50px" title="Exclude from future lists">Excl.</th>
-          <th style="width:90px">Caller</th>
-          <th style="min-width:120px">Also in / Elsewhere</th>
+          <th data-col="sync" style="width:28px;text-align:center"><input type="checkbox" title="Select/deselect all on this page" onchange="toggleMxAll(this)"></th>
+          <th data-col="call" style="width:40px;text-align:center"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:#e8b339;display:inline-block;vertical-align:middle"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg></th>
+          <th data-col="num" style="width:44px">#</th>
+          <th data-col="priority" style="width:90px">Priority</th>
+          <th data-col="name">Charity Name</th>
+          <th data-col="phone">Phone</th>
+          <th data-col="email">Email</th>
+          <th data-col="website">Website</th><th data-col="aifind" title="AI find contact">🔎</th><th data-col="contact_name">Contact Person</th><th data-col="contact_role">Job Role</th><th data-col="contact_phone">Contact Phone</th><th data-col="contact_email">Contact Email</th>
+          <th data-col="income">Total Income</th>
+          <th data-col="statutory">Statutory</th>
+          <th data-col="source">Source</th>
+          <th data-col="source_detail" style="min-width:150px" title="Which data from the source (e.g. anniversary milestone, how late)">Source Detail</th>
+          <th data-col="outcome" style="min-width:130px" title="The outcome selected the last time she called">Call Outcome</th>
+          <th data-col="stage" style="width:140px">Stage</th>
+          <th data-col="comment" style="min-width:180px">Comment</th>
+          <th data-col="called" style="width:80px">Called</th>
+          <th data-col="newsletter" style="width:72px" title="Newsletter opt-in">Newsletter</th>
+          <th data-col="exclude" style="width:50px" title="Exclude from future lists">Excl.</th>
+          <th data-col="caller" style="width:90px">Caller</th>
+          <th data-col="alsoin" style="min-width:120px">Also in / Elsewhere</th>
         </tr>
       </thead>
       <tbody id="callingBody">
@@ -536,6 +537,7 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="loadCallHistoryList(0)">🔍 Apply</button>
       <button class="btn btn-outline btn-sm" onclick="clearCallHistoryFilters()">Clear</button>
       <button class="btn btn-sm" style="background:#1d7a3a;color:#fff" onclick="exportHistoryExcel()">⬇ Export to Excel</button>
+      <button class="btn btn-outline btn-sm" onclick="openColumnSettings()" title="Choose which columns to show">⚙ Columns</button>
       <input type="text" id="ch2-search" placeholder="Filter name / reg…" oninput="debouncedHistorySearch()" style="width:160px;padding:6px;border:1px solid var(--bd);border-radius:4px">
       <select id="ch2-outcome" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px">
         <option value="">Outcome: all</option>
@@ -560,25 +562,25 @@ select:focus{outline:none;border-color:var(--green)}
       <table id="historyTable">
         <thead>
           <tr>
-            <th style="width:30px"></th>
-            <th style="width:44px" title="Call">📞</th>
-            <th style="width:44px">#</th>
-            <th style="width:90px">Priority</th>
-            <th>Charity Name</th>
-            <th>Phone</th><th>Email</th><th>Website</th>
-            <th title="AI find contact">🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
-            <th>Total Income</th><th>Statutory</th>
-            <th>Source</th>
-            <th style="min-width:150px" title="Which data from the source (e.g. anniversary milestone, how late)">Source Detail</th>
-            <th style="min-width:150px">Last Called / Follow-up</th>
-            <th style="min-width:130px" title="The outcome selected the last time she called">Call Outcome</th>
-            <th style="width:140px">Stage</th>
-            <th style="min-width:180px">Comment</th>
-            <th style="width:80px">Called</th>
-            <th style="width:72px">Newsletter</th>
-            <th style="width:50px">Excl.</th>
-            <th style="width:90px">Caller</th>
-            <th style="min-width:120px">Also in / Elsewhere</th>
+            <th data-col="sync" style="width:30px"></th>
+            <th data-col="call" style="width:44px" title="Call">📞</th>
+            <th data-col="num" style="width:44px">#</th>
+            <th data-col="priority" style="width:90px">Priority</th>
+            <th data-col="name">Charity Name</th>
+            <th data-col="phone">Phone</th><th data-col="email">Email</th><th data-col="website">Website</th>
+            <th data-col="aifind" title="AI find contact">🔎</th><th data-col="contact_name">Contact Person</th><th data-col="contact_role">Job Role</th><th data-col="contact_phone">Contact Phone</th><th data-col="contact_email">Contact Email</th>
+            <th data-col="income">Total Income</th><th data-col="statutory">Statutory</th>
+            <th data-col="source">Source</th>
+            <th data-col="source_detail" style="min-width:150px" title="Which data from the source (e.g. anniversary milestone, how late)">Source Detail</th>
+            <th data-col="last_called" style="min-width:150px">Last Called / Follow-up</th>
+            <th data-col="outcome" style="min-width:130px" title="The outcome selected the last time she called">Call Outcome</th>
+            <th data-col="stage" style="width:140px">Stage</th>
+            <th data-col="comment" style="min-width:180px">Comment</th>
+            <th data-col="called" style="width:80px">Called</th>
+            <th data-col="newsletter" style="width:72px">Newsletter</th>
+            <th data-col="exclude" style="width:50px">Excl.</th>
+            <th data-col="caller" style="width:90px">Caller</th>
+            <th data-col="alsoin" style="min-width:120px">Also in / Elsewhere</th>
           </tr>
         </thead>
         <tbody id="historyBody">
@@ -2050,7 +2052,7 @@ function renderReport(d, promoEmails){
   const gold='#c89a1a',green='#1d7a3a',navy='#1e3a5f',purple='#5a4fbf',red='#c0392b';
   const avgDur=d.calls_made>0?Math.round(d.total_duration_sec/d.calls_made):0;
   document.getElementById('rpt-kpis').innerHTML=[
-    rptKpiCard('Actual Calls',            d.actual_calls,            'Spoke to someone (excl. no answer/voicemail)',green),
+    rptKpiCard('Actual Calls',            d.actual_calls,            'Spoke to someone (excl. no answer/voicemail/engaged)',green),
     rptKpiCard('Calls Made',              d.calls_made,              'Avg '+fmtDur(avgDur)+' per call',navy),
     rptKpiCard('Hours on RC',             d.hours_on_rc+'h',         'Total '+fmtDur(d.total_duration_sec),navy),
     rptKpiCard('Conversations >2min',     d.conversations_2min,      (d.calls_made?Math.round(d.conversations_2min/d.calls_made*100):0)+'% of calls',green),
@@ -2664,10 +2666,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.33";
+const APP_VERSION = "1.34";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.34", date:"2026-07", title:"Custom columns for Daily Calling & Call History",
+    changes:[
+      "Fixed the \u201CActual Calls\u201D tile subtitle to mention Engaged is also excluded.",
+      "Added a \u201C\u2699 Columns\u201D button to Daily Calling and Call History \u2014 choose exactly which of the 23 optional columns to show or hide (Charity Name and the Call button always stay visible). Your choice is saved to this browser and applies everywhere the list appears, including the Follow-up Details panel.",
+    ]},
   { v:"1.33", date:"2026-07", title:"Engaged excluded from Actual Calls everywhere",
     changes:[
       "\u201CEngaged\u201D (a busy/engaged line) is now excluded from \u201Cactually spoken to\u201D on the Daily Calling progress bar, matching the other non-conversation outcomes.",
@@ -4533,6 +4540,92 @@ function outcomeChip(oc){
   else if(oc==='No Budget'){ bg='#fff6e0'; border='#f0d78c'; color='#8a6d1a'; }
   return `<span style="background:${bg};border:1px solid ${border};color:${color};border-radius:6px;padding:2px 8px;font-size:11px;display:inline-block;white-space:nowrap">${esc(oc)}</span>`;
 }
+// ── Column customisation (Daily Calling / Call History / follow-up details) ──
+// Charity Name and the Call button are always shown — everything else is optional.
+const COLUMN_DEFS = [
+  {id:'num', label:'# (row number)'},
+  {id:'priority', label:'Priority'},
+  {id:'phone', label:'Phone'},
+  {id:'email', label:'Email'},
+  {id:'website', label:'Website'},
+  {id:'aifind', label:'AI Find (🔎)'},
+  {id:'contact_name', label:'Contact Person'},
+  {id:'contact_role', label:'Job Role'},
+  {id:'contact_phone', label:'Contact Phone'},
+  {id:'contact_email', label:'Contact Email'},
+  {id:'income', label:'Total Income'},
+  {id:'statutory', label:'Statutory'},
+  {id:'source', label:'Source'},
+  {id:'source_detail', label:'Source Detail'},
+  {id:'last_called', label:'Last Called / Follow-up (History only)'},
+  {id:'outcome', label:'Call Outcome'},
+  {id:'stage', label:'Stage'},
+  {id:'comment', label:'Comment'},
+  {id:'called', label:'Called button'},
+  {id:'newsletter', label:'Newsletter'},
+  {id:'exclude', label:'Exclude'},
+  {id:'caller', label:'Caller'},
+  {id:'alsoin', label:'Also in / Elsewhere'},
+];
+const COL_STORAGE_KEY='sp_column_prefs_v1';
+function getColumnPrefs(){
+  try{
+    const raw=localStorage.getItem(COL_STORAGE_KEY);
+    if(raw) return JSON.parse(raw);
+  }catch(e){}
+  return {};  // empty = everything visible (default)
+}
+function saveColumnPrefs(prefs){
+  try{ localStorage.setItem(COL_STORAGE_KEY, JSON.stringify(prefs)); }catch(e){}
+}
+function applyColumnPrefs(){
+  const prefs=getColumnPrefs();
+  let styleEl=document.getElementById('col-visibility-style');
+  if(!styleEl){
+    styleEl=document.createElement('style');
+    styleEl.id='col-visibility-style';
+    document.head.appendChild(styleEl);
+  }
+  const hiddenIds=COLUMN_DEFS.filter(c=>prefs[c.id]===false).map(c=>c.id);
+  const scopes=['#callingTable','#historyTable','.fu-mini-table'];
+  let css='';
+  hiddenIds.forEach(id=>{
+    scopes.forEach(scope=>{ css += scope+' [data-col="'+id+'"]{display:none !important;} '; });
+  });
+  styleEl.textContent=css;
+}
+function openColumnSettings(){
+  const prefs=getColumnPrefs();
+  const html=`<div style="max-height:60vh;overflow-y:auto">
+    <p style="font-size:12px;color:var(--t3);margin:0 0 12px">Choose which columns to show in Daily Calling and Call History. Charity name and the call button are always shown. Your choice is saved to this browser.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px">
+      ${COLUMN_DEFS.map(c=>`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+        <input type="checkbox" data-colid="${c.id}" ${prefs[c.id]!==false?'checked':''}> ${esc(c.label)}
+      </label>`).join('')}
+    </div>
+    <div style="display:flex;gap:8px;justify-content:space-between;margin-top:16px">
+      <button class="btn btn-outline btn-sm" onclick="resetColumnSettingsModal()">Show all</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="closeGenericModal(true)">Cancel</button>
+        <button class="btn btn-green btn-sm" onclick="saveColumnSettingsFromModal()">Save</button>
+      </div>
+    </div>
+  </div>`;
+  showModal('⚙ Customise Columns', html);
+}
+function saveColumnSettingsFromModal(){
+  const prefs={};
+  document.querySelectorAll('[data-colid]').forEach(cb=>{ prefs[cb.getAttribute('data-colid')]=cb.checked; });
+  saveColumnPrefs(prefs);
+  applyColumnPrefs();
+  closeGenericModal(true);
+  cToast('✓ Column preferences saved');
+}
+function resetColumnSettingsModal(){
+  document.querySelectorAll('[data-colid]').forEach(cb=>{ cb.checked=true; });
+}
+applyColumnPrefs();  // apply saved preference as soon as the script loads
+
 function callingRowHtml(c, i, opts){
   opts = opts || {};
   // History rows are all previously-called, so always show the strong "called" green.
@@ -4565,39 +4658,40 @@ function callingRowHtml(c, i, opts){
   const cc=otherPgs.map(p=>`<span class="tag tag-purple" style="font-size:9px" title="Called in ${pgL[p]}">★ ${pgL[p]}</span>`).join(' ');
   const ai=[getOL(c.reg_number),cc].filter(Boolean).join(' ');
   // Source Detail cell (shown in both Daily and History)
-  const sourceDetailCell='<td style="font-size:11px;color:var(--t2)">'+(c.source_detail?('<span style="background:#eef4fb;border:1px solid #d5e2f0;border-radius:6px;padding:2px 7px;display:inline-block;white-space:nowrap">'+esc(c.source_detail)+'</span>'):'<span style="color:var(--t3)">—</span>')+'</td>';
+  const sourceDetailCell='<td data-col="source_detail" style="font-size:11px;color:var(--t2)">'+(c.source_detail?('<span style="background:#eef4fb;border:1px solid #d5e2f0;border-radius:6px;padding:2px 7px;display:inline-block;white-space:nowrap">'+esc(c.source_detail)+'</span>'):'<span style="color:var(--t3)">—</span>')+'</td>';
   // In History, an extra "Last called / follow-up" cell follows the source detail
   let lastCalledCell='';
   if(opts.history){
     const lc=c.last_called?esc(String(c.last_called).slice(0,16)):'';
     const fu=c.follow_up_at?esc(String(c.follow_up_at).slice(0,16)):'';
-    lastCalledCell='<td style="font-size:11px;color:var(--t2)">'+
+    lastCalledCell='<td data-col="last_called" style="font-size:11px;color:var(--t2)">'+
       (lc?'<div title="Last called">📞 '+lc+'</div>':'')+
       (fu?'<div title="Follow-up due" style="color:#c47f17">📅 '+fu+'</div>':'')+
       (!lc&&!fu?'<span style="color:var(--t3)">—</span>':'')+'</td>';
   }
   const detailCell=sourceDetailCell+lastCalledCell;
+  const wc=(td,col)=>td.replace('<td ','<td data-col="'+col+'" ');
   return`<tr class="${rowCls}">
-    <td style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="calling" data-reg="${esc(c.reg_number)}" ${(mxSel['calling']&&mxSel['calling'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('calling','${esc(c.reg_number)}',this)">⇄</button></td>
-    <td style="text-align:center">${callBtn('calling',c.reg_number,c.name,c.phone)}</td>
-    <td class="mono" style="color:var(--t3)">${i+1}</td>
-    <td>${prioBadge(c.band,c.priority)}</td>
-    <td title="${esc(c.name)}"><span class="mono" style="font-size:10px;color:var(--t3)">${esc(c.reg_number)}</span><br>${nm}${calledChip}</td>
-    ${ctCell(c.reg_number,'phone',c.phone)}
-    ${ctCell(c.reg_number,'email',c.email)}
-    ${ctCell(c.reg_number,'website',c.website)}<td style="text-align:center;padding:0 4px">${findBtn(c.reg_number,c.name)}</td>${ctCell(c.reg_number,'name','')}${ctCell(c.reg_number,'role','')}${ctCell(c.reg_number,'cphone','')}${ctCell(c.reg_number,'cemail','')}
-    <td class="mono" style="font-weight:600">${fmt(c.total_income)}</td>
-    <td class="mono">${fmt(c.statutory)}</td>
-    <td><span class="src-chip">${esc(c.source||'')}</span></td>
+    <td data-col="sync" style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="calling" data-reg="${esc(c.reg_number)}" ${(mxSel['calling']&&mxSel['calling'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('calling','${esc(c.reg_number)}',this)">⇄</button></td>
+    <td data-col="call" style="text-align:center">${callBtn('calling',c.reg_number,c.name,c.phone)}</td>
+    <td data-col="num" class="mono" style="color:var(--t3)">${i+1}</td>
+    <td data-col="priority">${prioBadge(c.band,c.priority)}</td>
+    <td data-col="name" title="${esc(c.name)}"><span class="mono" style="font-size:10px;color:var(--t3)">${esc(c.reg_number)}</span><br>${nm}${calledChip}</td>
+    ${wc(ctCell(c.reg_number,'phone',c.phone),'phone')}
+    ${wc(ctCell(c.reg_number,'email',c.email),'email')}
+    ${wc(ctCell(c.reg_number,'website',c.website),'website')}<td data-col="aifind" style="text-align:center;padding:0 4px">${findBtn(c.reg_number,c.name)}</td>${wc(ctCell(c.reg_number,'name',''),'contact_name')}${wc(ctCell(c.reg_number,'role',''),'contact_role')}${wc(ctCell(c.reg_number,'cphone',''),'contact_phone')}${wc(ctCell(c.reg_number,'cemail',''),'contact_email')}
+    <td data-col="income" class="mono" style="font-weight:600">${fmt(c.total_income)}</td>
+    <td data-col="statutory" class="mono">${fmt(c.statutory)}</td>
+    <td data-col="source"><span class="src-chip">${esc(c.source||'')}</span></td>
     ${detailCell}
-    <td class="fu-outcome-cell">${outcomeChip(c.outcome||c.latest_outcome)}</td>
-    <td>${sSelect('calling',c.reg_number)}</td>
-    <td>${cmBox('calling',c.reg_number)}</td>
-    <td>${cBtn('calling',c.reg_number,c.name||'')}</td>
-    <td style="text-align:center"><input type="checkbox" class="nl-cb" ${newsletterFlags[c.reg_number]?'checked':''} onchange="toggleNewsletter('${esc(c.reg_number)}',this)" title="Newsletter opt-in"></td>
-    <td style="text-align:center"><button type="button" onclick="toggleCallingExcl('${esc(c.reg_number)}',this)" title="${callingExcl.has(c.reg_number)?'Click to re-include in future lists':'Click to exclude from future lists'}" style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px;opacity:${callingExcl.has(c.reg_number)?'1':'0.3'}">${callingExcl.has(c.reg_number)?'🚫':'🚫'}</button></td>
-    <td>${callerCol('calling',c.reg_number)}</td>
-    <td style="white-space:normal">${ai||'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
+    <td data-col="outcome" class="fu-outcome-cell">${outcomeChip(c.outcome||c.latest_outcome)}</td>
+    <td data-col="stage">${sSelect('calling',c.reg_number)}</td>
+    <td data-col="comment">${cmBox('calling',c.reg_number)}</td>
+    <td data-col="called">${cBtn('calling',c.reg_number,c.name||'')}</td>
+    <td data-col="newsletter" style="text-align:center"><input type="checkbox" class="nl-cb" ${newsletterFlags[c.reg_number]?'checked':''} onchange="toggleNewsletter('${esc(c.reg_number)}',this)" title="Newsletter opt-in"></td>
+    <td data-col="exclude" style="text-align:center"><button type="button" onclick="toggleCallingExcl('${esc(c.reg_number)}',this)" title="${callingExcl.has(c.reg_number)?'Click to re-include in future lists':'Click to exclude from future lists'}" style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px;opacity:${callingExcl.has(c.reg_number)?'1':'0.3'}">${callingExcl.has(c.reg_number)?'🚫':'🚫'}</button></td>
+    <td data-col="caller">${callerCol('calling',c.reg_number)}</td>
+    <td data-col="alsoin" style="white-space:normal">${ai||'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
   </tr>`;
 }
 function renderCalling(d){
