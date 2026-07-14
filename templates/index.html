@@ -2669,10 +2669,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.40";
+const APP_VERSION = "1.41";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.41", date:"2026-07", title:"Fixed follow-up expand column mismatch & blank names in report export",
+    changes:[
+      "Fixed the Follow-up \u201CDetails\u201D expand panel where columns were misaligned (reg/name under \u2018#\u2019, index under \u2018Priority\u2019, etc.). Removed the redundant \u2018#\u2019 and \u2018Priority\u2019 columns there and aligned the header with the data so everything lines up correctly.",
+      "Fixed blank Charity Name in the Overview report\u2019s Excel export \u2014 names were only pulled from the current active list, so any charity called from a previous list exported blank. Names now fall back to the durable call record, so they populate correctly regardless of which list the call came from.",
+    ]},
   { v:"1.40", date:"2026-07", title:"Found it: retry-due charities were flooding every generated list",
     changes:[
       "The logs revealed the real problem: the active Daily Calling list was generated yesterday and made up almost entirely of retry-due charities carried forward from earlier calls \u2014 none of which had been touched again \u2014 which is why the counter and the list looked disconnected from today's actual work.",
@@ -3879,14 +3884,14 @@ function toggleFuExpand(id){
       </div>`:''}
       <table style="width:100%;border-collapse:collapse;font-size:12px" class="fu-mini-table">
         <thead><tr>
-          <th style="width:30px"></th><th style="width:44px">📞</th><th style="width:44px">#</th><th style="width:90px">Priority</th>
-          <th>Charity Name</th><th>Phone</th><th>Email</th><th>Website</th>
-          <th>🔎</th><th>Contact Person</th><th>Job Role</th><th>Contact Phone</th><th>Contact Email</th>
-          <th>Total Income</th><th>Statutory</th><th>Source</th><th>Source Detail</th><th>Call Outcome</th>
-          <th style="width:140px">Stage</th><th style="min-width:180px" title="The running general comment for this charity — separate from the follow-up note above">General Comment</th><th style="width:80px">Called</th>
-          <th style="width:72px">Newsletter</th><th style="width:50px">Excl.</th><th style="width:90px">Caller</th><th>Also in</th>
+          <th data-col="sync" style="width:30px"></th><th data-col="call" style="width:44px">📞</th>
+          <th data-col="name">Charity Name</th><th data-col="phone">Phone</th><th data-col="email">Email</th><th data-col="website">Website</th>
+          <th data-col="aifind">🔎</th><th data-col="contact_name">Contact Person</th><th data-col="contact_role">Job Role</th><th data-col="contact_phone">Contact Phone</th><th data-col="contact_email">Contact Email</th>
+          <th data-col="income">Total Income</th><th data-col="statutory">Statutory</th><th data-col="source">Source</th><th data-col="source_detail">Source Detail</th><th data-col="outcome">Call Outcome</th>
+          <th data-col="stage" style="width:140px">Stage</th><th data-col="comment" style="min-width:180px" title="The running general comment for this charity — separate from the follow-up note above">General Comment</th><th data-col="called" style="width:80px">Called</th>
+          <th data-col="newsletter" style="width:72px">Newsletter</th><th data-col="exclude" style="width:50px">Excl.</th><th data-col="caller" style="width:90px">Caller</th><th data-col="alsoin">Also in</th>
         </tr></thead>
-        <tbody>${callingRowHtml(f,0,{})}</tbody>
+        <tbody>${callingRowHtml(f,0,{fuMini:true})}</tbody>
       </table>
       <div style="font-size:11px;color:var(--t3);margin-top:4px;display:flex;gap:16px;flex-wrap:wrap">
         ${f.last_dialled?'<span>📱 Last dialled: <b>'+esc(f.last_dialled)+'</b></span>':''}
@@ -4926,8 +4931,8 @@ function callingRowHtml(c, i, opts){
   return`<tr class="${rowCls}">
     <td data-col="sync" style="text-align:center;padding-right:0"><input type="checkbox" class="mxcb" data-page="calling" data-reg="${esc(c.reg_number)}" ${(mxSel['calling']&&mxSel['calling'].has(c.reg_number))?'checked':''} onchange="toggleMxRow(this)"><button type="button" class="rsync" title="Sync this charity to Maximizer" onclick="syncOneRow('calling','${esc(c.reg_number)}',this)">⇄</button></td>
     <td data-col="call" style="text-align:center">${callBtn('calling',c.reg_number,c.name,c.phone)}</td>
-    <td data-col="num" class="mono" style="color:var(--t3)">${i+1}</td>
-    <td data-col="priority">${prioBadge(c.band,c.priority)}</td>
+    ${opts.fuMini?'':`<td data-col="num" class="mono" style="color:var(--t3)">${i+1}</td>`}
+    ${opts.fuMini?'':`<td data-col="priority">${prioBadge(c.band,c.priority)}</td>`}
     <td data-col="name" title="${esc(c.name)}"><span class="mono" style="font-size:10px;color:var(--t3)">${esc(c.reg_number)}</span><br>${nm}${calledChip}</td>
     ${wc(ctCell(c.reg_number,'phone',c.phone),'phone')}
     ${wc(ctCell(c.reg_number,'email',c.email),'email')}

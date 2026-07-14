@@ -1718,6 +1718,14 @@ def report_export():
         LEFT JOIN calling_batch cb ON cb.reg_number=cl.reg_number AND cb.active=1
         WHERE cl.timestamp>=? AND cl.timestamp<=? {cf}
         ORDER BY cl.timestamp DESC""", (ts_from, ts_to)+cp) or []
+    # Build a reliable reg_number -> name map from called_log (the durable record
+    # of every charity ever called), since the active-batch JOIN below only covers
+    # charities in the CURRENT list — a charity called from a previous, since-
+    # replaced list would otherwise export with a blank name.
+    name_by_reg = {}
+    for _reg, _nm in (db_query("SELECT reg_number, name FROM called_log") or []):
+        if _reg is not None and _nm:
+            name_by_reg[str(_reg).strip()] = _nm
     r2 = 2
     for ts, caller_n, reg, phone, outcome, dur, notes, src, cbdata in call_rows:
         name=""
@@ -1725,6 +1733,8 @@ def report_export():
             if cbdata:
                 o=json.loads(cbdata); name=o.get("name") or o.get("charity_name") or ""
         except Exception: pass
+        if not name:
+            name = name_by_reg.get(str(reg).strip(), "")
         key=f"calling|{reg}"
         stage=_statuses.get(key,"")
         dn=int(dur or 0)
