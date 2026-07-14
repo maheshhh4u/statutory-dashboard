@@ -187,6 +187,8 @@ body.wrap-off .ct-cell .ct-val{white-space:nowrap;overflow:hidden;text-overflow:
 .prio-low{background:var(--s2);color:var(--t3)}
 .prio-score{font-size:10px;font-weight:700;opacity:.7;margin-left:2px}
 tr.called-today-row{background:#f3faf4}
+@keyframes callDockPulse{0%,100%{box-shadow:0 10px 30px rgba(0,0,0,.30)}50%{box-shadow:0 10px 30px rgba(30,58,95,.55),0 0 0 4px rgba(30,58,95,.12)}}
+#callDock{animation:callDockPulse 2.5s ease-in-out infinite}
 .col-item:hover{border-color:#1e3a5f !important;box-shadow:0 1px 3px rgba(0,0,0,.08)}
 .col-item:active{cursor:grabbing !important}
 tr.called-today-row td{color:var(--t3)}
@@ -1421,15 +1423,20 @@ function ctEditForce(td){ ctEdit(td, null); }
 
 // Edit up to 3 contacts manually (name, role, phone, email each)
 function editContacts(reg){
-  // If a call window is open (has the call form), minimize it to the dock first so
-  // the in-progress call details (duration, outcome, notes) are preserved. We'll
+  // If a call window exists (has the call form) — whether currently shown OR
+  // already minimised to the dock — minimise/keep it minimised so the
+  // in-progress call details (duration, outcome, notes) are preserved. We'll
   // restore it automatically after the contact edit is saved or cancelled.
-  const callFormOpen = !!document.getElementById('call-outcome') &&
-                       document.getElementById('generic-modal') &&
-                       document.getElementById('generic-modal').classList.contains('open');
+  // IMPORTANT: this check must NOT depend on the modal's `.open` class, since
+  // minimizeCallWindow() removes that class — if the caller had already
+  // minimised the call herself before opening Edit Contacts, an `.open`-based
+  // check would wrongly think there's no active call, and it would never be
+  // restored automatically.
+  const callFormOpen = !!document.getElementById('call-outcome');
   if(callFormOpen){
     window._resumeCallAfterContacts = true;
     // Minimise the live call to the dock (keeps the form + timer intact in the DOM).
+    // Safe to call even if it's already minimised.
     minimizeCallWindow();
   } else {
     window._resumeCallAfterContacts = false;
@@ -1738,10 +1745,11 @@ function openCallModal(pg,reg,name,ccPhone){
       <button id="call-dial" type="button" onclick="placeRingOut('${esc(reg)}')" style="background:var(--green);color:white;padding:7px 14px;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap"><svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:currentColor;display:inline-block;vertical-align:middle;margin-right:4px"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg> Call via RC</button>
     </div>
     <div style="font-size:10px;color:var(--t3);margin-bottom:8px">CC default: ${esc(ccPhone||'—')} ${overridePhone?'· <span style="color:var(--gold)">edited</span>':''}</div>
+    <div id="call-draft-notice"></div>
     <div id="call-status" style="font-size:12px;margin-bottom:14px;display:none;padding:8px 10px;border-radius:4px;line-height:1.4"></div>
 
     <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Call Outcome</label>
-    <select id="call-outcome" onchange="onCallOutcomeChange()" style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;margin-bottom:10px">
+    <select id="call-outcome" onchange="onCallOutcomeChange();saveCallDraft('${esc(reg)}')" style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;margin-bottom:10px">
       <option value="">— Select outcome —</option>
       <option value="Connected">✓ Connected</option>
       <option value="Engaged">💬 Engaged</option>
@@ -1771,13 +1779,13 @@ function openCallModal(pg,reg,name,ccPhone){
 
     <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Duration (mm:ss)</label>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
-      <input id="call-duration" placeholder="0:00" style="width:100px;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:monospace;font-size:13px">
+      <input id="call-duration" oninput="saveCallDraft('${esc(reg)}')" placeholder="0:00" style="width:100px;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:monospace;font-size:13px">
       <button onclick="resetCallTimer()" type="button" style="background:none;border:1px solid var(--bd);border-radius:4px;cursor:pointer;padding:4px 10px;font-size:11px">Reset</button>
       <span id="call-timer-display" style="font-family:monospace;font-size:12px;color:var(--t3)"></span>
     </div>
 
     <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Notes</label>
-    <textarea id="call-notes" placeholder="Call summary, key points, follow-up actions..." maxlength="800" style="width:100%;min-height:80px;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;resize:vertical"></textarea>
+    <textarea id="call-notes" oninput="saveCallDraft('${esc(reg)}')" placeholder="Call summary, key points, follow-up actions..." maxlength="800" style="width:100%;min-height:80px;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;resize:vertical"></textarea>
 
     <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase;margin-top:10px;display:block">📅 Follow-up call (if they asked to be called back)</label>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
@@ -1794,6 +1802,55 @@ function openCallModal(pg,reg,name,ccPhone){
     </div>
   `;
   showModal('<span style="color:var(--gold)">☎</span> New Call · '+esc(name||reg), html);
+  restoreCallDraftIfAny(String(reg));
+}
+
+const CALL_DRAFT_PREFIX = 'sp_call_draft_';
+function saveCallDraft(reg){
+  try{
+    const notes=(document.getElementById('call-notes')||{}).value||'';
+    const outcome=(document.getElementById('call-outcome')||{}).value||'';
+    const dur=(document.getElementById('call-duration')||{}).value||'';
+    if(!notes && !outcome && !dur){ localStorage.removeItem(CALL_DRAFT_PREFIX+reg); return; }
+    localStorage.setItem(CALL_DRAFT_PREFIX+reg, JSON.stringify({notes, outcome, dur, ts: Date.now()}));
+  }catch(e){}
+}
+function clearCallDraft(reg){
+  try{ localStorage.removeItem(CALL_DRAFT_PREFIX+reg); }catch(e){}
+}
+function restoreCallDraftIfAny(reg){
+  let draft=null;
+  try{
+    const raw=localStorage.getItem(CALL_DRAFT_PREFIX+reg);
+    if(raw) draft=JSON.parse(raw);
+  }catch(e){}
+  if(!draft) return;
+  // Ignore drafts older than 48 hours — almost certainly stale/irrelevant by then.
+  if(!draft.ts || (Date.now()-draft.ts) > 48*60*60*1000){ clearCallDraft(reg); return; }
+  const notesEl=document.getElementById('call-notes');
+  const outcomeEl=document.getElementById('call-outcome');
+  const durEl=document.getElementById('call-duration');
+  // Only offer to restore if the form is currently empty — never overwrite
+  // something the caller has already started typing in this session.
+  const currentlyEmpty=(!notesEl||!notesEl.value) && (!outcomeEl||!outcomeEl.value) && (!durEl||!durEl.value);
+  if(!currentlyEmpty) return;
+  if(notesEl) notesEl.value=draft.notes||'';
+  if(outcomeEl) outcomeEl.value=draft.outcome||'';
+  if(durEl) durEl.value=draft.dur||'';
+  if(outcomeEl && outcomeEl.value) onCallOutcomeChange();
+  const notice=document.getElementById('call-draft-notice');
+  if(notice){
+    notice.innerHTML='<div style="background:#fff9e0;border:1px solid #e8b339;border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:12px;color:#8a6d1a">📝 Recovered your unsaved notes from earlier for this charity. <a href="#" id="discard-draft-link" style="color:#8a6d1a;text-decoration:underline">Discard instead</a></div>';
+    const link=document.getElementById('discard-draft-link');
+    if(link) link.addEventListener('click', function(e){
+      e.preventDefault();
+      clearCallDraft(reg);
+      if(notesEl) notesEl.value='';
+      if(outcomeEl) outcomeEl.value='';
+      if(durEl) durEl.value='';
+      notice.innerHTML='';
+    });
+  }
 }
 
 let _callTimerStart=null, _callTimerInterval=null;
@@ -1923,6 +1980,7 @@ function saveCall(pg,reg,ccPhone){
                           follow_up_at:fuAt,retry_at:retryAt,name:nm,charity:charity})})
     .then(r=>r.json()).then(d=>{
       resetCallTimer();
+      clearCallDraft(String(reg));
       refreshCalled();
       // Kick off call transcription (recording → Whisper → comment + Maximizer) for calls
       // where a conversation happened. Runs in the background; transcript appears in History.
@@ -2670,10 +2728,17 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.43";
+const APP_VERSION = "1.44";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.44", date:"2026-07", title:"Fixed call notes vanishing after Edit Contacts \u2014 with a safety net",
+    changes:[
+      "Found the actual bug: opening Edit Contacts checked whether the call window was \u201Copen\u201D to decide whether to restore it afterwards \u2014 but minimising the call window itself removes that \u201Copen\u201D flag. So if you'd already minimised the call yourself before opening Edit Contacts, it correctly stayed minimised but never automatically reopened. Fixed the check so it no longer matters whether the call was already minimised.",
+      "Added a robust safety net on top: the call notes, outcome, and duration are now saved as a recoverable draft the moment you type them, continuously, for that specific charity. If anything ever causes the call popup to close unexpectedly, reopening the call for that charity automatically recovers what was typed \u2014 with an option to discard if you'd rather start fresh.",
+      "This safety net is general \u2014 it protects against this class of problem happening again for any reason, not just this specific one.",
+      "The minimised call dock now pulses gently so an active call is never accidentally forgotten about.",
+    ]},
   { v:"1.43", date:"2026-07", title:"Added Meeting Secured to Call Outcome",
     changes:[
       "Added \u201C\ud83e\udd1d Meeting Secured\u201D to the Call Outcome dropdown in the call popup \u2014 it was already used throughout the reporting (A-Grade Calls, Hot Leads, etc.) but was never actually selectable, so those figures had nothing to count.",
@@ -3006,6 +3071,16 @@ function showModal(title, html){
       if(e.target===m && m._mdownBg) closeGenericModal();
     });
   }
+  // Universal safety net: if an active call form is about to be replaced by
+  // some OTHER modal content (anything that isn't itself a call form), save
+  // its draft first. This protects against data loss from ANY future modal
+  // that reuses this shared container, not just the ones we've already
+  // special-cased — the draft is recovered automatically next time this
+  // charity's call popup is reopened.
+  const existingOutcomeEl=document.getElementById('call-outcome');
+  if(existingOutcomeEl && html.indexOf('call-outcome')<0 && window._callCtx && window._callCtx.reg){
+    saveCallDraft(String(window._callCtx.reg));
+  }
   document.getElementById('gm-title').innerHTML=title;
   document.getElementById('gm-body').innerHTML=html;
   // Minimize button only for the call window
@@ -3027,6 +3102,9 @@ function closeGenericModal(force){
     const dirty=(notes.value.trim()!=='')||(outcome&&outcome.value!=='')||durSec>0;
     if(dirty && !confirm('You have unsaved call details (notes, outcome or duration). Close without saving?')) return;
   }
+  // Reaching here means either there was nothing to lose, or the caller just
+  // explicitly confirmed discarding it — safe to clear any saved draft too.
+  if(notes && window._callCtx && window._callCtx.reg) clearCallDraft(String(window._callCtx.reg));
   const m=document.getElementById('generic-modal');
   if(m) m.classList.remove('open');
   const dock=document.getElementById('callDock'); if(dock) dock.style.display='none';
