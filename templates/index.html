@@ -1756,6 +1756,7 @@ function openCallModal(pg,reg,name,ccPhone){
       <option value="Info Requested - Will Reach Out">📨 Info Requested – Will Reach Out</option>
       <option value="Not Interested">✗ Not Interested</option>
       <option value="Interested">★ Interested — Follow Up</option>
+      <option value="Meeting secured">🤝 Meeting Secured</option>
     </select>
 
     <div id="call-retry-box" style="display:none;background:#fff9e0;border:1px solid #e8b339;border-radius:6px;padding:8px 10px;margin-bottom:10px">
@@ -2669,10 +2670,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.42";
+const APP_VERSION = "1.43";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.43", date:"2026-07", title:"Added Meeting Secured to Call Outcome",
+    changes:[
+      "Added \u201C\ud83e\udd1d Meeting Secured\u201D to the Call Outcome dropdown in the call popup \u2014 it was already used throughout the reporting (A-Grade Calls, Hot Leads, etc.) but was never actually selectable, so those figures had nothing to count.",
+      "Counts as an actual call everywhere: green in the Call Outcome column, included in \u201Cactually spoken to\u201D on the Daily Calling progress bar, and included in the Overview report's Actual Calls tile \u2014 all of this worked automatically since it was never on the exclusion list, it just needed to be selectable.",
+    ]},
   { v:"1.42", date:"2026-07", title:"Line Dropped now counts as an actual call",
     changes:[
       "\u201CLine Dropped\u201D no longer triggers a retry \u2014 the call did connect before dropping, so it's treated as reaching someone, same as a real conversation.",
