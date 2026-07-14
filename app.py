@@ -2024,12 +2024,12 @@ def save_call():
                     "rc_duration_pending": fetch_rc_duration})
 
 # ── Retry cooldown for "didn't get through" outcomes ─────────────────────────
-# No Answer / Voicemail / Busy / Line Dropped all mean the charity was never
+# No Answer / Voicemail / Busy / Engaged all mean the charity was never
 # actually reached, so — rather than marking them permanently done — they're
 # eligible for a fresh attempt after a cooling-off period, up to a capped
 # number of attempts, then treated as exhausted (needs another channel, e.g.
 # email) rather than falsely marked "done" as if a real conversation happened.
-RETRY_OUTCOMES = {"No Answer", "Voicemail", "Busy", "Line Dropped", "Engaged"}
+RETRY_OUTCOMES = {"No Answer", "Voicemail", "Busy", "Engaged"}
 DEFAULT_RETRY_HOURS = 24
 MAX_RETRY_ATTEMPTS = 3
 
