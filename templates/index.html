@@ -431,6 +431,7 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="calling-progress">
       <div class="calling-progress-label"><span id="callingDone">0</span> / <span id="callingTotal">0</span> completed<span id="callingSpokenNote" style="color:var(--t3);font-weight:500"></span></div>
       <div class="calling-progress-track"><div class="calling-progress-fill" id="callingFill" style="width:0%"></div><div class="calling-progress-fill-spoken" id="callingFillSpoken" style="width:0%" title="Actually spoken to"></div></div>
+      <div id="callingGeneratedNote" style="font-size:11px;color:var(--t3);margin-top:4px"></div>
     </div>
   </div>
 
@@ -2668,10 +2669,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.38";
+const APP_VERSION = "1.39";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.39", date:"2026-07", title:"Show when the current list was generated",
+    changes:[
+      "Added a note under the Daily Calling progress bar showing exactly when the current list of 100 was generated \u2014 e.g. \u201CThis list was generated today at 08:30 UTC\u201D, or a highlighted note with the date if it's from an earlier day. This answers \u201Cis this today's list or an old one\u201D at a glance.",
+      "Added diagnostic logging to help pin down the counter issue precisely if it's still showing incorrectly.",
+    ]},
   { v:"1.38", date:"2026-07", title:"URGENT: fixed a bug in the previous fix that wiped call progress",
     changes:[
       "The previous version's correction was too aggressive \u2014 it could incorrectly reset a genuinely-called-today charity's completed status back to not-done, which is why the counter collapsed to 0/75 and \u201Cactually spoken\u201D showed 0 even though real calls had been made.",
@@ -4952,6 +4958,18 @@ function renderCalling(d){
   const spokenNote=document.getElementById('callingSpokenNote');
   if(spokenNote){
     spokenNote.innerHTML=done?(' (<span style="color:#1d7a3a;font-weight:700">'+spoken+'</span> of '+done+' actually spoken to)'):'';
+  }
+  const genNote=document.getElementById('callingGeneratedNote');
+  if(genNote){
+    if(d.created_at){
+      const gd=new Date(String(d.created_at).replace(' ','T')+'Z');
+      const todayStr=new Date().toDateString();
+      const isToday=!isNaN(gd.getTime()) && gd.toDateString()===todayStr;
+      genNote.textContent='This list was generated '+(isToday?'today':'on '+String(d.created_at).slice(0,10))+' at '+String(d.created_at).slice(11,16)+' UTC'+(isToday?'':' — click Generate List for a fresh one if you want the latest');
+      genNote.style.color=isToday?'var(--t3)':'#c47f17';
+    } else {
+      genNote.textContent='';
+    }
   }
   const gb=document.getElementById('genListBtn');
   if(gb){

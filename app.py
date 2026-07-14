@@ -3502,6 +3502,11 @@ def api_calling_batch():
         # (The completed flag itself is kept in sync by the safe, additive-only
         # repair inside _load_active_batch — no further self-heal needed here.)
         done = sum(1 for c in batch if c.get("completed") or c.get("called_today"))
+        print(f"  [calling_batch] active batch created_at={created_at!r}, {len(batch)} rows, done={done}")
+        for c in batch[:15]:
+            print(f"    reg={c.get('reg_number')} name={(c.get('name') or '')[:30]!r} "
+                  f"completed={c.get('completed')} called_today={c.get('called_today')} "
+                  f"outcome={c.get('outcome')!r} retry_due={c.get('retry_due')}")
         return jsonify({
             "charities": batch, "count": len(batch), "has_batch": True,
             "batch_no": batch_no, "created_at": created_at, "category": category,
