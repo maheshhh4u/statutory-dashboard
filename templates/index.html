@@ -2669,10 +2669,17 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.39";
+const APP_VERSION = "1.40";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.40", date:"2026-07", title:"Found it: retry-due charities were flooding every generated list",
+    changes:[
+      "The logs revealed the real problem: the active Daily Calling list was generated yesterday and made up almost entirely of retry-due charities carried forward from earlier calls \u2014 none of which had been touched again \u2014 which is why the counter and the list looked disconnected from today's actual work.",
+      "Fixed the root cause: a backlog of retry-due charities could flood an entire freshly generated list, crowding out new prospects. Generating a list now reserves the large majority of slots for genuinely fresh charities, capping retry-due ones at roughly a quarter of the list.",
+      "Added a note under the progress bar showing exactly when the current list was generated, so it's always clear whether you're looking at today's list or an older one.",
+      "This fix applies to newly generated lists \u2014 click Generate List to replace the current stale one with a properly balanced one.",
+    ]},
   { v:"1.39", date:"2026-07", title:"Show when the current list was generated",
     changes:[
       "Added a note under the Daily Calling progress bar showing exactly when the current list of 100 was generated \u2014 e.g. \u201CThis list was generated today at 08:30 UTC\u201D, or a highlighted note with the date if it's from an earlier day. This answers \u201Cis this today's list or an old one\u201D at a glance.",

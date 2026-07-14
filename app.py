@@ -3656,13 +3656,31 @@ def api_calling_batch_generate():
             if c["reg_number"] not in used:
                 selected.append(c); used.add(c["reg_number"])
     excl = set(used)
-    # "fresh" no longer excludes uncalled leftovers — they get included in the new 100
-    # (only truly called items are excluded via _ever_called in the pool filter above)
+    # Reserve most of the list for genuinely fresh (never-called) charities —
+    # otherwise a backlog of retry-due charities (e.g. from a heavy testing/
+    # calling session) can flood every freshly generated list and crowd out new
+    # prospects entirely. Retry-due charities still get pulled back in, just
+    # capped at a share of the list rather than potentially filling all of it.
+    RETRY_SHARE_CAP = 0.25
+    retry_cap = max(5, int(100 * RETRY_SHARE_CAP))
+    fresh_added = 0
+    retry_added = 0
+    # First pass: fresh (never-called) charities, in priority order, uncapped
+    # other than the overall list size.
     for c in pool:
         if len(selected) >= 100: break
         reg = c["reg_number"]
         if reg in excl or reg in used: continue
-        selected.append(c); used.add(reg)
+        if c.get("ever_called"): continue  # retry-due — handled in the second pass
+        selected.append(c); used.add(reg); fresh_added += 1
+    # Second pass: retry-due charities fill any remaining slots, capped so they
+    # can never dominate the list even when the pool is mostly backlog.
+    for c in pool:
+        if len(selected) >= 100 or retry_added >= retry_cap: break
+        reg = c["reg_number"]
+        if reg in excl or reg in used: continue
+        selected.append(c); used.add(reg); retry_added += 1
+    print(f"  [generate] fresh={fresh_added} retry_due={retry_added} (cap={retry_cap}) leftovers={len(used)-fresh_added-retry_added}")
 
     selected = selected[:100]
     if not selected:
