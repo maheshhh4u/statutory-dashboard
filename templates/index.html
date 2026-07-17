@@ -1212,53 +1212,130 @@ select:focus{outline:none;border-color:var(--green)}
 
 <!-- Admin modal -->
 <div class="modal-bg" id="admin-modal">
-  <div class="modal" style="max-width:500px">
+  <div class="modal" style="max-width:540px">
     <h3>⚙ Admin — Settings</h3>
-    <p style="font-size:12px;color:var(--t2);margin-bottom:14px">Manage callers and browser session settings.</p>
 
-    <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Caller Names</div>
-    <div id="admin-user-list" style="margin-bottom:12px"></div>
-    <div style="display:flex;gap:7px;margin-bottom:16px">
-      <input id="admin-new-user" placeholder="Add new caller name…" maxlength="60" style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px" onkeydown="if(event.key==='Enter')addUser()">
-      <button class="btn btn-green btn-sm" onclick="addUser()">+ Add</button>
+    <div style="display:flex;gap:4px;border-bottom:2px solid var(--s2);margin-bottom:16px">
+      <button type="button" class="admin-tab-btn active" id="admin-tab-btn-callers" onclick="switchAdminTab('callers')"
+        style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--navy);border-bottom:2px solid var(--navy);margin-bottom:-2px">👤 Callers</button>
+      <button type="button" class="admin-tab-btn" id="admin-tab-btn-timezone" onclick="switchAdminTab('timezone')"
+        style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">🌍 Timezone</button>
     </div>
 
-    <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Display Timezone</div>
-    <div style="background:var(--s2);border-radius:var(--radius);padding:12px;margin-bottom:16px">
-      <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Everything is stored in UTC in the database — this only controls how times are DISPLAYED and what timezone Excel exports use, everywhere in the dashboard. Applies to everyone, not just this browser.</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <select id="admin-timezone-select" style="flex:1;padding:7px 9px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px">
-          <option value="Europe/London">Europe/London (UK — handles BST/GMT automatically)</option>
-          <option value="UTC">UTC</option>
-          <option value="Europe/Dublin">Europe/Dublin</option>
-          <option value="Europe/Paris">Europe/Paris (Central European)</option>
-          <option value="America/New_York">America/New_York (Eastern)</option>
-          <option value="America/Chicago">America/Chicago (Central)</option>
-          <option value="America/Los_Angeles">America/Los_Angeles (Pacific)</option>
-          <option value="Asia/Kolkata">Asia/Kolkata (India)</option>
-          <option value="Asia/Dubai">Asia/Dubai</option>
-          <option value="Australia/Sydney">Australia/Sydney</option>
+    <div id="admin-tab-panel-callers">
+      <p style="font-size:12px;color:var(--t2);margin-bottom:14px">Manage callers and browser session settings.</p>
+
+      <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Caller Names</div>
+      <div id="admin-user-list" style="margin-bottom:12px"></div>
+      <div style="display:flex;gap:7px;margin-bottom:16px">
+        <input id="admin-new-user" placeholder="Add new caller name…" maxlength="60" style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px" onkeydown="if(event.key==='Enter')addUser()">
+        <button class="btn btn-green btn-sm" onclick="addUser()">+ Add</button>
+      </div>
+
+      <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Browser Session Settings</div>
+      <div style="background:var(--s2);border-radius:var(--radius);padding:12px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div>
+            <div style="font-size:12px;font-weight:600">Currently logged in as</div>
+            <div id="admin-current-caller" style="font-size:13px;color:var(--green);font-weight:700;margin-top:2px">—</div>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="openCallerPopup();closeAdmin()">Change</button>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <div style="font-size:12px;font-weight:600">Remember selection in browser</div>
+            <div id="admin-remember-status" style="font-size:11px;color:var(--t3);margin-top:2px">—</div>
+          </div>
+          <button class="btn btn-outline btn-sm" id="admin-clear-remember-btn" onclick="clearRemembered()">Clear remembered name</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="admin-tab-panel-timezone" style="display:none">
+      <p style="font-size:12px;color:var(--t2);margin-bottom:14px">Everything is stored in UTC in the database — this only controls how times are DISPLAYED and what timezone Excel exports use, everywhere in the dashboard. Applies to everyone, not just this browser. Every zone below automatically switches for daylight saving / summer time (e.g. BST ⇄ GMT each March/October) — zones marked "no DST" stay fixed year-round.</p>
+      <div style="background:var(--s2);border-radius:var(--radius);padding:12px;margin-bottom:14px">
+        <select id="admin-timezone-select" style="width:100%;padding:8px 9px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;margin-bottom:10px">
+          <optgroup label="UTC-12:00 to UTC-01:00 (West of Greenwich)">
+          <option value="Etc/GMT+12">UTC-12:00 — Baker Island, Howland Island</option>
+          <option value="Pacific/Pago_Pago">UTC-11:00 — American Samoa, Niue</option>
+          <option value="Pacific/Honolulu">UTC-10:00 — Hawaii (HST), French Polynesia</option>
+          <option value="Pacific/Marquesas">UTC-09:30 — Marquesas Islands</option>
+          <option value="America/Anchorage">UTC-09:00 — Alaska Standard Time (AKST)</option>
+          <option value="America/Los_Angeles">UTC-08:00 — Pacific Standard Time (PST)</option>
+          <option value="America/Denver">UTC-07:00 — Mountain Standard Time (MST)</option>
+          <option value="America/Chicago">UTC-06:00 — Central Standard Time (CST)</option>
+          <option value="America/New_York">UTC-05:00 — Eastern Standard Time (EST)</option>
+          <option value="America/Bogota">UTC-05:00 — Colombia (no DST)</option>
+          <option value="America/Lima">UTC-05:00 — Peru (no DST)</option>
+          <option value="America/Halifax">UTC-04:00 — Atlantic Standard Time (AST)</option>
+          <option value="America/Caracas">UTC-04:00 — Venezuela (no DST)</option>
+          <option value="America/Santiago">UTC-04:00 — Chile</option>
+          <option value="America/St_Johns">UTC-03:30 — Newfoundland Standard Time (NST)</option>
+          <option value="America/Argentina/Buenos_Aires">UTC-03:00 — Argentina (no DST)</option>
+          <option value="America/Sao_Paulo">UTC-03:00 — Brazil (Brasília, no DST)</option>
+          <option value="America/Nuuk">UTC-03:00 — Greenland</option>
+          <option value="Atlantic/South_Georgia">UTC-02:00 — South Georgia, South Sandwich Islands</option>
+          <option value="Atlantic/Cape_Verde">UTC-01:00 — Cape Verde (no DST)</option>
+          <option value="Atlantic/Azores">UTC-01:00 — Azores (Portugal)</option>
+          </optgroup>
+          <optgroup label="UTC+00:00 (The Prime Meridian)">
+          <option value="Europe/London">UTC+00:00 — Greenwich Mean Time (GMT) / UK</option>
+          <option value="Atlantic/Reykjavik">UTC+00:00 — Iceland (no DST)</option>
+          <option value="Africa/Casablanca">UTC+00:00 — Western European Time (WET), Morocco</option>
+          <option value="UTC">UTC+00:00 — UTC (fixed, no DST)</option>
+          </optgroup>
+          <optgroup label="UTC+01:00 to UTC+14:00 (East of Greenwich)">
+          <option value="Europe/Paris">UTC+01:00 — Central European Time (CET)</option>
+          <option value="Africa/Lagos">UTC+01:00 — West Africa Time (WAT, no DST)</option>
+          <option value="Europe/Athens">UTC+02:00 — Eastern European Time (EET)</option>
+          <option value="Africa/Harare">UTC+02:00 — Central Africa Time (CAT, no DST)</option>
+          <option value="Africa/Johannesburg">UTC+02:00 — South Africa (no DST)</option>
+          <option value="Europe/Moscow">UTC+03:00 — Moscow Time (MSK, no DST)</option>
+          <option value="Africa/Nairobi">UTC+03:00 — East Africa Time (EAT, no DST)</option>
+          <option value="Asia/Riyadh">UTC+03:00 — Saudi Arabia (no DST)</option>
+          <option value="Asia/Tehran">UTC+03:30 — Iran Standard Time (IRST)</option>
+          <option value="Asia/Dubai">UTC+04:00 — Gulf Standard Time (GST, no DST)</option>
+          <option value="Asia/Tbilisi">UTC+04:00 — Georgia (no DST)</option>
+          <option value="Asia/Yerevan">UTC+04:00 — Armenia (no DST)</option>
+          <option value="Asia/Kabul">UTC+04:30 — Afghanistan (no DST)</option>
+          <option value="Asia/Karachi">UTC+05:00 — Pakistan (no DST)</option>
+          <option value="Asia/Tashkent">UTC+05:00 — Uzbekistan (no DST)</option>
+          <option value="Indian/Maldives">UTC+05:00 — Maldives (no DST)</option>
+          <option value="Asia/Kolkata">UTC+05:30 — Indian Standard Time (IST)</option>
+          <option value="Asia/Colombo">UTC+05:30 — Sri Lanka (no DST)</option>
+          <option value="Asia/Kathmandu">UTC+05:45 — Nepal (no DST)</option>
+          <option value="Asia/Dhaka">UTC+06:00 — Bangladesh (no DST)</option>
+          <option value="Asia/Thimphu">UTC+06:00 — Bhutan (no DST)</option>
+          <option value="Asia/Omsk">UTC+06:00 — Omsk Time (no DST)</option>
+          <option value="Asia/Yangon">UTC+06:30 — Myanmar (no DST)</option>
+          <option value="Indian/Cocos">UTC+06:30 — Cocos Islands (no DST)</option>
+          <option value="Asia/Bangkok">UTC+07:00 — Indochina Time (ICT)</option>
+          <option value="Asia/Jakarta">UTC+07:00 — Western Indonesia (no DST)</option>
+          <option value="Asia/Krasnoyarsk">UTC+07:00 — Krasnoyarsk Time (no DST)</option>
+          <option value="Asia/Shanghai">UTC+08:00 — China Standard Time (CST, no DST)</option>
+          <option value="Asia/Singapore">UTC+08:00 — Singapore (no DST)</option>
+          <option value="Australia/Perth">UTC+08:00 — Western Australia (AWST, no DST)</option>
+          <option value="Australia/Eucla">UTC+08:45 — Central Western Australia (Eucla)</option>
+          <option value="Asia/Tokyo">UTC+09:00 — Japan Standard Time (JST, no DST)</option>
+          <option value="Asia/Seoul">UTC+09:00 — Korea Standard Time (KST, no DST)</option>
+          <option value="Australia/Adelaide">UTC+09:30 — Australian Central Standard Time (ACST)</option>
+          <option value="Australia/Sydney">UTC+10:00 — Australian Eastern Standard Time (AEST)</option>
+          <option value="Asia/Vladivostok">UTC+10:00 — Vladivostok Time (no DST)</option>
+          <option value="Australia/Lord_Howe">UTC+10:30 — Lord Howe Island</option>
+          <option value="Pacific/Guadalcanal">UTC+11:00 — Solomon Islands (no DST)</option>
+          <option value="Pacific/Efate">UTC+11:00 — Vanuatu (no DST)</option>
+          <option value="Asia/Magadan">UTC+11:00 — Magadan Time (no DST)</option>
+          <option value="Pacific/Auckland">UTC+12:00 — New Zealand Standard Time (NZST)</option>
+          <option value="Pacific/Fiji">UTC+12:00 — Fiji</option>
+          <option value="Pacific/Chatham">UTC+12:45 — Chatham Islands (New Zealand)</option>
+          <option value="Pacific/Tongatapu">UTC+13:00 — Tonga (no DST)</option>
+          <option value="Pacific/Apia">UTC+13:00 — Samoa (no DST)</option>
+          <option value="Pacific/Fakaofo">UTC+13:00 — Tokelau (no DST)</option>
+          <option value="Pacific/Kiritimati">UTC+14:00 — Line Islands (Kiribati, no DST)</option>
+          </optgroup>
         </select>
-        <button class="btn btn-green btn-sm" onclick="saveTimezoneSetting()">Save</button>
-      </div>
-      <div id="admin-timezone-status" style="font-size:11px;color:var(--t3);margin-top:6px"></div>
-    </div>
-
-    <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Browser Session Settings</div>
-    <div style="background:var(--s2);border-radius:var(--radius);padding:12px;margin-bottom:14px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <div>
-          <div style="font-size:12px;font-weight:600">Currently logged in as</div>
-          <div id="admin-current-caller" style="font-size:13px;color:var(--green);font-weight:700;margin-top:2px">—</div>
-        </div>
-        <button class="btn btn-outline btn-sm" onclick="openCallerPopup();closeAdmin()">Change</button>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between">
-        <div>
-          <div style="font-size:12px;font-weight:600">Remember selection in browser</div>
-          <div id="admin-remember-status" style="font-size:11px;color:var(--t3);margin-top:2px">—</div>
-        </div>
-        <button class="btn btn-outline btn-sm" id="admin-clear-remember-btn" onclick="clearRemembered()">Clear remembered name</button>
+        <button class="btn btn-green btn-sm" style="width:100%" onclick="saveTimezoneSetting()">Save Timezone</button>
+        <div id="admin-timezone-status" style="font-size:11px;color:var(--t3);margin-top:8px"></div>
       </div>
     </div>
 
@@ -2833,10 +2910,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.47";
+const APP_VERSION = "1.48";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.48", date:"2026-07", title:"Admin split into tabs; comprehensive timezone list",
+    changes:[
+      "Split Admin into two tabs \u2014 \u201C\ud83d\udc64 Callers\u201D and \u201C\ud83c\udf0d Timezone\u201D \u2014 instead of one long, crowded menu.",
+      "Expanded the timezone list to 72 options covering every UTC offset from -12:00 to +14:00, grouped and labelled the way you laid out. Each one maps to a real location's actual timezone rather than a fixed offset, so it automatically switches for daylight saving / summer time every March and October (e.g. BST \u21c4 GMT) \u2014 verified against the same timezone database the server uses.",
+      "Where a UTC offset covers places with different daylight-saving rules (e.g. US Eastern observes it, Colombia and Peru don't), they're listed as separate options rather than merged into one that would be wrong for some of them.",
+    ]},
   { v:"1.47", date:"2026-07", title:"Configurable display timezone (Admin)",
     changes:[
       "Everything stays stored in UTC in the database, but Admin now has a Display Timezone setting \u2014 defaults to Europe/London (handles BST/GMT automatically), with other common zones available. Applies to everyone, not just one browser.",
@@ -3827,8 +3910,22 @@ function loadUsers(){
   });
 }
 
+function switchAdminTab(tab){
+  const tabs=['callers','timezone'];
+  tabs.forEach(t=>{
+    const panel=document.getElementById('admin-tab-panel-'+t);
+    const btn=document.getElementById('admin-tab-btn-'+t);
+    const active=(t===tab);
+    if(panel) panel.style.display=active?'block':'none';
+    if(btn){
+      btn.style.color=active?'var(--navy)':'var(--t3)';
+      btn.style.borderBottomColor=active?'var(--navy)':'transparent';
+    }
+  });
+}
 function openAdmin(){
   document.getElementById('admin-modal').classList.add('open');
+  switchAdminTab('callers');
   renderAdminUserList();
   updateCallerDisplay();
   loadTimezoneSetting();
