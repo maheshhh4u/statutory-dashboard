@@ -1047,6 +1047,15 @@ select:focus{outline:none;border-color:var(--green)}
         <button class="btn btn-sm" style="background:#5a4fbf;color:#fff;font-size:14px;padding:9px 18px" onclick="runAiCoach()">✨ Generate Coaching</button>
       </div>
       <div id="rpt-coach-output" style="font-size:13px;line-height:1.6"></div>
+      <div id="rpt-coach-chat-wrap" style="display:none;margin-top:16px;border-top:1px solid #d9d0f0;padding-top:16px">
+        <div style="font-size:12px;font-weight:800;color:#5a4fbf;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">💬 Ask the coach</div>
+        <div style="font-size:11px;color:var(--t3);margin-bottom:10px">Push back, add context, or ask a question — e.g. "the meeting count was low but that's because most calls that week were hard-to-reach trusts."</div>
+        <div id="rpt-coach-chat-log" style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px"></div>
+        <div style="display:flex;gap:8px">
+          <input id="rpt-coach-chat-input" type="text" placeholder="Ask a follow-up…" onkeydown="if(event.key==='Enter'){event.preventDefault();sendCoachChat();}" style="flex:1;padding:9px 11px;border:1px solid #d9d0f0;border-radius:6px;font-family:inherit;font-size:13px">
+          <button class="btn btn-sm" style="background:#5a4fbf;color:#fff" onclick="sendCoachChat()" id="rpt-coach-chat-send">Send</button>
+        </div>
+      </div>
     </div>
 
     <!-- Charts row 1 -->
@@ -2377,6 +2386,11 @@ function runAiCoach(){
   const callers=getSelectedCallers();
   if(!from||!to){ alert('Please select a date range first.'); return; }
   const out=document.getElementById('rpt-coach-output');
+  const chatWrap=document.getElementById('rpt-coach-chat-wrap');
+  const chatLog=document.getElementById('rpt-coach-chat-log');
+  if(chatWrap) chatWrap.style.display='none';
+  if(chatLog) chatLog.innerHTML='';
+  window._coachChatCtx=null;
   out.innerHTML='<div style="color:#5a4fbf;padding:16px 0">🧠 Analysing call performance… this may take 10-20 seconds.</div>';
   fetch('/api/ai/coach',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({callers,from,to})})
@@ -2403,7 +2417,49 @@ function runAiCoach(){
         '<div style="font-size:12px;color:var(--t3);margin-bottom:12px">Coaching for <b>'+esc(d.who)+'</b> · '+
         d.stats.total+' calls · '+d.stats.connect_rate+'% connect rate · '+d.stats.meetings+' meetings</div>'+
         mdToHtml(d.coaching)+'</div>'+typeHtml;
+      // Enable the follow-up chat, grounded in this exact report + context
+      window._coachChatCtx={callers, from, to, coaching:d.coaching, history:[]};
+      if(chatWrap) chatWrap.style.display='block';
     }).catch(e=>{ out.innerHTML='<div style="color:#c0392b;padding:12px 0">⚠ '+esc(e.message)+'</div>'; });
+}
+function appendCoachChatMsg(role, text){
+  const log=document.getElementById('rpt-coach-chat-log');
+  if(!log) return;
+  const isUser=(role==='user');
+  const row=document.createElement('div');
+  row.style.cssText='display:flex;'+(isUser?'justify-content:flex-end':'justify-content:flex-start');
+  const bubble=document.createElement('div');
+  bubble.style.cssText='max-width:80%;padding:9px 13px;border-radius:10px;font-size:13px;line-height:1.5;'+
+    (isUser ? 'background:#5a4fbf;color:#fff;border-bottom-right-radius:2px'
+            : 'background:#fff;border:1px solid #d9d0f0;color:var(--t1);border-bottom-left-radius:2px');
+  bubble.innerHTML=isUser?esc(text):mdToHtml(text);
+  row.appendChild(bubble);
+  log.appendChild(row);
+  log.scrollTop=log.scrollHeight;
+}
+function sendCoachChat(){
+  const ctx=window._coachChatCtx;
+  if(!ctx) return;
+  const input=document.getElementById('rpt-coach-chat-input');
+  const message=(input.value||'').trim();
+  if(!message) return;
+  const sendBtn=document.getElementById('rpt-coach-chat-send');
+  appendCoachChatMsg('user', message);
+  input.value='';
+  if(sendBtn){ sendBtn.disabled=true; sendBtn.textContent='…'; }
+  fetch('/api/ai/coach_chat',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({callers:ctx.callers, from:ctx.from, to:ctx.to, coaching:ctx.coaching,
+                          history:ctx.history, message})})
+    .then(r=>r.json()).then(d=>{
+      if(sendBtn){ sendBtn.disabled=false; sendBtn.textContent='Send'; }
+      if(!d.ok){ appendCoachChatMsg('assistant', '⚠ '+(d.error||'Something went wrong.')); return; }
+      ctx.history.push({role:'user', content:message});
+      ctx.history.push({role:'assistant', content:d.reply});
+      appendCoachChatMsg('assistant', d.reply);
+    }).catch(e=>{
+      if(sendBtn){ sendBtn.disabled=false; sendBtn.textContent='Send'; }
+      appendCoachChatMsg('assistant', '⚠ '+e.message);
+    });
 }
 // Lightweight markdown → HTML (bold, headings, lists)
 function mdToHtml(md){
@@ -2756,10 +2812,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.45";
+const APP_VERSION = "1.46";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.46", date:"2026-07", title:"AI Coach is now two-way: ask follow-up questions",
+    changes:[
+      "Added \u201C\ud83d\udcac Ask the coach\u201D below the AI Performance Coach report \u2014 push back, add context, or ask a question, and get a reply grounded in the same call data, e.g. \u201Cit was low because that week was mostly hard-to-reach trusts.\u201D",
+      "Softened the coaching tone throughout: observations about lower numbers are now framed as things worth exploring together, not verdicts or one-line prescriptions like \u2018refine your pitch\u2019. The report now explicitly invites questions or pushback at the end.",
+    ]},
   { v:"1.45", date:"2026-07", title:"Website added to call popup",
     changes:[
       "The call popup now shows the charity's website (when known), as a clickable link that opens in a new tab, plus a one-click Copy button \u2014 handy for looking things up or using elsewhere during a call without leaving the popup.",

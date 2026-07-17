@@ -1000,21 +1000,12 @@ def _trim_transcript(text, limit=2200):
     tail = body[-1200:].split(" ", 1)[-1]
     return head + " …[middle of call omitted]… " + tail
 
-@app.route("/api/ai/coach", methods=["POST"])
-def ai_coach():
-    """Generate AI performance coaching for a caller based on their call history in a date range."""
-    if not OPENAI_API_KEY:
-        return jsonify({"ok": False,
-            "error": "AI is not configured. Add the OPENAI_API_KEY environment variable in Render."}), 400
-    data = request.json or {}
-    callers = [c.strip() for c in (data.get("callers") or []) if c.strip()]
-    date_from = str(data.get("from","")).strip()
-    date_to   = str(data.get("to","")).strip()
-    if not date_from or not date_to:
-        return jsonify({"ok": False, "error": "Missing date range"}), 400
+def _build_coach_stats(callers, date_from, date_to):
+    """Gather aggregate call-performance stats for one or more callers over a date
+    range, returning (stats_block_text, who, stats_summary_dict, type_ranked, error).
+    Shared by the coaching report AND the follow-up chat, so both are always
+    grounded in the exact same numbers."""
     ts_from = date_from + " 00:00:00"; ts_to = date_to + " 23:59:59"
-
-    # Build caller filter
     if len(callers)==1:
         cf = "AND caller=?"; cp = (callers[0],)
     elif len(callers)>1:
@@ -1030,7 +1021,7 @@ def ai_coach():
         r = db_query(sql, p); return (r or [[0]])[0][0]
     total       = one(f"SELECT COUNT(*) {base}")
     if not total:
-        return jsonify({"ok": False, "error": "No calls found for this caller and date range."}), 400
+        return None, who, None, None, "No calls found for this caller and date range."
     total_dur   = one(f"SELECT COALESCE(SUM(duration_sec),0) {base}")
     conv2       = one(f"SELECT COUNT(*) {base} AND duration_sec>=120")
     connected   = one(f"SELECT COUNT(*) {base} AND outcome IN ('Connected','Engaged','Interested','Meeting secured','Not interested')")
@@ -1106,25 +1097,58 @@ def ai_coach():
            + "\n".join(type_lines) + "\n\n" if type_lines else "")
         + ("RECENT CALL NOTES (sample):\n" + "\n".join(note_lines) if note_lines else "")
     )
+    stats_summary = {"total": total, "connect_rate": connect_rate,
+                     "conv_rate": conv_rate, "meetings": meetings, "avg_dur": avg_dur}
+    return stats_block, who, stats_summary, type_ranked[:8], None
 
-    system_prompt = (
-        "You are an experienced sales coach for charity-sector outbound prospecting. " + NINEM_PITCH + " "
-        "You are reviewing a caller's performance to help them improve. "
-        "Be specific, constructive and practical — like a supportive manager. "
-        "Base every observation on the actual numbers provided; do not invent data. "
-        "Be CONCISE — short punchy sentences, no padding. Use UK English."
-    )
+COACH_SYSTEM_PROMPT = (
+    "You are an experienced, warm sales coach for charity-sector outbound prospecting. " + NINEM_PITCH + " "
+    "You are reviewing a caller's performance to help them improve, in a supportive, two-way conversation — "
+    "not issuing a verdict. Acknowledge effort and context before pointing out gaps. When a number looks "
+    "low, offer it as an observation worth exploring together rather than a definitive judgement — there "
+    "may be reasons (charity mix, time of day, list quality, a run of hard prospects) the raw numbers alone "
+    "don't show. Avoid blunt, one-line prescriptions like 'refine your pitch' — instead invite reflection, "
+    "e.g. phrase it as 'Only 1 meeting this period — worth talking through whether that's about approach, "
+    "the charities called, or something else going on.' "
+    "Base every observation on the actual numbers provided; do not invent data. "
+    "Be CONCISE — short punchy sentences, no padding. Use UK English."
+)
+
+@app.route("/api/ai/coach", methods=["POST"])
+def ai_coach():
+    """Generate AI performance coaching for a caller based on their call history in a date range."""
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False,
+            "error": "AI is not configured. Add the OPENAI_API_KEY environment variable in Render."}), 400
+    data = request.json or {}
+    callers = [c.strip() for c in (data.get("callers") or []) if c.strip()]
+    date_from = str(data.get("from","")).strip()
+    date_to   = str(data.get("to","")).strip()
+    if not date_from or not date_to:
+        return jsonify({"ok": False, "error": "Missing date range"}), 400
+
+    stats_block, who, stats_summary, type_ranked, err = _build_coach_stats(callers, date_from, date_to)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+
+    system_prompt = COACH_SYSTEM_PROMPT
     user_prompt = (
-        "Review this performance data and write a SHORT, scannable coaching report. "
+        "Review this performance data and write a SHORT, scannable coaching report — "
+        "written as the opening of a two-way conversation, not a final verdict. "
         "Keep the whole thing tight — aim for brevity over completeness.\n\n"
         f"{stats_block}\n\n"
         "Use these exact headings, each with 1-3 short bullet points (not paragraphs):\n"
-        "**Summary** — 1-2 sentences: overall verdict + biggest opportunity.\n"
+        "**Summary** — 1-2 sentences: an honest but warm overall read + the biggest opportunity.\n"
         "**Strengths** — up to 3 bullets, grounded in numbers.\n"
-        "**Improve** — up to 3 bullets: the key issues + a one-line fix each.\n"
+        "**Worth exploring together** — up to 3 bullets: observations (not verdicts) about areas "
+        "that look lower than they could be. Acknowledge more than one thing could explain a number "
+        "before suggesting a next step, and phrase each as an invitation to discuss rather than a "
+        "command (avoid phrasing like 'aim to increase by...' — prefer 'worth talking through whether...').\n"
         "**Best charity types** — 1-2 bullets: which charity categories convert best for this caller (from the charity-type data) and what to call more of.\n"
-        "**Do next week** — up to 3 concrete bullet actions.\n"
-        "Keep each bullet under 20 words.\n"
+        "**Do next week** — up to 3 concrete, supportive suggestions (not orders).\n"
+        "End with one short, genuine line inviting the caller to ask questions or push back on any of "
+        "this below — they know their calls better than the numbers do.\n"
+        "Keep each bullet under 22 words.\n"
     )
 
     try:
@@ -1143,9 +1167,65 @@ def ai_coach():
         if not coaching:
             return jsonify({"ok": False, "error": "Empty response from OpenAI"}), 502
         return jsonify({"ok": True, "coaching": coaching, "who": who,
-                        "charity_types": type_ranked[:8],
-                        "stats": {"total": total, "connect_rate": connect_rate,
-                                  "conv_rate": conv_rate, "meetings": meetings, "avg_dur": avg_dur}})
+                        "charity_types": type_ranked,
+                        "stats": stats_summary})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"AI request failed: {str(e)[:200]}"}), 500
+
+@app.route("/api/ai/coach_chat", methods=["POST"])
+def ai_coach_chat():
+    """Follow-up Q&A on the AI Performance Coach report — lets the caller push
+    back, add context ("it was low because X"), or ask a specific question,
+    grounded in the exact same stats as the original report."""
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False,
+            "error": "AI is not configured. Add the OPENAI_API_KEY environment variable in Render."}), 400
+    data = request.json or {}
+    callers = [c.strip() for c in (data.get("callers") or []) if c.strip()]
+    date_from = str(data.get("from","")).strip()
+    date_to   = str(data.get("to","")).strip()
+    coaching  = str(data.get("coaching","")).strip()[:3000]
+    history   = data.get("history") or []
+    message   = str(data.get("message","")).strip()[:800]
+    if not date_from or not date_to:
+        return jsonify({"ok": False, "error": "Missing date range"}), 400
+    if not message:
+        return jsonify({"ok": False, "error": "Message is empty"}), 400
+
+    stats_block, who, stats_summary, type_ranked, err = _build_coach_stats(callers, date_from, date_to)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+
+    messages = [
+        {"role": "system", "content": COACH_SYSTEM_PROMPT + " "
+         "You already gave the caller an initial coaching report (shown below) and they may now be "
+         "pushing back, adding context, or asking a follow-up question. Take what they say seriously — "
+         "if they explain a reason behind a number (e.g. \"that week was mostly hard-to-reach trusts\"), "
+         "accept it and tailor your advice accordingly rather than repeating your original point. "
+         "Keep replies SHORT — 2-4 sentences, or a couple of short bullets. This is a conversation, "
+         "not another report."},
+        {"role": "user", "content": f"PERFORMANCE DATA:\n{stats_block}\n\nMY INITIAL COACHING REPORT TO THEM:\n{coaching}"},
+    ]
+    for turn in (history or [])[-10:]:
+        role = turn.get("role")
+        content = str(turn.get("content","")).strip()[:800]
+        if role in ("user","assistant") and content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": message})
+
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={"model": OPENAI_MODEL, "messages": messages, "temperature": 0.6, "max_tokens": 350},
+            timeout=45)
+        if resp.status_code != 200:
+            return jsonify({"ok": False, "error": f"OpenAI error {resp.status_code}: {resp.text[:200]}"}), 502
+        out = resp.json()
+        reply = (out.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        if not reply:
+            return jsonify({"ok": False, "error": "Empty response from OpenAI"}), 502
+        return jsonify({"ok": True, "reply": reply})
     except Exception as e:
         return jsonify({"ok": False, "error": f"AI request failed: {str(e)[:200]}"}), 500
 
