@@ -4,6 +4,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import formataddr
 from datetime import datetime, timedelta
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None  # extremely old Python fallback — display_timezone conversion becomes a no-op
 from flask import Flask, render_template, jsonify, request, Response, stream_with_context
 
 app = Flask(__name__)
@@ -157,6 +161,11 @@ def db_init():
             visibility TEXT DEFAULT 'private',
             allowed_users_json TEXT
         )""")
+        # Simple key-value store for app-wide settings (e.g. display timezone)
+        client.execute("""CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )""")
         # Seed default user if empty
         try:
             rs = client.execute("SELECT COUNT(*) FROM users")
@@ -205,13 +214,20 @@ _newsletter={}          # {reg_number: 1} newsletter opt-in flags
 _calling_excl=set()     # reg_numbers permanently excluded from calling lists
 _bg_status={}; _bg_lock=threading.Lock()
 _users=["Muhanna"]  # admin-managed caller list
+_app_settings={"display_timezone": "Europe/London"}  # admin-managed app-wide settings
 
 def db_load_state():
     """Load all DB state into in-memory dicts. Clears existing state first."""
-    global _users, _called_log, _comments, _statuses, _saved_searches, _contact_overrides, _newsletter, _calling_excl
+    global _users, _called_log, _comments, _statuses, _saved_searches, _contact_overrides, _newsletter, _calling_excl, _app_settings
     if not TURSO_URL or not TURSO_TOKEN: return
 
     try:
+        rows = db_query("SELECT key, value FROM app_settings")
+        if rows:
+            for k, v in rows:
+                if v: _app_settings[k] = v
+        print(f"[Turso] Loaded app settings: {_app_settings}")
+
         users = db_query("SELECT name FROM users ORDER BY added_at")
         if users:
             _users = [r[0] for r in users]
@@ -294,6 +310,64 @@ def db_load_state():
             print(f"[Turso] Loaded {len(_contact_overrides)} contact overrides (legacy schema)")
     except Exception as e:
         print(f"[Turso] db_load_state error: {e}")
+
+# ── Display timezone conversion ──────────────────────────────────────────────
+# Everything is STORED in UTC (datetime.utcnow()) — this only affects how
+# timestamps are DISPLAYED/exported, controlled by the admin-configurable
+# "display_timezone" setting (an IANA zone name, e.g. "Europe/London", which
+# automatically handles BST/GMT and any other DST transitions correctly).
+def get_display_tz_name():
+    return _app_settings.get("display_timezone", "Europe/London") or "Europe/London"
+
+def get_display_tz():
+    name = get_display_tz_name()
+    if ZoneInfo is None:
+        return None
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        return ZoneInfo("UTC")
+
+def utc_to_display_str(utc_str, fmt="%Y-%m-%d %H:%M"):
+    """Convert a stored UTC 'YYYY-MM-DD HH:MM:SS'-ish string to the configured
+    display timezone, formatted per `fmt`. Safe no-op on bad/empty input."""
+    if not utc_str: return ""
+    tz = get_display_tz()
+    if tz is None: return str(utc_str)
+    s = str(utc_str).strip()
+    dt = None
+    for slice_len, parse_fmt in ((19, "%Y-%m-%d %H:%M:%S"), (16, "%Y-%m-%d %H:%M"), (10, "%Y-%m-%d")):
+        try:
+            dt = datetime.strptime(s[:slice_len], parse_fmt)
+            break
+        except Exception:
+            continue
+    if dt is None:
+        return s  # not a recognisable timestamp — return unchanged
+    try:
+        dt = dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz)
+        return dt.strftime(fmt)
+    except Exception:
+        return s
+
+@app.route("/api/settings/timezone", methods=["GET"])
+def get_timezone_setting():
+    return jsonify({"timezone": get_display_tz_name()})
+
+@app.route("/api/settings/timezone", methods=["POST"])
+def set_timezone_setting():
+    data = request.json or {}
+    tz = str(data.get("timezone","")).strip()
+    if not tz:
+        return jsonify({"ok": False, "error": "No timezone provided"}), 400
+    if ZoneInfo is not None:
+        try:
+            ZoneInfo(tz)  # validates it's a real IANA zone name
+        except Exception:
+            return jsonify({"ok": False, "error": f"Unknown timezone: {tz}"}), 400
+    _app_settings["display_timezone"] = tz
+    db_exec("INSERT OR REPLACE INTO app_settings(key,value) VALUES(?,?)", ("display_timezone", tz))
+    return jsonify({"ok": True, "timezone": tz})
 
 # Initialize on import - never let DB issues crash the app
 try:
@@ -1786,7 +1860,7 @@ def report_export():
 
     # ── SHEET 2: Called list ──
     ws2 = wb.create_sheet("Called list")
-    headers = ["Date/Time","Caller","Charity Name","Reg Number","Source List",
+    headers = [f"Date/Time ({get_display_tz_name()})","Caller","Charity Name","Reg Number","Source List",
                "Phone","Outcome","Duration","Stage","Notes"]
     for ci,h in enumerate(headers,1): style_header(ws2.cell(row=1,column=ci,value=h))
     # Pull every call in range, join calling_batch for source + name
@@ -1818,7 +1892,7 @@ def report_export():
         key=f"calling|{reg}"
         stage=_statuses.get(key,"")
         dn=int(dur or 0)
-        ws2.cell(row=r2,column=1,value=(ts or "")[:16])
+        ws2.cell(row=r2,column=1,value=utc_to_display_str(ts))
         ws2.cell(row=r2,column=2,value=caller_n or "")
         ws2.cell(row=r2,column=3,value=name)
         ws2.cell(row=r2,column=4,value=reg)
@@ -1857,7 +1931,7 @@ def calling_export():
     w = csv.writer(buf)
     w.writerow(["Reg Number","Charity Name","Priority Band","Priority Score",
                 "Phone","Email","Website","Contact Person","Job Role","Contact Phone","Contact Email",
-                "Total Income","Statutory Income","Source","Stage","Called","Called By","Called At",
+                "Total Income","Statutory Income","Source","Stage","Called","Called By",f"Called At ({get_display_tz_name()})",
                 "Newsletter","Current Comment","Full History"])
     for reg, d, completed in rows:
         if regs_set is not None and str(reg) not in regs_set:
@@ -1870,18 +1944,18 @@ def calling_export():
         called = _called_log.get(key)
         called_yes = "Yes" if (called or completed) else "No"
         called_by = (called or {}).get("called_by", "")
-        called_at = (called or {}).get("timestamp", "")
+        called_at = utc_to_display_str((called or {}).get("timestamp", ""))
         newsletter = "Yes" if _newsletter.get(reg) else "No"
         cur_comment = _comments.get(key, "")
         hist = []
         try:
             for ts, cname, text in db_query("SELECT timestamp, caller, text FROM comment_history WHERE reg_number=? ORDER BY id ASC", (reg,)):
-                hist.append(f"[{ts}] NOTE by {cname or '?'}: {text or ''}")
+                hist.append(f"[{utc_to_display_str(ts)}] NOTE by {cname or '?'}: {text or ''}")
         except Exception: pass
         try:
             for ts, cname, outcome, dur, notes in db_query("SELECT timestamp, caller, outcome, duration_sec, notes FROM call_log WHERE reg_number=? ORDER BY id ASC", (reg,)):
                 dn = int(dur or 0)
-                line = f"[{ts}] CALL: {outcome or ''} ({dn//60}:{dn%60:02d}) by {cname or '?'}"
+                line = f"[{utc_to_display_str(ts)}] CALL: {outcome or ''} ({dn//60}:{dn%60:02d}) by {cname or '?'}"
                 if notes: line += f" — {notes}"
                 hist.append(line)
         except Exception: pass
@@ -2481,7 +2555,7 @@ def call_history_export():
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow([
-        "Call Date/Time","Caller","Charity Name","Reg Number","Source List","Stage",
+        f"Call Date/Time ({get_display_tz_name()})","Caller","Charity Name","Reg Number","Source List","Stage",
         "Main Phone","Main Email","Website",
         "Contact Person","Job Role","Contact Phone","Contact Email",
         "Total Income (£)","Statutory (£)",
@@ -2524,7 +2598,7 @@ def call_history_export():
         statutory = c.get("statutory","") or (c.get("financials",{}) or {}).get("statutory","")
         dn = int(dur or 0)
         w.writerow([
-            (ts or "")[:16], cllr or "", name, reg, CALLING_CATEGORIES.get(src, src or ""), stage,
+            utc_to_display_str(ts), cllr or "", name, reg, CALLING_CATEGORIES.get(src, src or ""), stage,
             main_phone, main_email, website,
             con_name, con_role, con_phone, con_email,
             income, statutory,
@@ -3386,7 +3460,7 @@ def api_call_history_list_export():
     NAVY="1E3A5F"; thin=Side(style="thin", color="D5DAE0")
     border=Border(left=thin,right=thin,top=thin,bottom=thin)
     wb = Workbook(); ws = wb.active; ws.title = "Call History"
-    headers = ["Charity Name","Reg Number","Source","Source Detail","Last Called","Latest Outcome","Follow-up Due",
+    headers = ["Charity Name","Reg Number","Source","Source Detail",f"Last Called ({get_display_tz_name()})","Latest Outcome","Follow-up Due",
                "Stage","Main Phone","Main Email","Website",
                "Contact Person","Job Role","Contact Phone","Contact Email",
                "Total Income","Statutory"]
@@ -3422,7 +3496,7 @@ def api_call_history_list_export():
         else:
             con_name,con_role,con_phone,con_email=ov.get("name",""),ov.get("role",""),ov.get("cphone",""),ov.get("cemail","")
         stage=_statuses.get(f"calling|{reg}","")
-        vals=[name, reg, base.get("source",""), sd_map.get(reg,""), (last_called.get(reg,"") or "")[:16],
+        vals=[name, reg, base.get("source",""), sd_map.get(reg,""), utc_to_display_str(last_called.get(reg,"")),
               last_outcome.get(reg,""), (followup.get(reg,"") or "")[:16], stage,
               ov.get("phone") or base.get("phone",""), ov.get("email") or base.get("email",""),
               ov.get("website") or base.get("website",""),

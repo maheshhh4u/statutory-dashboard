@@ -1223,6 +1223,27 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-green btn-sm" onclick="addUser()">+ Add</button>
     </div>
 
+    <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Display Timezone</div>
+    <div style="background:var(--s2);border-radius:var(--radius);padding:12px;margin-bottom:16px">
+      <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Everything is stored in UTC in the database — this only controls how times are DISPLAYED and what timezone Excel exports use, everywhere in the dashboard. Applies to everyone, not just this browser.</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="admin-timezone-select" style="flex:1;padding:7px 9px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px">
+          <option value="Europe/London">Europe/London (UK — handles BST/GMT automatically)</option>
+          <option value="UTC">UTC</option>
+          <option value="Europe/Dublin">Europe/Dublin</option>
+          <option value="Europe/Paris">Europe/Paris (Central European)</option>
+          <option value="America/New_York">America/New_York (Eastern)</option>
+          <option value="America/Chicago">America/Chicago (Central)</option>
+          <option value="America/Los_Angeles">America/Los_Angeles (Pacific)</option>
+          <option value="Asia/Kolkata">Asia/Kolkata (India)</option>
+          <option value="Asia/Dubai">Asia/Dubai</option>
+          <option value="Australia/Sydney">Australia/Sydney</option>
+        </select>
+        <button class="btn btn-green btn-sm" onclick="saveTimezoneSetting()">Save</button>
+      </div>
+      <div id="admin-timezone-status" style="font-size:11px;color:var(--t3);margin-top:6px"></div>
+    </div>
+
     <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Browser Session Settings</div>
     <div style="background:var(--s2);border-radius:var(--radius);padding:12px;margin-bottom:14px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -2688,7 +2709,7 @@ function showCommentHistory(reg){
         const dur=c.duration_sec?` · ${Math.floor(c.duration_sec/60)}m ${c.duration_sec%60}s`:'';
         html+=`<div style="border:1px solid var(--bd);border-left:3px solid var(--green);border-radius:6px;padding:10px;margin-bottom:8px;background:#f0fdf4">
           <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--t3);margin-bottom:5px;gap:8px;flex-wrap:wrap">
-            <span><strong>${esc(c.caller||'Unknown')}</strong> · ${esc(c.timestamp||'')}${dur}</span>
+            <span><strong>${esc(c.caller||'Unknown')}</strong> · ${esc(fmtDT(c.timestamp))}${dur}</span>
             <span>${c.synced?'<span style="color:var(--green);font-size:10px">✓ Synced</span>':'<span style="color:var(--t3);font-size:10px">⊘ Not synced</span>'}</span>
           </div>
           <div style="font-size:13px;color:var(--t1);margin-bottom:4px"><strong>${esc(c.outcome||'')}</strong>${c.phone?` · <span style="font-family:monospace;font-size:11px">${esc(c.phone)}</span>`:''}</div>
@@ -2715,7 +2736,7 @@ function showCommentHistory(reg){
           :'';
         html+=`<div style="border:1px solid var(--bd);border-radius:6px;padding:10px;margin-bottom:8px;background:#fafafa" data-note-id="${h.id||''}">
           <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--t3);margin-bottom:5px;gap:8px;flex-wrap:wrap">
-            <span><strong>${esc(h.caller||'Unknown')}</strong> · ${esc(h.timestamp||'')}</span>
+            <span><strong>${esc(h.caller||'Unknown')}</strong> · ${esc(fmtDT(h.timestamp))}</span>
             <span>${badge}${syncStatus}${editBtn}</span>
           </div>
           <div class="note-text" style="font-size:13px;color:var(--t1);white-space:pre-wrap">${esc(h.text||'')}</div>
@@ -2812,10 +2833,17 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.46";
+const APP_VERSION = "1.47";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.47", date:"2026-07", title:"Configurable display timezone (Admin)",
+    changes:[
+      "Everything stays stored in UTC in the database, but Admin now has a Display Timezone setting \u2014 defaults to Europe/London (handles BST/GMT automatically), with other common zones available. Applies to everyone, not just one browser.",
+      "Applied across the dashboard: retry-due times, the \u201Clist generated at\u201D note, Call History timestamps, and call/comment history all now show in the configured timezone instead of raw UTC.",
+      "Applied to Excel/CSV exports too \u2014 Overview report, Daily Calling export, and Call History export all show times in the configured timezone, with the timezone name shown in the column header so it's unambiguous.",
+      "One deliberate exception: follow-up call date/times are typed directly into a date/time picker and were never stored as UTC in the first place, so they're left as entered rather than being converted.",
+    ]},
   { v:"1.46", date:"2026-07", title:"AI Coach is now two-way: ask follow-up questions",
     changes:[
       "Added \u201C\ud83d\udcac Ask the coach\u201D below the AI Performance Coach report \u2014 push back, add context, or ask a question, and get a reply grounded in the same call data, e.g. \u201Cit was low because that week was mostly hard-to-reach trusts.\u201D",
@@ -3672,6 +3700,32 @@ const LS_RINGPHONE = 'sp_ring_phone';
 let currentCaller = '';
 let userList = [];
 
+// ── Display timezone (admin-configurable, applies to everyone) ──────────────
+// Everything from the server is UTC — fmtDT() converts to the configured zone
+// for display, correctly handling BST/GMT and any other DST transition via the
+// browser's built-in IANA timezone database.
+let DISPLAY_TZ = 'Europe/London';
+fetch('/api/settings/timezone').then(r=>r.json()).then(d=>{ if(d && d.timezone) DISPLAY_TZ=d.timezone; }).catch(()=>{});
+function fmtDT(utcStr, opts){
+  if(!utcStr) return '';
+  try{
+    const s=String(utcStr).trim();
+    // Server strings look like "YYYY-MM-DD HH:MM:SS" (no timezone marker) — treat
+    // as UTC explicitly by appending 'Z', otherwise the browser would wrongly
+    // interpret it as already being in the local timezone.
+    const iso=s.replace(' ','T')+(s.length<=10?'T00:00:00':'')+'Z';
+    const d=new Date(iso);
+    if(isNaN(d.getTime())) return s;
+    const fmtOpts=Object.assign({timeZone:DISPLAY_TZ, year:'numeric', month:'short', day:'numeric',
+                                  hour:'2-digit', minute:'2-digit', hour12:false}, opts||{});
+    return new Intl.DateTimeFormat('en-GB', fmtOpts).format(d);
+  }catch(e){ return String(utcStr); }
+}
+// Same as fmtDT but time-only (HH:MM), for compact badges
+function fmtTimeOnly(utcStr){
+  return fmtDT(utcStr, {year:undefined, month:undefined, day:undefined, hour:'2-digit', minute:'2-digit'});
+}
+
 function initCaller(){
   const remember = localStorage.getItem(LS_REMEMBER) === 'true';
   const saved    = remember ? localStorage.getItem(LS_CALLER) : null;
@@ -3777,8 +3831,37 @@ function openAdmin(){
   document.getElementById('admin-modal').classList.add('open');
   renderAdminUserList();
   updateCallerDisplay();
+  loadTimezoneSetting();
 }
 function closeAdmin(){document.getElementById('admin-modal').classList.remove('open');}
+function loadTimezoneSetting(){
+  fetch('/api/settings/timezone').then(r=>r.json()).then(d=>{
+    const sel=document.getElementById('admin-timezone-select');
+    if(sel && d.timezone){
+      // If the saved timezone isn't one of the preset options, add it so it still shows correctly
+      if(![...sel.options].some(o=>o.value===d.timezone)){
+        const opt=document.createElement('option'); opt.value=d.timezone; opt.textContent=d.timezone;
+        sel.appendChild(opt);
+      }
+      sel.value=d.timezone;
+    }
+  }).catch(()=>{});
+}
+function saveTimezoneSetting(){
+  const sel=document.getElementById('admin-timezone-select');
+  const status=document.getElementById('admin-timezone-status');
+  if(!sel) return;
+  const tz=sel.value;
+  if(status){ status.textContent='Saving…'; status.style.color='var(--t3)'; }
+  fetch('/api/settings/timezone',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({timezone:tz})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ if(status){ status.textContent='⚠ '+(d.error||'Could not save'); status.style.color='var(--red)'; } return; }
+      DISPLAY_TZ=tz;
+      if(status){ status.textContent='✓ Saved — applies to everyone. Refreshing the page to update all displayed times…'; status.style.color='var(--green)'; }
+      setTimeout(()=>location.reload(), 1200);
+    }).catch(e=>{ if(status){ status.textContent='⚠ '+e.message; status.style.color='var(--red)'; } });
+}
 
 function renderAdminUserList(){
   const el=document.getElementById('admin-user-list');
@@ -4740,20 +4823,25 @@ function doExportHistory(which){
 }
 
 function fmtRetryTime(s){
-  // "2026-07-14 10:15:00" -> "Today 10:15" / "Tomorrow 10:15" / "14 Jul, 10:15"
+  // "2026-07-14 10:15:00" (stored UTC) -> "today 10:15" / "tomorrow 10:15" / "14 Jul, 10:15"
+  // — computed in the admin-configured display timezone, not necessarily the browser's own.
   if(!s) return '';
   try{
-    const d=new Date(String(s).replace(' ','T'));
+    const iso=String(s).trim().replace(' ','T')+'Z';
+    const d=new Date(iso);
     if(isNaN(d.getTime())) return esc(s);
+    const dateFmt=new Intl.DateTimeFormat('en-CA',{timeZone:DISPLAY_TZ,year:'numeric',month:'2-digit',day:'2-digit'});
+    const timeFmt=new Intl.DateTimeFormat('en-GB',{timeZone:DISPLAY_TZ,hour:'2-digit',minute:'2-digit',hour12:false});
+    const dateKey=dateFmt.format(d);
+    const time=timeFmt.format(d);
     const now=new Date();
-    const startOfDay=x=>new Date(x.getFullYear(),x.getMonth(),x.getDate()).getTime();
-    const dayDiff=Math.round((startOfDay(d)-startOfDay(now))/86400000);
-    const pad=n=>String(n).padStart(2,'0');
-    const time=pad(d.getHours())+':'+pad(d.getMinutes());
-    if(dayDiff===0) return 'today '+time;
-    if(dayDiff===1) return 'tomorrow '+time;
+    const nowKey=dateFmt.format(now);
+    const tomorrowKey=dateFmt.format(new Date(now.getTime()+86400000));
+    if(dateKey===nowKey) return 'today '+time;
+    if(dateKey===tomorrowKey) return 'tomorrow '+time;
     const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return d.getDate()+' '+months[d.getMonth()]+', '+time;
+    const [y,m,day]=dateKey.split('-');
+    return parseInt(day)+' '+months[parseInt(m)-1]+', '+time;
   }catch(e){ return esc(s); }
 }
 function outcomeChip(oc){
@@ -5101,7 +5189,10 @@ function callingRowHtml(c, i, opts){
   // In History, an extra "Last called / follow-up" cell follows the source detail
   let lastCalledCell='';
   if(opts.history){
-    const lc=c.last_called?esc(String(c.last_called).slice(0,16)):'';
+    const lc=c.last_called?esc(fmtDT(c.last_called)):'';
+    // follow_up_at is typed directly by the caller into a date/time picker and
+    // stored exactly as entered (never UTC-converted), so it must NOT be run
+    // through fmtDT — it's already in whatever time she intended.
     const fu=c.follow_up_at?esc(String(c.follow_up_at).slice(0,16)):'';
     lastCalledCell='<td data-col="last_called" style="font-size:11px;color:var(--t2)">'+
       (lc?'<div title="Last called">📞 '+lc+'</div>':'')+
@@ -5157,10 +5248,12 @@ function renderCalling(d){
   const genNote=document.getElementById('callingGeneratedNote');
   if(genNote){
     if(d.created_at){
-      const gd=new Date(String(d.created_at).replace(' ','T')+'Z');
-      const todayStr=new Date().toDateString();
-      const isToday=!isNaN(gd.getTime()) && gd.toDateString()===todayStr;
-      genNote.textContent='This list was generated '+(isToday?'today':'on '+String(d.created_at).slice(0,10))+' at '+String(d.created_at).slice(11,16)+' UTC'+(isToday?'':' — click Generate List for a fresh one if you want the latest');
+      const iso=String(d.created_at).trim().replace(' ','T')+'Z';
+      const gd=new Date(iso);
+      const dateFmt=new Intl.DateTimeFormat('en-CA',{timeZone:DISPLAY_TZ,year:'numeric',month:'2-digit',day:'2-digit'});
+      const isToday=!isNaN(gd.getTime()) && dateFmt.format(gd)===dateFmt.format(new Date());
+      const whenTxt=isToday ? 'today' : 'on '+fmtDT(d.created_at,{hour:undefined,minute:undefined});
+      genNote.textContent='This list was generated '+whenTxt+' at '+fmtTimeOnly(d.created_at)+(isToday?'':' — click Generate List for a fresh one if you want the latest');
       genNote.style.color=isToday?'var(--t3)':'#c47f17';
     } else {
       genNote.textContent='';
