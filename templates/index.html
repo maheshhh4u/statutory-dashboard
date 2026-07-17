@@ -189,6 +189,7 @@ body.wrap-off .ct-cell .ct-val{white-space:nowrap;overflow:hidden;text-overflow:
 tr.called-today-row{background:#f3faf4}
 @keyframes callDockPulse{0%,100%{box-shadow:0 10px 30px rgba(0,0,0,.30)}50%{box-shadow:0 10px 30px rgba(30,58,95,.55),0 0 0 4px rgba(30,58,95,.12)}}
 #callDock{animation:callDockPulse 2.5s ease-in-out infinite}
+@keyframes tipSlideIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 .col-item:hover{border-color:#1e3a5f !important;box-shadow:0 1px 3px rgba(0,0,0,.08)}
 .col-item:active{cursor:grabbing !important}
 tr.called-today-row td{color:var(--t3)}
@@ -2127,6 +2128,7 @@ function saveCall(pg,reg,ccPhone){
       resetCallTimer();
       clearCallDraft(String(reg));
       refreshCalled();
+      checkInBetweenTip();
       // Kick off call transcription (recording → Whisper → comment + Maximizer) for calls
       // where a conversation happened. Runs in the background; transcript appears in History.
       const talked=['Connected','Engaged','Interested','Not Interested'].includes(outcome);
@@ -2920,10 +2922,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.51";
+const APP_VERSION = "1.52";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.52", date:"2026-07", title:"Live tips + Outlook-style follow-up reminders",
+    changes:[
+      "Added live tips \u2014 a short encouraging note once a day (grounded in yesterday's numbers where possible), plus instant, rule-based nudges during calling: streaks of no-answers (worth trying a different time), hot streaks of real conversations, and milestones (10/25/50 calls, etc.). Dismissible, bottom-left, never blocks anything.",
+      "Added Outlook-style follow-up reminders \u2014 a popup appears about 15 minutes before a scheduled follow-up (or shortly after, if overdue), with Snooze (5/10/15 min), Call, and Close. Call scrolls up to the Follow-up list so the details are visible before dialling, rather than jumping straight into a call.",
+    ]},
   { v:"1.51", date:"2026-07", title:"Fixed website still missing for some follow-up calls",
     changes:[
       "The previous fix ensured the website is fetched on the server, but a charity already loaded into the Daily Calling list (e.g. because it's also in today's list, or from an earlier page visit) could still be missing it if that entry never had one attached in the first place \u2014 the follow-up's own copy was being silently skipped rather than used to fill the gap.",
@@ -3869,6 +3876,7 @@ function updateCallerDisplay(){
   if(homeEl) homeEl.textContent = currentCaller || '— not selected —';
   const adminEl=document.getElementById('admin-current-caller');
   if(adminEl) adminEl.textContent = currentCaller || 'Not selected';
+  if(currentCaller) fetchDailyTip();
   const remStatus=document.getElementById('admin-remember-status');
   const isRem=localStorage.getItem(LS_REMEMBER)==='true';
   if(remStatus) remStatus.textContent = isRem
@@ -4193,6 +4201,116 @@ function loadMilestones(){
 let callingData=[];
 let fuData={};  // id -> full followup+charity data, for the expand panels
 let _fuLoadToken=0;  // guards against a stale/late response overwriting a fresher one
+// ── Live tips: daily + in-between, based on real call patterns ──────────────
+function showTipToast(icon, text, autoDismissMs){
+  const wrap=document.getElementById('tipToastWrap');
+  if(!wrap) return;
+  const card=document.createElement('div');
+  card.setAttribute('data-tip','1');
+  card.style.cssText='background:#fff;border:1px solid #d9d0f0;border-left:4px solid #5a4fbf;border-radius:8px;padding:12px 14px;box-shadow:0 6px 20px rgba(0,0,0,.14);font-size:13px;line-height:1.4;display:flex;align-items:flex-start;gap:10px;animation:tipSlideIn .3s ease';
+  card.innerHTML='<span style="font-size:18px;line-height:1">'+icon+'</span>'+
+    '<span style="flex:1;color:var(--t1)">'+esc(text)+'</span>'+
+    '<button onclick="this.parentNode.remove()" style="background:none;border:none;cursor:pointer;color:var(--t3);font-size:14px;padding:0;line-height:1" title="Dismiss">✕</button>';
+  wrap.appendChild(card);
+  if(autoDismissMs) setTimeout(()=>{ if(card.parentNode) card.remove(); }, autoDismissMs);
+}
+function fetchDailyTip(){
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
+  if(!caller) return;
+  const dateKey=new Intl.DateTimeFormat('en-CA',{timeZone:DISPLAY_TZ}).format(new Date());
+  const shownKey='sp_daily_tip_shown_'+caller+'_'+dateKey;
+  if(localStorage.getItem(shownKey)) return;  // already shown today, on this browser
+  fetch('/api/tips/daily?caller='+encodeURIComponent(caller)).then(r=>r.json()).then(d=>{
+    if(d && d.tip){
+      showTipToast(d.tip.icon||'☀️', d.tip.text, null);  // stays until dismissed
+      try{ localStorage.setItem(shownKey, '1'); }catch(e){}
+    }
+  }).catch(()=>{});
+}
+function checkInBetweenTip(){
+  const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
+  if(!caller) return;
+  fetch('/api/tips/check?caller='+encodeURIComponent(caller)).then(r=>r.json()).then(d=>{
+    if(d && d.tip) showTipToast(d.tip.icon||'💡', d.tip.text, 14000);
+  }).catch(()=>{});
+}
+
+// ── Follow-up reminders: Outlook-style, ~15 min before a scheduled call ─────
+let _remindedFollowups=new Set();
+let _snoozedFollowups={};
+function checkFollowupReminders(){
+  if(typeof fuData==='undefined') return;
+  const list=Object.values(fuData);
+  const now=Date.now();
+  list.forEach(f=>{
+    if(!f.follow_up_at || !f.id) return;
+    if(_remindedFollowups.has(f.id)) return;
+    if(_snoozedFollowups[f.id] && _snoozedFollowups[f.id]>now) return;
+    const schedMs=new Date(String(f.follow_up_at).replace(' ','T')+'Z').getTime();
+    if(isNaN(schedMs)) return;
+    const minsUntil=(schedMs-now)/60000;
+    // Due within 15 min, or recently overdue (within the last 2 hours — avoids
+    // surfacing a reminder for something scheduled days ago on first page load)
+    if(minsUntil<=15 && minsUntil>=-120){
+      showFollowupReminder(f);
+      _remindedFollowups.add(f.id);
+    }
+  });
+}
+function showFollowupReminder(f){
+  const wrap=document.getElementById('reminderWrap');
+  if(!wrap || document.getElementById('reminder-'+f.id)) return;
+  const card=document.createElement('div');
+  card.id='reminder-'+f.id;
+  card.style.cssText='background:#fff;border:1px solid #e8b339;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);overflow:hidden;animation:tipSlideIn .3s ease';
+  const timeTxt=fmtTimeOnly(f.follow_up_at);
+  card.innerHTML=`
+    <div style="background:linear-gradient(135deg,#e8b339,#c4952b);color:#1e3a5f;padding:9px 12px;font-weight:700;font-size:13px">🔔 Follow-up reminder</div>
+    <div style="padding:12px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:2px">${esc(f.name||('Reg '+f.reg_number))}</div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:10px">Scheduled for ${esc(timeTxt)} · Reg ${esc(f.reg_number)}</div>
+      <div style="display:flex;gap:6px">
+        <select onchange="snoozeFollowupReminder(${f.id},this.value)" style="flex:1;padding:6px;border:1px solid var(--bd);border-radius:4px;font-size:11px">
+          <option value="">Snooze…</option>
+          <option value="5">5 min</option>
+          <option value="10">10 min</option>
+          <option value="15">15 min</option>
+        </select>
+        <button onclick="callFromReminder(${f.id})" style="background:#1d7a3a;color:#fff;border:none;border-radius:4px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">📞 Call</button>
+        <button onclick="dismissReminder(${f.id})" style="background:none;border:1px solid var(--bd);border-radius:4px;padding:6px 10px;font-size:11px;cursor:pointer">Close</button>
+      </div>
+    </div>`;
+  wrap.appendChild(card);
+}
+function snoozeFollowupReminder(id, mins){
+  if(!mins) return;
+  _snoozedFollowups[id]=Date.now()+parseInt(mins)*60000;
+  _remindedFollowups.delete(id);  // allow re-reminding once the snooze elapses
+  dismissReminder(id);
+}
+function dismissReminder(id){
+  const el=document.getElementById('reminder-'+id);
+  if(el) el.remove();
+}
+function callFromReminder(id){
+  dismissReminder(id);
+  // Scroll her up to the follow-up list so she can review details before
+  // calling, rather than jumping straight into a call blind — per request.
+  const target=document.getElementById('scheduledCalls');
+  if(target){
+    target.scrollIntoView({behavior:'smooth', block:'start'});
+    const row=document.getElementById('fu-toggle-'+id);
+    const container=row?row.closest('div'):null;
+    if(container){
+      const origBg=container.style.background;
+      container.style.transition='background .4s';
+      container.style.background='#fff3cd';
+      setTimeout(()=>{ container.style.background=origBg; }, 1800);
+    }
+  }
+}
+setInterval(checkFollowupReminders, 30000);
+
 function loadScheduledCalls(){
   const wrap=document.getElementById('scheduledCalls');
   const body=document.getElementById('scheduledCallsBody');
@@ -6009,5 +6127,7 @@ fetch('/api/rc/config').then(r=>r.json()).then(d=>{
     <button onclick="restoreCallWindow()" style="width:100%;background:#1e3a5f;color:#fff;border:none;border-radius:6px;padding:8px;cursor:pointer;font-size:12px;font-weight:600">Open full window to save</button>
   </div>
 </div>
+<div id="tipToastWrap" style="position:fixed;bottom:18px;left:18px;z-index:1440;display:flex;flex-direction:column;gap:8px;max-width:340px"></div>
+<div id="reminderWrap" style="position:fixed;top:18px;right:18px;z-index:1460;display:flex;flex-direction:column;gap:10px;max-width:320px"></div>
 </body>
 </html>

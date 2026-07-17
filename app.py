@@ -1270,6 +1270,116 @@ def ai_coach():
     except Exception as e:
         return jsonify({"ok": False, "error": f"AI request failed: {str(e)[:200]}"}), 500
 
+# ── Live tips: rule-based "in-between" nudges + a once-a-day tip ────────────
+TIP_MILESTONES = {10, 25, 50, 75, 100, 150, 200}
+
+@app.route("/api/tips/check", methods=["GET"])
+def tips_check():
+    """Cheap, instant, rule-based tip based on the caller's call pattern TODAY —
+    checked after each call is saved. Returns null if nothing noteworthy right
+    now (most of the time). No AI call — this needs to be fast and free."""
+    caller = str(request.args.get("caller","")).strip()
+    if not caller:
+        return jsonify({"tip": None})
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    rows = db_query(
+        "SELECT timestamp, outcome FROM call_log WHERE caller=? AND timestamp>=? ORDER BY timestamp DESC",
+        (caller, today + " 00:00:00")) or []
+    if not rows:
+        return jsonify({"tip": None})
+
+    total_today = len(rows)
+    outcomes_desc = [r[1] for r in rows]  # most recent first
+
+    # 1) Milestone — exact round numbers only, so it fires once, not every call after
+    if total_today in TIP_MILESTONES:
+        return jsonify({"tip": {"kind": "milestone", "icon": "🎉",
+            "text": f"{total_today} calls today — nice work, keep the momentum going!"}})
+
+    # 2) Streak of consecutive "didn't get through" outcomes — exact streak lengths only
+    streak_soft = 0
+    for oc in outcomes_desc:
+        if oc in RETRY_OUTCOMES: streak_soft += 1
+        else: break
+    if streak_soft in (3, 6, 9):
+        return jsonify({"tip": {"kind": "soft_streak", "icon": "💡",
+            "text": f"{streak_soft} no-answers/voicemails in a row — worth trying a different time of day, or a quick stretch before the next one."}})
+
+    # 3) Hot streak of real conversations — exact streak lengths only
+    streak_hot = 0
+    for oc in outcomes_desc:
+        if oc and oc not in RETRY_OUTCOMES: streak_hot += 1
+        else: break
+    if streak_hot in (2, 4):
+        return jsonify({"tip": {"kind": "hot_streak", "icon": "🔥",
+            "text": f"{streak_hot} real conversations in a row — whatever you're doing right now is working."}})
+
+    # 4) Long gap since the last call (only if she's been active today at all)
+    try:
+        last_ts = datetime.strptime(rows[0][0][:19], "%Y-%m-%d %H:%M:%S")
+        gap_min = (datetime.utcnow() - last_ts).total_seconds() / 60
+        if 44 <= gap_min <= 46:  # narrow window so it fires once, not continuously
+            return jsonify({"tip": {"kind": "gap", "icon": "⏱️",
+                "text": "It's been a while since your last call — whenever you're ready for the next one."}})
+    except Exception:
+        pass
+
+    return jsonify({"tip": None})
+
+_daily_tip_cache = {}  # {date_str: {caller: tip_dict}}
+
+@app.route("/api/tips/daily", methods=["GET"])
+def tips_daily():
+    """One tip per caller per day, cached — a short, encouraging note grounded in
+    yesterday's actual numbers where possible (AI-generated, cheap since it's
+    once a day), falling back to a rotating generic tip if AI isn't configured
+    or there's no data yet."""
+    caller = str(request.args.get("caller","")).strip()
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    if today not in _daily_tip_cache:
+        _daily_tip_cache.clear()  # drop any stale previous-day entries
+        _daily_tip_cache[today] = {}
+    cached = _daily_tip_cache[today].get(caller)
+    if cached:
+        return jsonify({"tip": cached})
+
+    generic_tips = [
+        "Charities that answered before often respond well to a follow-up around the same time of day.",
+        "A quick smile before dialling genuinely comes through in your voice.",
+        "If a call goes to voicemail, a short, warm message can prompt a callback.",
+        "Reviewing yesterday's notes for a few minutes can make today's calls sharper.",
+        "Short breaks between calls tend to help focus more than pushing straight through.",
+    ]
+    tip_text = None
+    if caller and OPENAI_API_KEY:
+        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        stats_block, who, stats_summary, type_ranked, err = _build_coach_stats([caller], yesterday, yesterday)
+        if not err and stats_summary:
+            try:
+                resp = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+                    json={"model": OPENAI_MODEL, "messages": [
+                        {"role": "system", "content": COACH_SYSTEM_PROMPT + " Write exactly ONE short, warm, "
+                         "encouraging sentence (under 25 words) to start the caller's day, grounded in yesterday's "
+                         "numbers if they're notable, otherwise just a general encouraging note. No greeting, "
+                         "no sign-off, just the one sentence."},
+                        {"role": "user", "content": stats_block},
+                    ], "temperature": 0.7, "max_tokens": 80},
+                    timeout=20)
+                if resp.status_code == 200:
+                    out = resp.json()
+                    tip_text = (out.get("choices") or [{}])[0].get("message", {}).get("content", "").strip().strip('"')
+            except Exception as e:
+                print(f"  [daily tip] AI error: {e}")
+    if not tip_text:
+        import random
+        tip_text = random.choice(generic_tips)
+
+    tip = {"icon": "☀️", "text": tip_text}
+    _daily_tip_cache[today][caller] = tip
+    return jsonify({"tip": tip})
+
 @app.route("/api/ai/coach_chat", methods=["POST"])
 def ai_coach_chat():
     """Follow-up Q&A on the AI Performance Coach report — lets the caller push
