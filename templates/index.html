@@ -2589,7 +2589,7 @@ function renderFundraiserView(d){
       '<td style="padding:8px"><span style="background:'+(h.stage==='Meeting secured'?'#e8f5e9':'#fff8e1')+';padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">'+esc(h.stage)+'</span></td>'+
       '<td style="padding:8px;font-family:monospace">'+esc(h.phone||'—')+'</td>'+
       '<td style="padding:8px">'+fmtGBP(h.income)+'</td>'+
-      '<td style="padding:8px;color:var(--t3)">'+esc((h.updated||'').slice(0,16))+'</td></tr>').join('')+
+      '<td style="padding:8px;color:var(--t3)">'+esc(fmtDT(h.updated))+'</td></tr>').join('')+
     '</tbody></table></div>'
     :'<div style="color:var(--t3);font-size:12px">No hot leads in this period. As charities reach Interested/Meeting secured stage, they\'ll appear here.</div>';
 
@@ -2598,7 +2598,7 @@ function renderFundraiserView(d){
     due.map(f=>'<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:'+(f.overdue?'#fdecec':'#fff')+';border:1px solid '+(f.overdue?'#f5b7b1':'var(--bd)')+';border-radius:8px;margin-bottom:6px">'+
       '<div><div style="font-weight:600;font-size:13px">'+esc(f.name||f.reg)+(f.overdue?' <span style="color:#c0392b;font-size:11px">⚠ OVERDUE</span>':'')+'</div>'+
       (f.notes?'<div style="font-size:11px;color:var(--t3);margin-top:2px">'+esc(f.notes.slice(0,80))+'</div>':'')+'</div>'+
-      '<div style="text-align:right;font-size:12px"><div style="font-weight:600">'+esc((f.at||'').slice(0,16))+'</div><div style="font-size:10px;color:var(--t3)">'+esc(f.caller||'')+'</div></div>'+
+      '<div style="text-align:right;font-size:12px"><div style="font-weight:600">'+esc(fmtDT(f.at))+'</div><div style="font-size:10px;color:var(--t3)">'+esc(f.caller||'')+'</div></div>'+
       '</div>').join('')
     :'<div style="color:var(--t3);font-size:12px">No follow-ups scheduled.</div>';
 
@@ -2610,7 +2610,7 @@ function renderFundraiserView(d){
       return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:'+(dl>0?'#fff8f0':'#eef9f1')+';border:1px solid '+(dl>0?'#f0d0a0':'#b8e0c2')+';border-radius:8px;margin-bottom:6px">'+
       '<div><div style="font-weight:600;font-size:13px">✓ '+esc(f.name||f.reg)+lateTag+'</div>'+
       (f.notes?'<div style="font-size:11px;color:var(--t3);margin-top:2px">'+esc(f.notes.slice(0,80))+'</div>':'')+'</div>'+
-      '<div style="text-align:right;font-size:12px"><div style="font-weight:600;color:#1d7a3a">Done '+esc((f.completed_at||'').slice(0,16))+'</div><div style="font-size:10px;color:var(--t3)">due '+esc((f.at||'').slice(0,10))+' · '+esc(f.caller||'')+'</div></div>'+
+      '<div style="text-align:right;font-size:12px"><div style="font-weight:600;color:#1d7a3a">Done '+esc(fmtDT(f.completed_at))+'</div><div style="font-size:10px;color:var(--t3)">due '+esc(fmtDT(f.at,{hour:undefined,minute:undefined}))+' · '+esc(f.caller||'')+'</div></div>'+
       '</div>';
     }).join('')
     :'<div style="color:var(--t3);font-size:12px">No completed follow-ups in this period.</div>';
@@ -2910,10 +2910,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.48";
+const APP_VERSION = "1.49";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.49", date:"2026-07", title:"Fixed follow-up times not respecting the timezone setting",
+    changes:[
+      "Found the real gap: follow-up call-back times were typed directly into a date/time picker and stored exactly as entered, never converted \u2014 unlike everything else, so changing the display timezone had no effect on them. They now convert properly in both directions, including reschedule and the calendar view.",
+      "Existing follow-ups are automatically corrected once (they were effectively entered in London time, since that's been the only timezone ever active, so they're migrated to true UTC and now display correctly under any timezone).",
+      "Did a full sweep of the rest of the app for the same issue and found several more: Hot Leads \u201CLast Updated\u201D, the dashboard's follow-ups due/completed widgets, the Call History viewer, and saved Column Setup timestamps \u2014 all now correctly respect the configured timezone.",
+    ]},
   { v:"1.48", date:"2026-07", title:"Admin split into tabs; comprehensive timezone list",
     changes:[
       "Split Admin into two tabs \u2014 \u201C\ud83d\udc64 Callers\u201D and \u201C\ud83c\udf0d Timezone\u201D \u2014 instead of one long, crowded menu.",
@@ -3808,6 +3814,20 @@ function fmtDT(utcStr, opts){
 function fmtTimeOnly(utcStr){
   return fmtDT(utcStr, {year:undefined, month:undefined, day:undefined, hour:'2-digit', minute:'2-digit'});
 }
+// Split a UTC timestamp into {date:"YYYY-MM-DD", time:"HH:MM"} in the display
+// timezone — for pre-filling <input type="date">/<input type="time"> pickers,
+// which require exactly those formats.
+function utcToDisplayParts(utcStr){
+  if(!utcStr) return {date:'', time:''};
+  try{
+    const iso=String(utcStr).trim().replace(' ','T')+'Z';
+    const d=new Date(iso);
+    if(isNaN(d.getTime())) return {date:'', time:''};
+    const date=new Intl.DateTimeFormat('en-CA',{timeZone:DISPLAY_TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
+    const time=new Intl.DateTimeFormat('en-GB',{timeZone:DISPLAY_TZ,hour:'2-digit',minute:'2-digit',hour12:false}).format(d);
+    return {date, time};
+  }catch(e){ return {date:'', time:''}; }
+}
 
 function initCaller(){
   const remember = localStorage.getItem(LS_REMEMBER) === 'true';
@@ -4182,23 +4202,27 @@ function loadScheduledCalls(){
       : '';
     body.innerHTML=banner+list.map(f=>{
       fuData[f.id]=f;
-      const time=(f.follow_up_at||'').slice(11,16)||'—';
+      const parts=utcToDisplayParts(f.follow_up_at);
+      const time=parts.time||'—';
       const isOd=!!f.overdue;
-      const dateStr=(f.follow_up_at||'').slice(0,10);
-      const timeStr=(f.follow_up_at||'').slice(11,16);
+      const dateStr=parts.date;
+      const timeStr=parts.time;
       let odText='', wasDueText='';
       if(isOd){
         try{
-          const todayMid=new Date(); todayMid.setHours(0,0,0,0);
-          const schedMid=new Date(dateStr+'T00:00:00');
-          const dayDiff=Math.floor((todayMid-schedMid)/86400000);
+          // Compare calendar days in the DISPLAY timezone (not raw UTC date),
+          // so "today"/"overdue by N days" matches what's shown on screen.
+          const dateFmt=new Intl.DateTimeFormat('en-CA',{timeZone:DISPLAY_TZ,year:'numeric',month:'2-digit',day:'2-digit'});
+          const todayKey=dateFmt.format(new Date());
+          const toMs=k=>{ const [y,m,d]=k.split('-').map(Number); return Date.UTC(y,m-1,d); };
+          const dayDiff=Math.floor((toMs(todayKey)-toMs(dateStr))/86400000);
           if(dayDiff>0){
             // Overdue from an earlier calendar day
             odText=dayDiff===1?'1 day overdue':dayDiff+' days overdue';
             wasDueText='was due '+dateStr+(timeStr?' '+timeStr:'');
           } else {
-            // Due today, but the scheduled time has already passed
-            const schedDT=new Date((f.follow_up_at||'').replace(' ','T'));
+            // Due today, but the scheduled time has already passed — compare actual instants
+            const schedDT=new Date(String(f.follow_up_at||'').trim().replace(' ','T')+'Z');
             const minsAgo=Math.max(1,Math.floor((new Date()-schedDT)/60000));
             odText=minsAgo<60?(minsAgo+' min overdue'):(Math.floor(minsAgo/60)+'h overdue');
             wasDueText='was due today at '+(timeStr||'—');
@@ -4275,9 +4299,12 @@ function markFollowupDone(id,btn){
     body:JSON.stringify({id,done:true})}).then(()=>{ loadScheduledCalls(); if(document.getElementById('cal-grid')) renderCalendar(); });
 }
 function rescheduleFollowup(id, currentAt){
-  // currentAt like '2026-06-30 14:30' — split into date + time for the prompt
-  const curDate=(currentAt||'').slice(0,10);
-  const curTime=(currentAt||'').slice(11,16)||'09:00';
+  // currentAt is stored UTC — convert to the configured display timezone before
+  // splitting into date/time for the picker, so the caller sees/edits it in
+  // their own clock time, not raw UTC.
+  const parts=utcToDisplayParts(currentAt);
+  const curDate=parts.date;
+  const curTime=parts.time||'09:00';
   const html=`<div style="padding:4px">
     <p style="font-size:13px;margin:0 0 14px">Pick a new date and time for this follow-up call:</p>
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
@@ -4367,7 +4394,7 @@ function loadCallHistory(initFilters){
     let rows=calls.map(c=>{
       const dur=c.duration_sec?(Math.floor(c.duration_sec/60)+'m '+(c.duration_sec%60)+'s'):'—';
       return `<tr style="border-bottom:1px solid var(--bd)">
-        <td style="padding:5px 8px;white-space:nowrap">${esc((c.timestamp||'').slice(0,16))}</td>
+        <td style="padding:5px 8px;white-space:nowrap">${esc(fmtDT(c.timestamp))}</td>
         <td style="padding:5px 8px">${esc(c.name||('Reg '+c.reg_number))}</td>
         <td style="padding:5px 8px">${esc(c.outcome||'')}</td>
         <td style="padding:5px 8px">${dur}</td>
@@ -4409,9 +4436,9 @@ function renderCalendar(){
   grid.innerHTML='<div style="color:var(--t3);padding:12px">Loading…</div>';
   fetch('/api/followups?from='+from+'&to='+to).then(r=>r.json()).then(d=>{
     const byDay={};
-    (d.followups||[]).forEach(f=>{ const day=(f.follow_up_at||'').slice(8,10); (byDay[day]=byDay[day]||[]).push(f); });
+    (d.followups||[]).forEach(f=>{ const day=utcToDisplayParts(f.follow_up_at).date.slice(8,10); (byDay[day]=byDay[day]||[]).push(f); });
     const firstDow=(new Date(y,m,1).getDay()+6)%7;   // Mon=0
-    const todayStr=new Date().toISOString().slice(0,10);
+    const todayStr=new Intl.DateTimeFormat('en-CA',{timeZone:DISPLAY_TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
     let cells='';
     for(let i=0;i<firstDow;i++) cells+='<div style="min-height:64px;border:1px solid var(--bd);background:#fafafa"></div>';
     for(let day=1;day<=last;day++){
@@ -4419,7 +4446,7 @@ function renderCalendar(){
       const dateStr=`${y}-${String(m+1).padStart(2,'0')}-${ds}`;
       const items=byDay[ds]||[];
       const isToday=dateStr===todayStr;
-      const evs=items.slice(0,3).map(f=>`<div title="${esc((f.name||'')+' '+(f.follow_up_at||''))}" style="font-size:9px;background:#e8b339;color:#1e3a5f;border-radius:3px;padding:1px 3px;margin-top:2px;white-space:nowrap;display:flex;align-items:center;gap:1px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','')">${esc((f.follow_up_at||'').slice(11,16))} ${esc((f.name||'').slice(0,9))}</span><span style="cursor:pointer;color:#1e3a5f;padding:0 1px" title="Reschedule" onclick="event.stopPropagation();rescheduleFollowup(${f.id},'${esc(f.follow_up_at||'')}')">✏</span><span style="cursor:pointer;color:#c0392b;font-weight:700;padding:0 1px" title="Delete" onclick="event.stopPropagation();deleteFollowup(${f.id})">✕</span></div>`).join('');
+      const evs=items.slice(0,3).map(f=>`<div title="${esc((f.name||'')+' '+fmtDT(f.follow_up_at))}" style="font-size:9px;background:#e8b339;color:#1e3a5f;border-radius:3px;padding:1px 3px;margin-top:2px;white-space:nowrap;display:flex;align-items:center;gap:1px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;cursor:pointer" onclick="openCallModal('${esc(f.page||'calling')}','${esc(f.reg_number)}','${esc((f.name||'').replace(/'/g,"\\'"))}','')">${esc(utcToDisplayParts(f.follow_up_at).time)} ${esc((f.name||'').slice(0,9))}</span><span style="cursor:pointer;color:#1e3a5f;padding:0 1px" title="Reschedule" onclick="event.stopPropagation();rescheduleFollowup(${f.id},'${esc(f.follow_up_at||'')}')">✏</span><span style="cursor:pointer;color:#c0392b;font-weight:700;padding:0 1px" title="Delete" onclick="event.stopPropagation();deleteFollowup(${f.id})">✕</span></div>`).join('');
       const more=items.length>3?`<div style="font-size:9px;color:var(--t3)">+${items.length-3} more</div>`:'';
       cells+=`<div style="min-height:64px;border:1px solid var(--bd);padding:2px 3px;${isToday?'background:#fff8e6;border-color:#e8b339':''}">
         <div style="font-size:11px;font-weight:600;color:${isToday?'#b8860b':'var(--t2)'}">${day}</div>${evs}${more}</div>`;
@@ -5218,7 +5245,7 @@ function loadColumnPresetsList(caller){
     if(!list || !list.length){ el.innerHTML='<div>No saved setups yet — save your current layout above to reuse or share it.</div>'; return; }
     el.innerHTML=list.map(p=>{
       const visIcon=p.visibility==='public'?'🌐':(p.visibility==='selected'?'👥':'🔒');
-      const dateTxt=(p.created_at||'').slice(0,16);
+      const dateTxt=fmtDT(p.created_at);
       return `<div style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid #f5f5f5">
         <span style="flex:1;font-size:13px;color:var(--t1)"><b>${esc(p.name)}</b> <span style="color:var(--t3);font-size:11px">${visIcon} by ${esc(p.created_by)} · ${esc(dateTxt)}</span></span>
         <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="useColumnPreset(${p.id})">Use</button>
@@ -5287,10 +5314,7 @@ function callingRowHtml(c, i, opts){
   let lastCalledCell='';
   if(opts.history){
     const lc=c.last_called?esc(fmtDT(c.last_called)):'';
-    // follow_up_at is typed directly by the caller into a date/time picker and
-    // stored exactly as entered (never UTC-converted), so it must NOT be run
-    // through fmtDT — it's already in whatever time she intended.
-    const fu=c.follow_up_at?esc(String(c.follow_up_at).slice(0,16)):'';
+    const fu=c.follow_up_at?esc(fmtDT(c.follow_up_at)):'';
     lastCalledCell='<td data-col="last_called" style="font-size:11px;color:var(--t2)">'+
       (lc?'<div title="Last called">📞 '+lc+'</div>':'')+
       (fu?'<div title="Follow-up due" style="color:#c47f17">📅 '+fu+'</div>':'')+

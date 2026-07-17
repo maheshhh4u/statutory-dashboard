@@ -350,6 +350,30 @@ def utc_to_display_str(utc_str, fmt="%Y-%m-%d %H:%M"):
     except Exception:
         return s
 
+def display_to_utc_str(local_str, fmt="%Y-%m-%d %H:%M:%S"):
+    """Inverse of utc_to_display_str: given a 'YYYY-MM-DD HH:MM'-ish string that
+    the caller typed/picked (meaning it in the currently-configured display
+    timezone, e.g. a follow-up call-back time), convert it to UTC for storage.
+    Safe no-op (returns input unchanged) on bad/empty input."""
+    if not local_str: return ""
+    tz = get_display_tz()
+    if tz is None: return str(local_str)
+    s = str(local_str).strip()
+    dt = None
+    for slice_len, parse_fmt in ((19, "%Y-%m-%d %H:%M:%S"), (16, "%Y-%m-%d %H:%M"), (10, "%Y-%m-%d")):
+        try:
+            dt = datetime.strptime(s[:slice_len], parse_fmt)
+            break
+        except Exception:
+            continue
+    if dt is None:
+        return s
+    try:
+        dt = dt.replace(tzinfo=tz).astimezone(ZoneInfo("UTC"))
+        return dt.strftime(fmt)
+    except Exception:
+        return s
+
 @app.route("/api/settings/timezone", methods=["GET"])
 def get_timezone_setting():
     return jsonify({"timezone": get_display_tz_name()})
@@ -2097,7 +2121,9 @@ def save_call():
     notes   = str(data.get("notes","")).strip()[:800]
     caller  = str(data.get("caller","")).strip() or "Unknown"
     status  = str(data.get("status","")).strip()
-    fu_at   = str(data.get("follow_up_at","")).strip()   # "YYYY-MM-DD HH:MM"
+    fu_at   = str(data.get("follow_up_at","")).strip()   # "YYYY-MM-DD HH:MM", entered in display tz
+    if fu_at:
+        fu_at = display_to_utc_str(fu_at, fmt="%Y-%m-%d %H:%M")  # store as UTC, consistent with everything else
     retry_at_in = str(data.get("retry_at","")).strip()   # optional custom retry time
     name    = str(data.get("name","")).strip()
     try: duration = max(0, int(data.get("duration_sec", 0) or 0))
@@ -2322,10 +2348,49 @@ def _charity_snapshots_for_regs(regs):
         out[reg] = base
     return out
 
+_followup_tz_backfill_done = False
+
+def _backfill_followup_tz_if_needed():
+    """One-time migration: existing follow_ups.follow_up_at values were stored
+    exactly as typed (never UTC-converted) — and since Europe/London has been
+    the only timezone ever in use, they were effectively entered in London
+    time. Convert them to genuine UTC once, so they behave consistently with
+    everything else and correctly respect the configurable display timezone
+    going forward (including if the admin later changes it to something else)."""
+    global _followup_tz_backfill_done
+    if _followup_tz_backfill_done: return
+    _followup_tz_backfill_done = True
+    try:
+        london = ZoneInfo("Europe/London") if ZoneInfo else None
+        if london is None: return
+        rows = db_query("SELECT id, follow_up_at FROM follow_ups WHERE follow_up_at IS NOT NULL AND follow_up_at != ''") or []
+        fixed = 0
+        for fid, fat in rows:
+            s = str(fat or "").strip()
+            dt = None
+            for slice_len, parse_fmt in ((19, "%Y-%m-%d %H:%M:%S"), (16, "%Y-%m-%d %H:%M")):
+                try:
+                    dt = datetime.strptime(s[:slice_len], parse_fmt)
+                    break
+                except Exception:
+                    continue
+            if dt is None: continue
+            try:
+                utc_val = dt.replace(tzinfo=london).astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                continue
+            if utc_val != s[:16]:
+                db_exec("UPDATE follow_ups SET follow_up_at=? WHERE id=?", (utc_val, fid))
+                fixed += 1
+        print(f"  [followup tz backfill] converted {fixed} of {len(rows)} follow_up_at values to UTC")
+    except Exception as e:
+        print(f"  [followup tz backfill] error: {e}")
+
 @app.route("/api/followups")
 def followups_list():
     """Upcoming follow-ups. ?scope=today (default), ?scope=all (today + future),
     or ?from=YYYY-MM-DD&to=YYYY-MM-DD for the calendar (any range, includes past)."""
+    _backfill_followup_tz_if_needed()
     scope = str(request.args.get("scope","today")).strip()
     dfrom = str(request.args.get("from","")).strip()
     dto   = str(request.args.get("to","")).strip()
@@ -2410,11 +2475,12 @@ def followup_reschedule():
     """Change the date/time of an existing follow-up."""
     data = request.json or {}
     fid = data.get("id")
-    new_at = str(data.get("follow_up_at", "")).strip()  # 'YYYY-MM-DD HH:MM'
+    new_at = str(data.get("follow_up_at", "")).strip()  # 'YYYY-MM-DD HH:MM', entered in display tz
     if not fid or not new_at:
         return jsonify({"ok": False, "error": "Missing id or date/time"}), 400
-    db_exec("UPDATE follow_ups SET follow_up_at=? WHERE id=?", (new_at, fid))
-    return jsonify({"ok": True, "follow_up_at": new_at})
+    new_at_utc = display_to_utc_str(new_at, fmt="%Y-%m-%d %H:%M")  # store as UTC
+    db_exec("UPDATE follow_ups SET follow_up_at=? WHERE id=?", (new_at_utc, fid))
+    return jsonify({"ok": True, "follow_up_at": new_at_utc})
 
 @app.route("/api/followup/delete", methods=["POST"])
 def followup_delete():
@@ -3460,7 +3526,7 @@ def api_call_history_list_export():
     NAVY="1E3A5F"; thin=Side(style="thin", color="D5DAE0")
     border=Border(left=thin,right=thin,top=thin,bottom=thin)
     wb = Workbook(); ws = wb.active; ws.title = "Call History"
-    headers = ["Charity Name","Reg Number","Source","Source Detail",f"Last Called ({get_display_tz_name()})","Latest Outcome","Follow-up Due",
+    headers = ["Charity Name","Reg Number","Source","Source Detail",f"Last Called ({get_display_tz_name()})","Latest Outcome",f"Follow-up Due ({get_display_tz_name()})",
                "Stage","Main Phone","Main Email","Website",
                "Contact Person","Job Role","Contact Phone","Contact Email",
                "Total Income","Statutory"]
@@ -3497,7 +3563,7 @@ def api_call_history_list_export():
             con_name,con_role,con_phone,con_email=ov.get("name",""),ov.get("role",""),ov.get("cphone",""),ov.get("cemail","")
         stage=_statuses.get(f"calling|{reg}","")
         vals=[name, reg, base.get("source",""), sd_map.get(reg,""), utc_to_display_str(last_called.get(reg,"")),
-              last_outcome.get(reg,""), (followup.get(reg,"") or "")[:16], stage,
+              last_outcome.get(reg,""), utc_to_display_str(followup.get(reg,"")), stage,
               ov.get("phone") or base.get("phone",""), ov.get("email") or base.get("email",""),
               ov.get("website") or base.get("website",""),
               con_name, con_role, con_phone, con_email,
