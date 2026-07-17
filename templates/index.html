@@ -1822,6 +1822,16 @@ function openCallModal(pg,reg,name,ccPhone){
   let cd=null;
   try{
     cd=(typeof callingData!=='undefined')?callingData.find(x=>String(x.reg_number)===String(reg)):null;
+    // Extra safety net: if the calling-list lookup is missing or incomplete
+    // (e.g. website), also check the follow-up data store directly — covers
+    // any timing edge case where the merge into callingData hasn't happened.
+    if(typeof fuData!=='undefined' && (!cd || !cd.website)){
+      const fuMatch=Object.values(fuData).find(f=>String(f.reg_number)===String(reg));
+      if(fuMatch){
+        if(!cd) cd=fuMatch;
+        else { ['website','phone','email','last_dialled','last_contact_name','last_contact_role'].forEach(k=>{ if(!cd[k] && fuMatch[k]) cd[k]=fuMatch[k]; }); }
+      }
+    }
     if(cd){
       const bits=[];
       if(cd.source) bits.push(esc(cd.source));
@@ -2910,10 +2920,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.50";
+const APP_VERSION = "1.51";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.51", date:"2026-07", title:"Fixed website still missing for some follow-up calls",
+    changes:[
+      "The previous fix ensured the website is fetched on the server, but a charity already loaded into the Daily Calling list (e.g. because it's also in today's list, or from an earlier page visit) could still be missing it if that entry never had one attached in the first place \u2014 the follow-up's own copy was being silently skipped rather than used to fill the gap.",
+      "The call popup now fills in website (and phone/email/last-contact info) from the follow-up data whenever the existing entry is missing it, with an additional direct safety-net check, so it's no longer dependent on which part of the page happened to load first.",
+    ]},
   { v:"1.50", date:"2026-07", title:"Timezone shown on scheduling; website fixed for follow-up calls",
     changes:[
       "Both the \u201CFollow-up call\u201D section in the call popup and the Reschedule popup now clearly show which timezone the time you pick is in (e.g. \u201CEurope/London\u201D), so there's no ambiguity.",
@@ -4196,8 +4211,22 @@ function loadScheduledCalls(){
     // Merge each follow-up's charity data into callingData so the expand panel's
     // Call / AI / Contacts controls (which look charities up there) work correctly.
     if(typeof callingData!=='undefined'){
-      const have=new Set(callingData.map(c=>String(c.reg_number)));
-      list.forEach(f=>{ if(!have.has(String(f.reg_number))){ callingData.push(f); have.add(String(f.reg_number)); } });
+      const byReg={}; callingData.forEach((c,i)=>{ byReg[String(c.reg_number)]=i; });
+      list.forEach(f=>{
+        const regKey=String(f.reg_number);
+        if(!(regKey in byReg)){
+          callingData.push(f); byReg[regKey]=callingData.length-1;
+        } else {
+          // Already present (e.g. also in today's active list) — but that entry
+          // may be missing fields like website/phone if it came from a source
+          // that never fetched them. Fill in anything the follow-up data has
+          // that the existing entry doesn't, without overwriting what's there.
+          const existing=callingData[byReg[regKey]];
+          ['website','phone','email','last_dialled','last_contact_name','last_contact_role'].forEach(k=>{
+            if(!existing[k] && f[k]) existing[k]=f[k];
+          });
+        }
+      });
     }
     const banner=overdue.length
       ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
