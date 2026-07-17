@@ -1905,7 +1905,7 @@ function openCallModal(pg,reg,name,ccPhone){
     <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Notes</label>
     <textarea id="call-notes" oninput="saveCallDraft('${esc(reg)}')" placeholder="Call summary, key points, follow-up actions..." maxlength="800" style="width:100%;min-height:80px;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;resize:vertical"></textarea>
 
-    <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase;margin-top:10px;display:block">📅 Follow-up call (if they asked to be called back)</label>
+    <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase;margin-top:10px;display:block">📅 Follow-up call (if they asked to be called back) — <span style="text-transform:none;font-weight:400;color:#8a6d1a">time is in ${DISPLAY_TZ}</span></label>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
       <input type="date" id="call-fu-date" style="padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px">
       <input type="time" id="call-fu-time" style="padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px">
@@ -2910,10 +2910,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.49";
+const APP_VERSION = "1.50";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.50", date:"2026-07", title:"Timezone shown on scheduling; website fixed for follow-up calls",
+    changes:[
+      "Both the \u201CFollow-up call\u201D section in the call popup and the Reschedule popup now clearly show which timezone the time you pick is in (e.g. \u201CEurope/London\u201D), so there's no ambiguity.",
+      "Fixed website missing from the call popup for follow-up calls \u2014 charities that were never part of a generated Daily Calling list (e.g. a follow-up scheduled from a Search result) had no website on file at all. Added a fallback that looks it up from the Charity Commission data, so it now shows consistently everywhere, same as normal calling-list items.",
+    ]},
   { v:"1.49", date:"2026-07", title:"Fixed follow-up times not respecting the timezone setting",
     changes:[
       "Found the real gap: follow-up call-back times were typed directly into a date/time picker and stored exactly as entered, never converted \u2014 unlike everything else, so changing the display timezone had no effect on them. They now convert properly in both directions, including reschedule and the calendar view.",
@@ -4306,7 +4311,8 @@ function rescheduleFollowup(id, currentAt){
   const curDate=parts.date;
   const curTime=parts.time||'09:00';
   const html=`<div style="padding:4px">
-    <p style="font-size:13px;margin:0 0 14px">Pick a new date and time for this follow-up call:</p>
+    <p style="font-size:13px;margin:0 0 6px">Pick a new date and time for this follow-up call:</p>
+    <p style="font-size:11px;color:#8a6d1a;margin:0 0 14px">Time is in ${DISPLAY_TZ}</p>
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
       <input type="date" id="resch-date" value="${esc(curDate)}" style="padding:7px;border:1px solid var(--bd);border-radius:4px;font-family:inherit">
       <input type="time" id="resch-time" value="${esc(curTime)}" style="padding:7px;border:1px solid var(--bd);border-radius:4px;font-family:inherit">

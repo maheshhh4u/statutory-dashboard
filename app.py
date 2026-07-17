@@ -2317,10 +2317,36 @@ def _charity_snapshots_for_regs(regs):
     outcomes = _latest_outcomes_map()
     retry_states = _retry_states_map()
     out = {}
+    # Fallback for charities that were never part of any generated Daily Calling
+    # list (e.g. a follow-up scheduled from a Search result) — their calling_batch
+    # snapshot doesn't exist at all, so basic fields like website/phone/email would
+    # otherwise be silently missing. Bounded scan of the CC bulk file, only for the
+    # (typically small) set of regs actually missing this data.
+    missing_basic = {reg for reg in regset
+                     if not (batch_data.get(reg) or {}).get("website")
+                     or not (batch_data.get(reg) or {}).get("phone")}
+    cc_fallback = {}
+    if missing_basic:
+        try:
+            cols = {"registered_charity_number","charity_contact_web","charity_contact_phone","charity_contact_email"}
+            for row in stream_zip_csv(CHARITY_URL, cols):
+                reg = row.get("registered_charity_number","").strip()
+                if reg in missing_basic:
+                    cc_fallback[reg] = {"website": row.get("charity_contact_web",""),
+                                        "phone": row.get("charity_contact_phone",""),
+                                        "email": row.get("charity_contact_email","")}
+                    if len(cc_fallback) >= len(missing_basic): break
+        except Exception as e:
+            print(f"  _charity_snapshots_for_regs CC fallback error: {e}")
+
     for reg in regset:
         base = dict(batch_data.get(reg, {}))
         base["reg_number"] = reg
         if not base.get("name"): base["name"] = names.get(reg, reg)
+        fb = cc_fallback.get(reg) or {}
+        if not base.get("website"): base["website"] = fb.get("website","")
+        if not base.get("phone"):   base["phone"]   = fb.get("phone","")
+        if not base.get("email"):   base["email"]   = fb.get("email","")
         ov = _contact_overrides.get(reg) or {}
         if ov.get("phone"):   base["phone"]   = ov["phone"]
         if ov.get("email"):   base["email"]   = ov["email"]
