@@ -478,7 +478,8 @@ def compute_prospects():
         "total_gross_expenditure","fin_period_end_date"}
     CC={"registered_charity_number","charity_name","charity_contact_web",
         "charity_registration_status","charity_contact_phone","charity_contact_email",
-        "charity_contact_address3","charity_contact_address4"}
+        "charity_contact_address3","charity_contact_address4",
+        "charity_activities","charity_type"}
     latest={}; prev={}
     for row in stream_zip_csv(PARTA_URL,PC):
         reg=row.get("registered_charity_number","").strip()
@@ -514,7 +515,9 @@ def compute_prospects():
                            "email":row.get("charity_contact_email",""),
                            "town":row.get("charity_contact_address3",""),
                            "county":row.get("charity_contact_address4",""),
-                           "status":row.get("charity_registration_status","")}
+                           "status":row.get("charity_registration_status",""),
+                           "activities":row.get("charity_activities",""),
+                           "charity_type":row.get("charity_type","")}
 
     results={"best":[],"readiness":[],"contract":[],"retention":[]}
     for reg,row in latest.items():
@@ -550,7 +553,8 @@ def compute_new(days):
     COLS={"registered_charity_number","charity_name","date_of_registration",
           "charity_registration_status","charity_contact_web",
           "charity_contact_phone","charity_contact_email",
-          "charity_contact_address3","charity_contact_address4"}
+          "charity_contact_address3","charity_contact_address4",
+          "charity_activities","charity_type"}
     results=[]
     for row in stream_zip_csv(CHARITY_URL,COLS):
         if row.get("charity_registration_status","").upper().strip() not in ("REGISTERED","R"): continue
@@ -563,6 +567,8 @@ def compute_new(days):
                             "email":row.get("charity_contact_email",""),
                             "town":row.get("charity_contact_address3",""),
                             "county":row.get("charity_contact_address4",""),
+                            "activities":row.get("charity_activities",""),
+                            "charity_type":row.get("charity_type",""),
                             "status":"Active"})
     results.sort(key=lambda x:x.get("date_registered",""),reverse=True)
     return {"charities":results,"count":len(results),"days":days,"cutoff":cutoff}
@@ -573,7 +579,8 @@ def compute_late():
         "total_gross_income","fin_period_end_date"}
     NC={"registered_charity_number","charity_name","charity_contact_phone",
         "charity_contact_email","charity_contact_address3","charity_contact_address4",
-        "charity_contact_web","charity_registration_status"}
+        "charity_contact_web","charity_registration_status",
+        "charity_activities","charity_type"}
     latest={}
     for row in stream_zip_csv(PARTA_URL,PC):
         reg=row.get("registered_charity_number","").strip()
@@ -607,7 +614,9 @@ def compute_late():
                            "town":row.get("charity_contact_address3",""),
                            "county":row.get("charity_contact_address4",""),
                            "website":row.get("charity_contact_web",""),
-                           "status":row.get("charity_registration_status","")}
+                           "status":row.get("charity_registration_status",""),
+                           "activities":row.get("charity_activities",""),
+                           "charity_type":row.get("charity_type","")}
 
     results=[]
     for reg, d in late_data.items():
@@ -618,6 +627,8 @@ def compute_late():
                         "phone":ct.get("phone",""),"email":ct.get("email",""),
                         "town":ct.get("town",""),"county":ct.get("county",""),
                         "website":ct.get("website",""),
+                        "activities":ct.get("activities",""),
+                        "charity_type":ct.get("charity_type",""),
                         "removed":str(ct.get("status","")).upper().strip() in ("REMOVED","D")})
     results.sort(key=lambda x:x.get("months_late",0),reverse=True)
     o12=len([r for r in results if r["months_late"]>12])
@@ -632,7 +643,8 @@ def compute_old():
     CC={"registered_charity_number","charity_name","date_of_registration",
         "charity_registration_status","charity_contact_web",
         "charity_contact_phone","charity_contact_email",
-        "charity_contact_address3","charity_contact_address4"}
+        "charity_contact_address3","charity_contact_address4",
+        "charity_activities","charity_type"}
     pl={}
     for row in stream_zip_csv(PARTA_URL,PC):
         reg=row.get("registered_charity_number","").strip()
@@ -660,6 +672,8 @@ def compute_old():
                         "county":row.get("charity_contact_address4",""),
                         "date_registered":dt,"age_years":today.year-ry,
                         "total_income":flt(fin.get("total_gross_income","")),
+                        "activities":row.get("charity_activities",""),
+                        "charity_type":row.get("charity_type",""),
                         "fin_year":fin.get("fin_period_end_date","")[:4]})
     results.sort(key=lambda x:x.get("date_registered",""))
     return {"charities":results,"count":len(results)}
@@ -3245,7 +3259,8 @@ def compute_milestones(milestone_years):
     CC={"registered_charity_number","charity_name","date_of_registration",
         "charity_registration_status","charity_contact_web",
         "charity_contact_phone","charity_contact_email",
-        "charity_contact_address3","charity_contact_address4"}
+        "charity_contact_address3","charity_contact_address4",
+        "charity_activities","charity_type"}
 
     # Get parta latest per charity
     pl = {}
@@ -3298,6 +3313,8 @@ def compute_milestones(milestone_years):
             "within_week":    (0 <= days_to_go <= 7),    # anniversary within next 7 days
             "total_income": ti,
             "fin_year":     fin.get("fin_period_end_date","")[:4],
+            "activities":   row.get("charity_activities",""),
+            "charity_type": row.get("charity_type",""),
         })
     results.sort(key=lambda x: x.get("anniversary_date",""))
     return {"charities": results, "count": len(results),
@@ -3444,6 +3461,8 @@ def _normalize_for_calling(c, source):
         "removed": bool(c.get("removed", False)),
         "source": source,
         "source_detail": detail,
+        "activities": c.get("activities",""),
+        "charity_type": c.get("charity_type",""),
     }
 
 def _collect_from_cache():
@@ -4012,6 +4031,33 @@ def api_calling_batch_generate():
                 days = (_dt.utcnow().date() - _dt.strptime(dr, "%Y-%m-%d").date()).days
                 if days > int(newdays): return False
             except: return False
+        # ── Advanced-Search-style criteria (same fields/matching as Charity Search),
+        # available as extra narrowing filters on top of ANY source category ──
+        nq = str(filters.get("name","")).upper().strip()
+        if nq and nq not in str(c.get("name","")).upper(): return False
+        pq = str(filters.get("postcode","")).upper().strip()
+        if pq and not str(c.get("postcode","")).upper().startswith(pq): return False
+        cq = str(filters.get("county","")).upper().strip()
+        if cq and cq not in str(c.get("county","")).upper(): return False
+        wq = str(filters.get("what","")).upper().strip()
+        if wq and wq not in str(c.get("activities","")).upper(): return False
+        tq = str(filters.get("charity_type","")).upper().strip()
+        if tq and tq not in str(c.get("charity_type","")).upper(): return False
+        imin = _num(filters.get("inc_min"), None)
+        imax = _num(filters.get("inc_max"), None)
+        if imin is not None or imax is not None:
+            inc = _num(c.get("total_income"), None)
+            if inc is None: inc = _num(c.get("latest_income"), None)
+            if inc is None: return False
+            if imin is not None and inc < imin: return False
+            if imax is not None and inc > imax: return False
+        adv_df = str(filters.get("reg_date_from","")).strip()
+        adv_dt = str(filters.get("reg_date_to","")).strip()
+        if adv_df or adv_dt:
+            dr2 = str(c.get("date_registered","") or "")[:10]
+            if not dr2: return False
+            if adv_df and dr2 < adv_df: return False
+            if adv_dt and dr2 > adv_dt: return False
         return True
     if filters:
         pool = [c for c in pool if _passes_filters(c)]
