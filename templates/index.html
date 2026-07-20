@@ -2926,10 +2926,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.54";
+const APP_VERSION = "1.55";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.55", date:"2026-07", title:"Fixed report date ranges silently missing calls near midnight",
+    changes:[
+      "Found and fixed the cause of Meaningful Interactions (and other report figures) sometimes showing lower than reality: date range filters were comparing your selected dates directly against raw UTC timestamps, so a call made shortly after midnight UK time \u2014 which is still the previous day in UTC \u2014 could fall outside the range you'd actually selected.",
+      "Fixed consistently everywhere a date range is used: the Overview report and its Excel export, the AI Performance Coach (and its follow-up chat), the Call History search/filter and its export, the follow-up calendar view, and the daily/in-between tips.",
+      "Reproduced the exact scenario in testing (a call at 00:20 BST, stored as 23:20 UTC the day before) and confirmed it's now correctly included when filtering for the day you'd actually call it.",
+    ]},
   { v:"1.54", date:"2026-07", title:"Reminders rebuilt as one Outlook-style window; tips no longer hidden",
     changes:[
       "Fixed tips being hidden behind the \u2018Wrap: On\u2019 button \u2014 moved them clear of it so they're always fully readable.",

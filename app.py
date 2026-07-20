@@ -374,6 +374,20 @@ def display_to_utc_str(local_str, fmt="%Y-%m-%d %H:%M:%S"):
     except Exception:
         return s
 
+def display_date_range_to_utc(date_from, date_to):
+    """Given a 'YYYY-MM-DD' to 'YYYY-MM-DD' range as the caller sees it on
+    screen (i.e. calendar days in the configured display timezone — the same
+    days shown in every date picker in the app), return the UTC timestamp
+    range that actually covers those days. This matters because a plain UTC
+    00:00:00-23:59:59 range for the same calendar date would silently miss
+    (or wrongly include) calls made near midnight in the display timezone —
+    e.g. a call at 00:15 BST is 23:15 UTC the PREVIOUS day, so a naive UTC-day
+    filter for "today" would drop it even though it's clearly "today" on the
+    caller's own clock. Returns ('YYYY-MM-DD HH:MM:SS', 'YYYY-MM-DD HH:MM:SS')."""
+    ts_from = display_to_utc_str(f"{date_from} 00:00:00")
+    ts_to   = display_to_utc_str(f"{date_to} 23:59:59")
+    return ts_from, ts_to
+
 @app.route("/api/settings/timezone", methods=["GET"])
 def get_timezone_setting():
     return jsonify({"timezone": get_display_tz_name()})
@@ -1117,7 +1131,7 @@ def _build_coach_stats(callers, date_from, date_to):
     range, returning (stats_block_text, who, stats_summary_dict, type_ranked, error).
     Shared by the coaching report AND the follow-up chat, so both are always
     grounded in the exact same numbers."""
-    ts_from = date_from + " 00:00:00"; ts_to = date_to + " 23:59:59"
+    ts_from, ts_to = display_date_range_to_utc(date_from, date_to)
     if len(callers)==1:
         cf = "AND caller=?"; cp = (callers[0],)
     elif len(callers)>1:
@@ -1295,10 +1309,13 @@ def tips_check():
     caller = str(request.args.get("caller","")).strip()
     if not caller:
         return jsonify({"tip": None})
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    tz = get_display_tz()
+    now_utc = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")) if tz else datetime.utcnow()
+    today = (now_utc.astimezone(tz) if tz else now_utc).strftime("%Y-%m-%d")
+    today_start_utc, _ = display_date_range_to_utc(today, today)
     rows = db_query(
         "SELECT timestamp, outcome FROM call_log WHERE caller=? AND timestamp>=? ORDER BY timestamp DESC",
-        (caller, today + " 00:00:00")) or []
+        (caller, today_start_utc)) or []
     if not rows:
         return jsonify({"tip": None})
 
@@ -1349,7 +1366,9 @@ def tips_daily():
     once a day), falling back to a rotating generic tip if AI isn't configured
     or there's no data yet."""
     caller = str(request.args.get("caller","")).strip()
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    _tz = get_display_tz()
+    _now_utc = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")) if _tz else datetime.utcnow()
+    today = (_now_utc.astimezone(_tz) if _tz else _now_utc).strftime("%Y-%m-%d")
     if today not in _daily_tip_cache:
         _daily_tip_cache.clear()  # drop any stale previous-day entries
         _daily_tip_cache[today] = {}
@@ -1366,7 +1385,7 @@ def tips_daily():
     ]
     tip_text = None
     if caller and OPENAI_API_KEY:
-        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
         stats_block, who, stats_summary, type_ranked, err = _build_coach_stats([caller], yesterday, yesterday)
         if not err and stats_summary:
             try:
@@ -1607,9 +1626,11 @@ def api_report():
     date_to   = request.args.get("to","").strip()     # YYYY-MM-DD
     if not date_from or not date_to:
         return jsonify({"ok":False,"error":"Missing from/to dates"}),400
-    # Expand to full day range
-    ts_from = date_from + " 00:00:00"
-    ts_to   = date_to   + " 23:59:59"
+    # Expand to full day range — using the DISPLAY timezone's calendar days
+    # (what the caller actually sees/picks), not raw UTC days. Otherwise a
+    # call made near midnight in the display timezone could be silently
+    # excluded because its UTC timestamp falls on the adjacent UTC date.
+    ts_from, ts_to = display_date_range_to_utc(date_from, date_to)
     def q(sql, params=()):
         return db_query(sql, params)
     # Caller filter (empty = all callers)
@@ -1884,8 +1905,7 @@ def report_export():
     promo     = int(data.get("promo", 0) or 0)
     if not date_from or not date_to:
         return jsonify({"ok": False, "error": "Missing date range"}), 400
-    ts_from = date_from + " 00:00:00"; ts_to = date_to + " 23:59:59"
-
+    ts_from, ts_to = display_date_range_to_utc(date_from, date_to)
     # Reuse the report logic by calling the same internal data via a fresh request context
     # Simpler: re-query what each sheet needs directly.
     if len(callers)==1:
@@ -2544,25 +2564,37 @@ def followups_list():
     scope = str(request.args.get("scope","today")).strip()
     dfrom = str(request.args.get("from","")).strip()
     dto   = str(request.args.get("to","")).strip()
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    _tz = get_display_tz()
+    _now_utc = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")) if _tz else datetime.utcnow()
+    today = (_now_utc.astimezone(_tz) if _tz else _now_utc).strftime("%Y-%m-%d")
     now_full = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     try:
         if dfrom or dto:
+            # Calendar range — compare full UTC timestamps against the display-
+            # timezone day boundaries (not a raw date-string prefix match),
+            # so a follow-up near midnight in the display timezone lands on
+            # the calendar day the caller actually sees it on.
             where=["done=0"]; params=[]
-            if dfrom: where.append("substr(follow_up_at,1,10)>=?"); params.append(dfrom)
-            if dto:   where.append("substr(follow_up_at,1,10)<=?"); params.append(dto)
+            if dfrom:
+                ts_f, _ = display_date_range_to_utc(dfrom, dfrom)
+                where.append("follow_up_at>=?"); params.append(ts_f)
+            if dto:
+                _, ts_t = display_date_range_to_utc(dto, dto)
+                where.append("follow_up_at<=?"); params.append(ts_t)
             rows = db_query("SELECT id,reg_number,name,page,follow_up_at,caller,notes FROM follow_ups WHERE "
                             + " AND ".join(where) + " ORDER BY follow_up_at ASC", tuple(params))
         elif scope == "all":
+            ts_f, _ = display_date_range_to_utc(today, today)
             rows = db_query("""SELECT id,reg_number,name,page,follow_up_at,caller,notes
-                               FROM follow_ups WHERE done=0 AND substr(follow_up_at,1,10)>=?
-                               ORDER BY follow_up_at ASC""", (today,))
+                               FROM follow_ups WHERE done=0 AND follow_up_at>=?
+                               ORDER BY follow_up_at ASC""", (ts_f,))
         else:
             # "today" now also includes OVERDUE follow-ups (dates before today that
             # are still not done), so the caller is nudged to clear them.
+            _, ts_t = display_date_range_to_utc(today, today)
             rows = db_query("""SELECT id,reg_number,name,page,follow_up_at,caller,notes
-                               FROM follow_ups WHERE done=0 AND substr(follow_up_at,1,10)<=?
-                               ORDER BY follow_up_at ASC""", (today,))
+                               FROM follow_ups WHERE done=0 AND follow_up_at<=?
+                               ORDER BY follow_up_at ASC""", (ts_t,))
         followup_rows = rows or []
         snapshots = _charity_snapshots_for_regs([r[1] for r in followup_rows])
         out = []
@@ -2747,8 +2779,8 @@ def call_history_export():
     caller = str(request.args.get("caller","")).strip()
     outcome= str(request.args.get("outcome","")).strip()
     where=[]; params=[]
-    if dfrom:  where.append("cl.timestamp>=?"); params.append(dfrom+" 00:00:00")
-    if dto:    where.append("cl.timestamp<=?"); params.append(dto+" 23:59:59")
+    if dfrom:  ts_f,_ = display_date_range_to_utc(dfrom, dfrom); where.append("cl.timestamp>=?"); params.append(ts_f)
+    if dto:    _,ts_t = display_date_range_to_utc(dto, dto); where.append("cl.timestamp<=?"); params.append(ts_t)
     if caller: where.append("cl.caller=?"); params.append(caller)
     if outcome:where.append("cl.outcome=?"); params.append(outcome)
     sql = """SELECT cl.timestamp, cl.caller, cl.reg_number, cl.phone_used, cl.outcome,
@@ -3772,18 +3804,25 @@ def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="",
         if nm: names[reg] = nm
     outcomes = _latest_outcomes_map()
     retry_states = _retry_states_map()
+    # Convert display-timezone calendar-day filters to proper UTC timestamp
+    # boundaries once, up front — comparing a raw UTC date-prefix against a
+    # display-timezone date string would misplace anything near midnight.
+    called_from_ts = display_date_range_to_utc(called_from, called_from)[0] if called_from else ""
+    called_to_ts   = display_date_range_to_utc(called_to, called_to)[1]     if called_to   else ""
+    fu_from_ts     = display_date_range_to_utc(fu_from, fu_from)[0]        if fu_from     else ""
+    fu_to_ts       = display_date_range_to_utc(fu_to, fu_to)[1]            if fu_to       else ""
     rows = []
     for reg in regs:
         lc = last_called.get(reg, "")
         fu = followups.get(reg, {})
         fu_next = fu.get("next")
-        if called_from and (not lc or lc[:10] < called_from): continue
-        if called_to   and (not lc or lc[:10] > called_to):   continue
-        if fu_from or fu_to:
-            fdate = (fu_next or fu.get("any") or "")[:10]
+        if called_from_ts and (not lc or lc < called_from_ts): continue
+        if called_to_ts   and (not lc or lc > called_to_ts):   continue
+        if fu_from_ts or fu_to_ts:
+            fdate = (fu_next or fu.get("any") or "")
             if not fdate: continue
-            if fu_from and fdate < fu_from: continue
-            if fu_to   and fdate > fu_to:   continue
+            if fu_from_ts and fdate < fu_from_ts: continue
+            if fu_to_ts   and fdate > fu_to_ts:   continue
         base = dict(batch_data.get(reg, {}))
         base["reg_number"] = reg
         if not base.get("name"): base["name"] = names.get(reg, reg)
