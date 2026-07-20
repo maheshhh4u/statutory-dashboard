@@ -2269,7 +2269,7 @@ function renderReport(d, promoEmails){
     rptKpiCard('Calls Made',              d.calls_made,              'Avg '+fmtDur(avgDur)+' per call',navy),
     rptKpiCard('Hours on RC',             d.hours_on_rc+'h',         'Total '+fmtDur(d.total_duration_sec),navy),
     rptKpiCard('Conversations >2min',     d.conversations_2min,      (d.calls_made?Math.round(d.conversations_2min/d.calls_made*100):0)+'% of calls',green),
-    rptKpiCard('Meaningful Interactions', d.meaningful_interactions,  '>2min call, or Stage: Contacted/Call back/Interested/Meeting secured/Client',green),
+    rptKpiCard('Meaningful Interactions', d.meaningful_interactions,  '2+ min call, with a positive outcome or Stage: Contacted/Call back/Interested/Meeting secured/Client',green),
     rptKpiCard('Meetings Booked',         d.meetings_booked,         '',gold),
     rptKpiCard('A-Grade Calls',           d.a_grade_calls,           'Interested or Meeting secured >2min',gold),
     rptKpiCard('Follow-ups Set',          d.followups_set,           '',purple),
@@ -2926,10 +2926,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.56";
+const APP_VERSION = "1.57";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.57", date:"2026-07", title:"Fixed Meaningful Interactions overcounting",
+    changes:[
+      "The Stage-based broadening from the last update was counting EVERY call to a charity currently at an engaged Stage, even short/no-answer calls, since Stage isn't tied to a specific call. Fixed: the 2-minute duration requirement now applies no matter which path qualifies a call \u2014 a call must be 2+ minutes AND (a positive outcome OR the charity's Stage shows engagement), not one or the other independently.",
+      "Verified directly against a real SQLite database with a scenario matching the reported bug: a 30-second voicemail to a charity at Stage \u2018Interested\u2019 is now correctly excluded, while long calls still qualify through either path.",
+    ]},
   { v:"1.56", date:"2026-07", title:"Meaningful Interactions now also counts by Stage",
     changes:[
       "A call now counts as a Meaningful Interaction if EITHER it was Connected/Interested/Meeting secured with 2+ minutes talk time (as before), OR the charity's current Stage is Contacted, Call back, Interested, Meeting secured, or Client \u2014 whichever comes first. Stage is a deliberate, manually-set signal of engagement, so it no longer depends on that specific call's duration being captured accurately.",

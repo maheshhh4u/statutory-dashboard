@@ -1651,15 +1651,17 @@ def api_report():
     calls_made      = (q(f"SELECT COUNT(*) {base}", bp) or [[0]])[0][0]
     total_dur_sec   = (q(f"SELECT COALESCE(SUM(duration_sec),0) {base}", bp) or [[0]])[0][0]
     conv_2min       = (q(f"SELECT COUNT(*) {base} AND duration_sec>=120", bp) or [[0]])[0][0]
-    # "Meaningful" now also counts a call if the charity's current Stage shows
-    # real engagement (Contacted/Call back/Interested/Meeting secured/Client),
-    # not only when THIS SPECIFIC call's own outcome+duration qualifies — Stage
-    # is a deliberate, manually-set signal that shouldn't depend on duration
-    # capture being reliable for that particular call.
+    # A call counts as "meaningful" only if it lasted 2+ minutes AND EITHER the
+    # outcome itself was positive OR the charity's current Stage shows real
+    # engagement (Contacted/Call back/Interested/Meeting secured/Client) — the
+    # duration requirement applies to both paths, so a call to a charity that
+    # happens to currently be at an engaged Stage doesn't count just because
+    # of that, if the call itself was short.
     meaningful      = (q(f"""SELECT COUNT(*) FROM call_log
         LEFT JOIN statuses st ON st.key = call_log.page || '|' || call_log.reg_number
         WHERE timestamp>=? AND timestamp<=? {cal_filter}
-        AND ((duration_sec>=120 AND outcome IN ('Connected','Engaged','Interested','Meeting secured'))
+        AND duration_sec>=120
+        AND (outcome IN ('Connected','Engaged','Interested','Meeting secured')
              OR st.status IN ('Contacted','Call back','Interested','Meeting secured','Client'))""", bp) or [[0]])[0][0]
     meetings        = (q(f"SELECT COUNT(*) {base} AND outcome='Meeting secured'", bp) or [[0]])[0][0]
     a_grade         = (q(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Interested','Meeting secured')", bp) or [[0]])[0][0]
@@ -1977,7 +1979,8 @@ def report_export():
     meaningful  = one(f"""SELECT COUNT(*) FROM call_log
         LEFT JOIN statuses st ON st.key = call_log.page || '|' || call_log.reg_number
         WHERE timestamp>=? AND timestamp<=? {cf}
-        AND ((duration_sec>=120 AND outcome IN ('Connected','Engaged','Interested','Meeting secured'))
+        AND duration_sec>=120
+        AND (outcome IN ('Connected','Engaged','Interested','Meeting secured')
              OR st.status IN ('Contacted','Call back','Interested','Meeting secured','Client'))""")
     a_grade     = one(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Interested','Meeting secured')")
     hours = round(total_dur/3600,2)
