@@ -277,6 +277,10 @@ select:focus{outline:none;border-color:var(--green)}
 .modal-bg.open{display:flex}
 @keyframes overdueBlink{0%,100%{background:#fdecea;border-color:#e74c3c}50%{background:#fff;border-color:#f5b7b1}}
 .overdue-fu{animation:overdueBlink 1.15s ease-in-out infinite;border:1.5px solid #e74c3c!important;border-radius:6px;margin-bottom:6px;padding:8px 10px!important}
+.duesoon-fu{border:1.5px solid #e8b339!important;background:#fffbea!important;border-radius:6px;margin-bottom:6px;padding:8px 10px!important}
+.viewhl-fu{animation:viewHlPulse 1.4s ease-in-out infinite;border:2px solid #2d5a8f!important;background:#eaf2fb!important;border-radius:6px;margin-bottom:6px;padding:8px 10px!important}
+@keyframes viewHlPulse{0%,100%{box-shadow:0 0 0 0 rgba(45,90,143,.35)}50%{box-shadow:0 0 0 6px rgba(45,90,143,0)}}
+@media (prefers-reduced-motion: reduce){.viewhl-fu{animation:none}}
 .overdue-badge{display:inline-block;background:#fde2df;color:#1e3a5f;font-size:10px;font-weight:800;border-radius:10px;padding:1px 8px;letter-spacing:.03em;border:1px solid #e74c3c;white-space:nowrap}
 @media (prefers-reduced-motion: reduce){.overdue-fu{animation:none}}
 .modal{background:var(--surface);border-radius:12px;padding:22px;max-width:440px;width:95%;box-shadow:0 8px 40px rgba(0,0,0,.2)}
@@ -2922,10 +2926,18 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.53";
+const APP_VERSION = "1.54";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.54", date:"2026-07", title:"Reminders rebuilt as one Outlook-style window; tips no longer hidden",
+    changes:[
+      "Fixed tips being hidden behind the \u2018Wrap: On\u2019 button \u2014 moved them clear of it so they're always fully readable.",
+      "Follow-up reminders are now ONE single window (like Outlook), listing everything due \u2014 click an item in the list to select it, then act on it. No more separate popup per follow-up.",
+      "The reminder window is now draggable (by its header) and has a Minimize button \u2014 collapses to a small pill showing the count, click it to reopen.",
+      "Added a second action alongside \u2018\ud83d\udcde Call\u2019: \u2018\ud83d\udccb View in List\u2019 \u2014 scrolls to the follow-up list and highlights that specific item in a distinct pulsing blue for 2 minutes. If no action is taken in that time, the highlight rolls back to its normal state (red-blink if overdue, new soft-yellow if due soon, plain otherwise) and the reminder window reopens to prompt again. \u2018Call\u2019 now jumps straight into the call popup as the fast path, while \u2018View in List\u2019 is for reviewing first.",
+      "Added a new soft-yellow highlight for follow-ups due within 15 minutes but not yet overdue, so there's now a clear visual difference between due-soon and overdue in the list itself.",
+    ]},
   { v:"1.53", date:"2026-07", title:"Advanced Search filters added to Generate List",
     changes:[
       "Clicking \u2018Generate New List\u2019 now opens a popup with the same filters as Charity Search's Advanced Search \u2014 name, reg number, postcode, county, activities, charity type, income range, and registered date range \u2014 as optional extra narrowing on top of whichever source is selected (Prospects, New, Late, Old, Milestones, or Search).",
@@ -4241,81 +4253,176 @@ function checkInBetweenTip(){
   }).catch(()=>{});
 }
 
-// ── Follow-up reminders: Outlook-style, ~15 min before a scheduled call ─────
-let _remindedFollowups=new Set();
-let _snoozedFollowups={};
+// ── Follow-up reminders: single Outlook-style window ─────────────────────────
+// Design notes on the two "go look at it" actions, since they're easy to
+// confuse: 📞 Call jumps straight into the call popup (fast path, for when
+// she already knows she wants to call). 📋 View in List scrolls up to the
+// follow-up list and highlights that specific row instead — for reviewing
+// details first, per the original request. The highlight is unique (blue,
+// pulsing) so it's unmistakably different from the existing red-blink
+// (overdue) / yellow (due soon) states. If she takes no action within 2
+// minutes, the highlight rolls back to whichever of those states is
+// currently correct for that item, and the reminder window re-opens
+// (un-minimizes) to prompt her again.
+let _dueReminders={};              // {id: followupData} currently due/upcoming
+let _snoozedFollowups={};          // {id: snoozeUntilMs}
+let _dismissedFollowups=new Set(); // ids dismissed this session
+let _selectedReminderId=null;
+let _reminderMinimized=false;
+let _viewHighlight={};             // {id: expiryMs} — temporary "locate in list" highlight
+
+function isViewHighlighted(id){ return !!(_viewHighlight[id] && _viewHighlight[id]>Date.now()); }
+
 function checkFollowupReminders(){
   if(typeof fuData==='undefined') return;
   const list=Object.values(fuData);
   const now=Date.now();
   list.forEach(f=>{
     if(!f.follow_up_at || !f.id) return;
-    if(_remindedFollowups.has(f.id)) return;
+    if(_dismissedFollowups.has(f.id)) return;
     if(_snoozedFollowups[f.id] && _snoozedFollowups[f.id]>now) return;
     const schedMs=new Date(String(f.follow_up_at).replace(' ','T')+'Z').getTime();
     if(isNaN(schedMs)) return;
     const minsUntil=(schedMs-now)/60000;
     // Due within 15 min, or recently overdue (within the last 2 hours — avoids
     // surfacing a reminder for something scheduled days ago on first page load)
-    if(minsUntil<=15 && minsUntil>=-120){
-      showFollowupReminder(f);
-      _remindedFollowups.add(f.id);
-    }
+    const isDue=(minsUntil<=15 && minsUntil>=-120);
+    if(isDue) _dueReminders[f.id]=f; else delete _dueReminders[f.id];
   });
+  // Drop any that no longer exist at all (deleted/done elsewhere)
+  Object.keys(_dueReminders).forEach(id=>{
+    if(!list.find(f=>String(f.id)===String(id))) delete _dueReminders[id];
+  });
+  renderReminderWindow();
 }
-function showFollowupReminder(f){
-  const wrap=document.getElementById('reminderWrap');
-  if(!wrap || document.getElementById('reminder-'+f.id)) return;
-  const card=document.createElement('div');
-  card.id='reminder-'+f.id;
-  card.style.cssText='background:#fff;border:1px solid #e8b339;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);overflow:hidden;animation:tipSlideIn .3s ease';
-  const timeTxt=fmtTimeOnly(f.follow_up_at);
-  card.innerHTML=`
-    <div style="background:linear-gradient(135deg,#e8b339,#c4952b);color:#1e3a5f;padding:9px 12px;font-weight:700;font-size:13px">🔔 Follow-up reminder</div>
-    <div style="padding:12px">
-      <div style="font-weight:600;font-size:13px;margin-bottom:2px">${esc(f.name||('Reg '+f.reg_number))}</div>
-      <div style="font-size:11px;color:var(--t3);margin-bottom:10px">Scheduled for ${esc(timeTxt)} · Reg ${esc(f.reg_number)}</div>
-      <div style="display:flex;gap:6px">
-        <select onchange="snoozeFollowupReminder(${f.id},this.value)" style="flex:1;padding:6px;border:1px solid var(--bd);border-radius:4px;font-size:11px">
-          <option value="">Snooze…</option>
-          <option value="5">5 min</option>
-          <option value="10">10 min</option>
-          <option value="15">15 min</option>
-        </select>
-        <button onclick="callFromReminder(${f.id})" style="background:#1d7a3a;color:#fff;border:none;border-radius:4px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">📞 Call</button>
-        <button onclick="dismissReminder(${f.id})" style="background:none;border:1px solid var(--bd);border-radius:4px;padding:6px 10px;font-size:11px;cursor:pointer">Close</button>
-      </div>
-    </div>`;
-  wrap.appendChild(card);
+
+function renderReminderWindow(){
+  const win=document.getElementById('reminderWindow');
+  const pill=document.getElementById('reminderMinPill');
+  const items=Object.values(_dueReminders).sort((a,b)=>String(a.follow_up_at||'').localeCompare(String(b.follow_up_at||'')));
+  const count=items.length;
+  const countEl=document.getElementById('reminderCount'); if(countEl) countEl.textContent=count;
+  const pillCountEl=document.getElementById('reminderMinCount'); if(pillCountEl) pillCountEl.textContent=count;
+  const pillPluralEl=document.getElementById('reminderMinPlural'); if(pillPluralEl) pillPluralEl.textContent=count===1?'':'s';
+  if(!count){
+    if(win) win.style.display='none';
+    if(pill) pill.style.display='none';
+    return;
+  }
+  if(_reminderMinimized){
+    if(win) win.style.display='none';
+    if(pill) pill.style.display='flex';
+    return;
+  }
+  if(pill) pill.style.display='none';
+  if(win) win.style.display='block';
+  if(_selectedReminderId==null || !_dueReminders[_selectedReminderId]) _selectedReminderId=items[0].id;
+  const listEl=document.getElementById('reminderList');
+  if(listEl){
+    listEl.innerHTML=items.map(f=>{
+      const overdue=new Date(String(f.follow_up_at||'').replace(' ','T')+'Z').getTime()<Date.now();
+      const sel=String(f.id)===String(_selectedReminderId);
+      return `<div onclick="selectReminder(${f.id})" style="padding:9px 12px;cursor:pointer;border-bottom:1px solid #f2f2f2;background:${sel?'#fff3cd':'#fff'};display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div style="min-width:0">
+          <div style="font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px">${esc(f.name||('Reg '+f.reg_number))}</div>
+          <div style="font-size:10.5px;color:${overdue?'#c0392b':'var(--t3)'}">${overdue?'⚠ Overdue · ':''}${esc(fmtTimeOnly(f.follow_up_at))}</div>
+        </div>
+        ${sel?'<span style="color:#e8b339;font-size:16px;line-height:1">●</span>':''}
+      </div>`;
+    }).join('');
+  }
+  renderReminderActionBar();
 }
-function snoozeFollowupReminder(id, mins){
-  if(!mins) return;
+function selectReminder(id){ _selectedReminderId=id; renderReminderWindow(); }
+
+function renderReminderActionBar(){
+  const bar=document.getElementById('reminderActionBar');
+  if(!bar) return;
+  const f=_dueReminders[_selectedReminderId];
+  if(!f){ bar.style.display='none'; return; }
+  bar.style.display='flex';
+  bar.innerHTML=`
+    <select id="reminderSnoozeSel" style="flex:1;min-width:76px;padding:6px;border:1px solid var(--bd);border-radius:4px;font-size:11px">
+      <option value="">Snooze…</option>
+      <option value="5">5 min</option>
+      <option value="10">10 min</option>
+      <option value="15">15 min</option>
+    </select>
+    <button onclick="snoozeSelectedReminder()" style="background:#fff;border:1px solid var(--bd);border-radius:4px;padding:6px 9px;font-size:11px;cursor:pointer">Snooze</button>
+    <button onclick="callFromReminder(${f.id})" style="background:#1d7a3a;color:#fff;border:none;border-radius:4px;padding:6px 9px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">📞 Call</button>
+    <button onclick="viewInListFromReminder(${f.id})" style="background:#2d5a8f;color:#fff;border:none;border-radius:4px;padding:6px 9px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">📋 View in List</button>
+    <button onclick="dismissReminder(${f.id})" style="background:none;border:1px solid var(--bd);border-radius:4px;padding:6px 9px;font-size:11px;cursor:pointer">Dismiss</button>
+  `;
+}
+function snoozeSelectedReminder(){
+  const sel=document.getElementById('reminderSnoozeSel');
+  const mins=sel?sel.value:'';
+  if(!mins || _selectedReminderId==null) return;
+  const id=_selectedReminderId;
   _snoozedFollowups[id]=Date.now()+parseInt(mins)*60000;
-  _remindedFollowups.delete(id);  // allow re-reminding once the snooze elapses
-  dismissReminder(id);
+  delete _dueReminders[id];
+  _selectedReminderId=null;
+  renderReminderWindow();
 }
 function dismissReminder(id){
-  const el=document.getElementById('reminder-'+id);
-  if(el) el.remove();
+  _dismissedFollowups.add(id);
+  delete _dueReminders[id];
+  if(String(_selectedReminderId)===String(id)) _selectedReminderId=null;
+  renderReminderWindow();
+}
+function dismissAllReminders(){
+  Object.keys(_dueReminders).forEach(id=>_dismissedFollowups.add(id));
+  _dueReminders={};
+  _selectedReminderId=null;
+  renderReminderWindow();
+}
+function minimizeReminderWindow(){ _reminderMinimized=true; renderReminderWindow(); }
+function maximizeReminderWindow(){ _reminderMinimized=false; renderReminderWindow(); }
+function scrollToFollowupItem(id){
+  const target=document.getElementById('scheduledCalls');
+  if(target) target.scrollIntoView({behavior:'smooth', block:'start'});
 }
 function callFromReminder(id){
+  const f=_dueReminders[id]||fuData[id];
   dismissReminder(id);
-  // Scroll her up to the follow-up list so she can review details before
-  // calling, rather than jumping straight into a call blind — per request.
-  const target=document.getElementById('scheduledCalls');
-  if(target){
-    target.scrollIntoView({behavior:'smooth', block:'start'});
-    const row=document.getElementById('fu-toggle-'+id);
-    const container=row?row.closest('div'):null;
-    if(container){
-      const origBg=container.style.background;
-      container.style.transition='background .4s';
-      container.style.background='#fff3cd';
-      setTimeout(()=>{ container.style.background=origBg; }, 1800);
+  if(!f) return;
+  const phone=f.phone||f.last_dialled||'';
+  openCallModal(f.page||'calling', String(f.reg_number), f.name||'', phone);
+}
+function viewInListFromReminder(id){
+  // Take her to the list and highlight the item — but keep the reminder alive
+  // in the background so it can re-prompt her if she doesn't act in time.
+  _viewHighlight[id]=Date.now()+120000;
+  minimizeReminderWindow();
+  scrollToFollowupItem(id);
+  loadScheduledCalls();
+  setTimeout(()=>{
+    if(_viewHighlight[id] && _viewHighlight[id]<=Date.now()+1000){
+      delete _viewHighlight[id];
+      // Still due and not acted on — bring the reminder window back to prompt again
+      if(fuData[id] && !_dismissedFollowups.has(id)){
+        maximizeReminderWindow();
+      }
+      loadScheduledCalls();
     }
-  }
+  }, 120000);
 }
 setInterval(checkFollowupReminders, 30000);
+// Make the reminder window draggable by its header, same pattern as the call modal
+(function setupReminderDrag(){
+  const win=document.getElementById('reminderWindow');
+  const hdr=document.getElementById('reminderHdr');
+  if(!win || !hdr) return;
+  let drag={x:0,y:0};
+  hdr.addEventListener('mousedown', function(e){
+    if(e.target.tagName==='BUTTON') return;
+    e.preventDefault();
+    const sx=e.clientX, sy=e.clientY, ox=drag.x, oy=drag.y;
+    function mv(ev){ drag.x=ox+(ev.clientX-sx); drag.y=oy+(ev.clientY-sy); win.style.transform='translate('+drag.x+'px,'+drag.y+'px)'; }
+    function up(){ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); }
+    document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+  });
+})();
 
 function loadScheduledCalls(){
   const wrap=document.getElementById('scheduledCalls');
@@ -4387,11 +4494,23 @@ function loadScheduledCalls(){
           }
         }catch(e){ odText='overdue'; wasDueText='was due '+dateStr; }
       }
-      const rowAttr=isOd
-        ? 'class="overdue-fu" style="display:flex;align-items:center;gap:10px"'
-        : 'style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f0e6c8"';
+      const rowState = (typeof isViewHighlighted==='function' && isViewHighlighted(f.id)) ? 'view'
+        : isOd ? 'overdue'
+        : (function(){
+            try{
+              const schedMs=new Date(String(f.follow_up_at||'').trim().replace(' ','T')+'Z').getTime();
+              const minsUntil=(schedMs-Date.now())/60000;
+              return (minsUntil<=15 && minsUntil>=0) ? 'duesoon' : 'normal';
+            }catch(e){ return 'normal'; }
+          })();
+      const rowCls = rowState==='view' ? 'viewhl-fu' : rowState==='overdue' ? 'overdue-fu' : rowState==='duesoon' ? 'duesoon-fu' : '';
+      const rowAttr= rowCls
+        ? `id="fu-row-${f.id}" class="${rowCls}" style="display:flex;align-items:center;gap:10px"`
+        : `id="fu-row-${f.id}" style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f0e6c8"`;
       const timeCol=isOd
         ? `<span style="min-width:80px;text-align:center"><span class="overdue-badge" title="${esc(wasDueText)}">${esc(odText)}</span></span>`
+        : rowState==='duesoon'
+        ? `<span style="font-family:monospace;font-weight:700;color:#8a6d1a;min-width:46px">${esc(time)}</span>`
         : `<span style="font-family:monospace;font-weight:700;color:#1e3a5f;min-width:46px">${esc(time)}</span>`;
       const phone=f.phone||f.last_dialled||'';
       return `<div>
@@ -6169,7 +6288,18 @@ fetch('/api/rc/config').then(r=>r.json()).then(d=>{
     <button onclick="restoreCallWindow()" style="width:100%;background:#1e3a5f;color:#fff;border:none;border-radius:6px;padding:8px;cursor:pointer;font-size:12px;font-weight:600">Open full window to save</button>
   </div>
 </div>
-<div id="tipToastWrap" style="position:fixed;bottom:18px;left:18px;z-index:1440;display:flex;flex-direction:column;gap:8px;max-width:340px"></div>
-<div id="reminderWrap" style="position:fixed;top:18px;right:18px;z-index:1460;display:flex;flex-direction:column;gap:10px;max-width:320px"></div>
+<div id="tipToastWrap" style="position:fixed;bottom:64px;left:18px;z-index:1440;display:flex;flex-direction:column-reverse;gap:8px;max-width:340px"></div>
+<div id="reminderWindow" style="display:none;position:fixed;top:18px;right:18px;width:300px;background:#fff;border:1px solid #e8b339;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);z-index:1460;overflow:hidden">
+  <div id="reminderHdr" style="background:linear-gradient(135deg,#e8b339,#c4952b);color:#1e3a5f;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none">
+    <span style="font-weight:700;font-size:13px">🔔 Follow-up Reminders (<span id="reminderCount">0</span>)</span>
+    <div style="display:flex;align-items:center;gap:2px">
+      <button onclick="minimizeReminderWindow()" title="Minimize" style="background:none;border:none;font-size:17px;cursor:pointer;color:#1e3a5f;padding:0 6px;line-height:1">–</button>
+      <button onclick="dismissAllReminders()" title="Dismiss all" style="background:none;border:none;font-size:18px;cursor:pointer;color:#1e3a5f;padding:0 6px;line-height:1">×</button>
+    </div>
+  </div>
+  <div id="reminderList" style="max-height:260px;overflow-y:auto"></div>
+  <div id="reminderActionBar" style="display:none;padding:10px;border-top:1px solid #eee;gap:6px;flex-wrap:wrap;align-items:center"></div>
+</div>
+<div id="reminderMinPill" onclick="maximizeReminderWindow()" title="Click to reopen" style="display:none;position:fixed;top:18px;right:18px;z-index:1460;background:linear-gradient(135deg,#e8b339,#c4952b);color:#1e3a5f;border-radius:20px;padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.22);align-items:center;gap:6px">🔔 <span id="reminderMinCount">0</span> follow-up<span id="reminderMinPlural">s</span> due</div>
 </body>
 </html>
