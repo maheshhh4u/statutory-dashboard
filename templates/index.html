@@ -2269,7 +2269,7 @@ function renderReport(d, promoEmails){
     rptKpiCard('Calls Made',              d.calls_made,              'Avg '+fmtDur(avgDur)+' per call',navy),
     rptKpiCard('Hours on RC',             d.hours_on_rc+'h',         'Total '+fmtDur(d.total_duration_sec),navy),
     rptKpiCard('Conversations >2min',     d.conversations_2min,      (d.calls_made?Math.round(d.conversations_2min/d.calls_made*100):0)+'% of calls',green),
-    rptKpiCard('Meaningful Interactions', d.meaningful_interactions,  'Connected/Interested/Meeting >2min',green),
+    rptKpiCard('Meaningful Interactions', d.meaningful_interactions,  '>2min call, or Stage: Contacted/Call back/Interested/Meeting secured/Client',green),
     rptKpiCard('Meetings Booked',         d.meetings_booked,         '',gold),
     rptKpiCard('A-Grade Calls',           d.a_grade_calls,           'Interested or Meeting secured >2min',gold),
     rptKpiCard('Follow-ups Set',          d.followups_set,           '',purple),
@@ -2926,10 +2926,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.55";
+const APP_VERSION = "1.56";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.56", date:"2026-07", title:"Meaningful Interactions now also counts by Stage",
+    changes:[
+      "A call now counts as a Meaningful Interaction if EITHER it was Connected/Interested/Meeting secured with 2+ minutes talk time (as before), OR the charity's current Stage is Contacted, Call back, Interested, Meeting secured, or Client \u2014 whichever comes first. Stage is a deliberate, manually-set signal of engagement, so it no longer depends on that specific call's duration being captured accurately.",
+      "Applied consistently to both the Overview dashboard and its Excel export.",
+    ]},
   { v:"1.55", date:"2026-07", title:"Fixed report date ranges silently missing calls near midnight",
     changes:[
       "Found and fixed the cause of Meaningful Interactions (and other report figures) sometimes showing lower than reality: date range filters were comparing your selected dates directly against raw UTC timestamps, so a call made shortly after midnight UK time \u2014 which is still the previous day in UTC \u2014 could fall outside the range you'd actually selected.",
