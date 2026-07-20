@@ -215,6 +215,12 @@ _calling_excl=set()     # reg_numbers permanently excluded from calling lists
 _bg_status={}; _bg_lock=threading.Lock()
 _users=["Muhanna"]  # admin-managed caller list
 _app_settings={"display_timezone": "Europe/London"}  # admin-managed app-wide settings
+# Persistent cache of {reg: {website,phone,email}} built up from CC bulk-file scans.
+# Populated incrementally: every scan caches ALL rows it passes over (not just the
+# ones being looked up right now), so later lookups for different regs are often
+# already warm. Cleared only on process restart — website/phone/email on the
+# Charity Commission register change rarely enough that this is safe.
+_cc_basic_fields_cache={}
 
 def db_load_state():
     """Load all DB state into in-memory dicts. Clears existing state first."""
@@ -2473,13 +2479,21 @@ def _latest_outcomes_map():
         if reg and oc: out[reg] = oc  # ascending scan, last write = most recent
     return out
 
-def _charity_snapshots_for_regs(regs):
+def _charity_snapshots_for_regs(regs, allow_cc_fallback=True):
     """Build full charity row dicts (same shape as Daily Calling rows) for a specific
     set of reg numbers, using whatever data we already have on file (calling_batch
     snapshot, contact overrides, called_log name, call_log for last-dialled number).
     Used to enrich the follow-up list so the caller always has a phone number to
     dial and can see full charity info, even if the charity isn't in today's
-    active 100."""
+    active 100.
+
+    allow_cc_fallback: whether to fall back to scanning the Charity Commission
+    bulk file for website/phone/email when a charity has no calling_batch
+    snapshot at all. This is the one potentially-slow part of this function —
+    callers that just need a quick browsing view (e.g. the calendar, which can
+    cover many charities across a whole month) should pass False and accept
+    possibly-blank contact fields, rather than pay for a bulk scan just to
+    render a grid. The actionable "today" follow-up list keeps it enabled."""
     regset = {str(r) for r in regs if r}
     if not regset: return {}
     batch_data = {}
@@ -2504,22 +2518,39 @@ def _charity_snapshots_for_regs(regs):
     # Fallback for charities that were never part of any generated Daily Calling
     # list (e.g. a follow-up scheduled from a Search result) — their calling_batch
     # snapshot doesn't exist at all, so basic fields like website/phone/email would
-    # otherwise be silently missing. Bounded scan of the CC bulk file, only for the
-    # (typically small) set of regs actually missing this data.
+    # otherwise be silently missing.
     missing_basic = {reg for reg in regset
                      if not (batch_data.get(reg) or {}).get("website")
-                     or not (batch_data.get(reg) or {}).get("phone")}
+                     or not (batch_data.get(reg) or {}).get("phone")} if allow_cc_fallback else set()
     cc_fallback = {}
-    if missing_basic:
+    # Serve whatever we already have cached from a previous scan — free, no I/O.
+    still_missing = set()
+    for reg in missing_basic:
+        cached = _cc_basic_fields_cache.get(reg)
+        if cached is not None:
+            cc_fallback[reg] = cached
+        else:
+            still_missing.add(reg)
+    # Scan the bulk file only when something is genuinely not cached yet. This
+    # deliberately does NOT stop early once the regs we need are found — it
+    # keeps going and caches every row it passes over, so the cache becomes
+    # comprehensive after one full pass and essentially all future lookups
+    # (for any charity, not just today's) are served from memory instead of
+    # triggering another scan. Only the first such scan after a restart pays
+    # the full cost.
+    if still_missing:
         try:
             cols = {"registered_charity_number","charity_contact_web","charity_contact_phone","charity_contact_email"}
             for row in stream_zip_csv(CHARITY_URL, cols):
                 reg = row.get("registered_charity_number","").strip()
-                if reg in missing_basic:
-                    cc_fallback[reg] = {"website": row.get("charity_contact_web",""),
-                                        "phone": row.get("charity_contact_phone",""),
-                                        "email": row.get("charity_contact_email","")}
-                    if len(cc_fallback) >= len(missing_basic): break
+                if not reg: continue
+                fields = {"website": row.get("charity_contact_web",""),
+                          "phone": row.get("charity_contact_phone",""),
+                          "email": row.get("charity_contact_email","")}
+                _cc_basic_fields_cache[reg] = fields
+                if reg in still_missing:
+                    cc_fallback[reg] = fields
+                    still_missing.discard(reg)
         except Exception as e:
             print(f"  _charity_snapshots_for_regs CC fallback error: {e}")
 
@@ -2636,7 +2667,12 @@ def followups_list():
                                FROM follow_ups WHERE done=0 AND follow_up_at<=?
                                ORDER BY follow_up_at ASC""", (ts_t,))
         followup_rows = rows or []
-        snapshots = _charity_snapshots_for_regs([r[1] for r in followup_rows])
+        # The calendar view (explicit from/to range) can cover many charities
+        # across a whole month — skip the CC bulk fallback there so it stays
+        # fast; the actionable "today"/"all" scopes keep it enabled since
+        # that's where having a phone number/website actually matters.
+        is_calendar_range = bool(dfrom or dto)
+        snapshots = _charity_snapshots_for_regs([r[1] for r in followup_rows], allow_cc_fallback=not is_calendar_range)
         out = []
         for r in followup_rows:
             fid, reg, nm, pg, fat, caller, notes = r

@@ -390,7 +390,6 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
       <button class="btn btn-outline btn-sm" onclick="loadCalling()">↺ Refresh</button>
       <button class="btn btn-outline btn-sm" onclick="openCalendar()">📅 Calendar</button>
-      <button class="btn btn-outline btn-sm" onclick="openCallHistory()">📋 Call History</button>
       <button class="btn btn-outline btn-sm" style="border-color:#6060c0;color:#6060c0" onclick="openMxModal('calling')">🔄 Sync Maximizer</button>
       <button class="btn btn-outline btn-sm" onclick="openColumnSettings()" title="Choose which columns to show">⚙ Columns</button>
     </div>
@@ -1922,7 +1921,7 @@ function openCallModal(pg,reg,name,ccPhone){
 
     <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase;margin-top:10px;display:block">📅 Follow-up call (if they asked to be called back) — <span style="text-transform:none;font-weight:400;color:#8a6d1a">time is in ${DISPLAY_TZ}</span></label>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
-      <input type="date" id="call-fu-date" style="padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px">
+      <input type="date" id="call-fu-date" min="${new Intl.DateTimeFormat('en-CA',{timeZone:DISPLAY_TZ}).format(new Date())}" style="padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px">
       <input type="time" id="call-fu-time" style="padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px">
       <button type="button" onclick="document.getElementById('call-fu-date').value='';document.getElementById('call-fu-time').value='';" style="background:none;border:1px solid var(--bd);border-radius:4px;cursor:pointer;padding:6px 10px;font-size:11px">Clear</button>
     </div>
@@ -2926,10 +2925,17 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.58";
+const APP_VERSION = "1.59";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.59", date:"2026-07", title:"Fixed slow calendar; added month/year picker; past dates blocked; removed redundant History button",
+    changes:[
+      "Found and fixed why the calendar had gotten slow: a recent fix for missing website/phone on some follow-ups was scanning the full Charity Commission data file every time the calendar loaded. It now caches what it finds so repeat lookups are instant, and skips that lookup entirely for the calendar's wide date range (which doesn't need it as urgently as the actionable follow-up list does).",
+      "Added Month and Year dropdowns to the calendar, alongside the existing \u2190 Prev / Next \u2192 buttons \u2014 jump straight to any month instead of clicking through one at a time.",
+      "Follow-up scheduling and rescheduling no longer allow picking yesterday or earlier \u2014 only today onward.",
+      "Removed the standalone \u2018Call History\u2019 button from Daily Calling \u2014 redundant now that the History tab sits right next to it.",
+    ]},
   { v:"1.58", date:"2026-07", title:"Fixed A-Grade Calls and Meetings Booked the same way as Meaningful Interactions",
     changes:[
       "A-Grade Calls had the exact same gap: only checked this specific call's own outcome, not the charity's Stage. Fixed the same way \u2014 now counts a call as A-Grade if it's 2+ minutes AND (outcome or Stage is Interested/Meeting secured), with the duration requirement applying to both paths (verified against a real database to confirm short calls don't slip through via Stage).",
@@ -4608,7 +4614,7 @@ function rescheduleFollowup(id, currentAt){
     <p style="font-size:13px;margin:0 0 6px">Pick a new date and time for this follow-up call:</p>
     <p style="font-size:11px;color:#8a6d1a;margin:0 0 14px">Time is in ${DISPLAY_TZ}</p>
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
-      <input type="date" id="resch-date" value="${esc(curDate)}" style="padding:7px;border:1px solid var(--bd);border-radius:4px;font-family:inherit">
+      <input type="date" id="resch-date" value="${esc(curDate)}" min="${new Intl.DateTimeFormat('en-CA',{timeZone:DISPLAY_TZ}).format(new Date())}" style="padding:7px;border:1px solid var(--bd);border-radius:4px;font-family:inherit">
       <input type="time" id="resch-time" value="${esc(curTime)}" style="padding:7px;border:1px solid var(--bd);border-radius:4px;font-family:inherit">
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
@@ -4714,22 +4720,46 @@ function loadCallHistory(initFilters){
 let _calMonth=null;
 function openCalendar(){
   _calMonth=new Date(); _calMonth.setDate(1);
+  const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const monthOpts=months.map((m,i)=>`<option value="${i}">${m}</option>`).join('');
+  const curYear=new Date().getFullYear();
+  const yearOpts=Array.from({length:7},(_,i)=>curYear-3+i).map(y=>`<option value="${y}">${y}</option>`).join('');
   const html=`
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;flex-wrap:wrap">
       <button class="btn btn-outline btn-sm" onclick="calNav(-1)">← Prev</button>
-      <strong id="cal-title" style="font-size:15px"></strong>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="cal-month-sel" onchange="calJump()" style="padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px">${monthOpts}</select>
+        <select id="cal-year-sel" onchange="calJump()" style="padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px">${yearOpts}</select>
+      </div>
       <button class="btn btn-outline btn-sm" onclick="calNav(1)">Next →</button>
     </div>
     <div id="cal-grid"></div>`;
   showModal('📅 Scheduled Calls Calendar', html);
   renderCalendar();
 }
+function calJump(){
+  const m=document.getElementById('cal-month-sel'), y=document.getElementById('cal-year-sel');
+  if(!m||!y) return;
+  _calMonth=new Date(parseInt(y.value), parseInt(m.value), 1);
+  renderCalendar();
+}
 function calNav(delta){ _calMonth.setMonth(_calMonth.getMonth()+delta); renderCalendar(); }
 function renderCalendar(){
   const grid=document.getElementById('cal-grid'); if(!grid) return;
   const y=_calMonth.getFullYear(), m=_calMonth.getMonth();
-  const title=document.getElementById('cal-title');
-  if(title) title.textContent=_calMonth.toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+  const monthSel=document.getElementById('cal-month-sel');
+  const yearSel=document.getElementById('cal-year-sel');
+  if(monthSel) monthSel.value=String(m);
+  if(yearSel){
+    // If she's navigated (Prev/Next) to a year outside the dropdown's normal
+    // range, add it so the dropdown still shows the correct value rather than
+    // silently reverting to whatever option happened to be selected.
+    if(![...yearSel.options].some(o=>o.value===String(y))){
+      const opt=document.createElement('option'); opt.value=String(y); opt.textContent=String(y);
+      yearSel.appendChild(opt);
+    }
+    yearSel.value=String(y);
+  }
   const from=`${y}-${String(m+1).padStart(2,'0')}-01`;
   const last=new Date(y,m+1,0).getDate();
   const to=`${y}-${String(m+1).padStart(2,'0')}-${String(last).padStart(2,'0')}`;
