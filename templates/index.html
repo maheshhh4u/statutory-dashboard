@@ -2271,7 +2271,7 @@ function renderReport(d, promoEmails){
     rptKpiCard('Conversations >2min',     d.conversations_2min,      (d.calls_made?Math.round(d.conversations_2min/d.calls_made*100):0)+'% of calls',green),
     rptKpiCard('Meaningful Interactions', d.meaningful_interactions,  '2+ min call, with a positive outcome or Stage: Contacted/Call back/Interested/Meeting secured/Client',green),
     rptKpiCard('Meetings Booked',         d.meetings_booked,         '',gold),
-    rptKpiCard('A-Grade Calls',           d.a_grade_calls,           'Interested or Meeting secured >2min',gold),
+    rptKpiCard('A-Grade Calls',           d.a_grade_calls,           '2+ min call, outcome or Stage is Interested/Meeting secured',gold),
     rptKpiCard('Follow-ups Set',          d.followups_set,           '',purple),
     rptKpiCard('Overdue Follow-ups',      d.followup_overdue||0,     'Past their due date, not done',(d.followup_overdue>0?red:green)),
     rptKpiCard('Follow-up Emails Sent',   d.email_followups||0,      'Email Sent + SLT Unavailable',purple),
@@ -2926,10 +2926,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.57";
+const APP_VERSION = "1.58";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.58", date:"2026-07", title:"Fixed A-Grade Calls and Meetings Booked the same way as Meaningful Interactions",
+    changes:[
+      "A-Grade Calls had the exact same gap: only checked this specific call's own outcome, not the charity's Stage. Fixed the same way \u2014 now counts a call as A-Grade if it's 2+ minutes AND (outcome or Stage is Interested/Meeting secured), with the duration requirement applying to both paths (verified against a real database to confirm short calls don't slip through via Stage).",
+      "Meetings Booked had the same gap too \u2014 now counts if either the call's outcome was 'Meeting secured' or the charity's Stage is 'Meeting secured'. No duration requirement added here, since booking a meeting isn't inherently tied to how long that specific call lasted.",
+      "Applied consistently across the Overview dashboard, its Excel export, and the AI Performance Coach's stats.",
+    ]},
   { v:"1.57", date:"2026-07", title:"Fixed Meaningful Interactions overcounting",
     changes:[
       "The Stage-based broadening from the last update was counting EVERY call to a charity currently at an engaged Stage, even short/no-answer calls, since Stage isn't tied to a specific call. Fixed: the 2-minute duration requirement now applies no matter which path qualifies a call \u2014 a call must be 2+ minutes AND (a positive outcome OR the charity's Stage shows engagement), not one or the other independently.",

@@ -1151,7 +1151,10 @@ def _build_coach_stats(callers, date_from, date_to):
     total_dur   = one(f"SELECT COALESCE(SUM(duration_sec),0) {base}")
     conv2       = one(f"SELECT COUNT(*) {base} AND duration_sec>=120")
     connected   = one(f"SELECT COUNT(*) {base} AND outcome IN ('Connected','Engaged','Interested','Meeting secured','Not interested')")
-    meetings    = one(f"SELECT COUNT(*) {base} AND outcome='Meeting secured'")
+    meetings    = one(f"""SELECT COUNT(*) FROM call_log
+        LEFT JOIN statuses st ON st.key = call_log.page || '|' || call_log.reg_number
+        WHERE timestamp>=? AND timestamp<=? {cf}
+        AND (outcome='Meeting secured' OR st.status='Meeting secured')""")
     interested  = one(f"SELECT COUNT(*) {base} AND outcome='Interested'")
     notint      = one(f"SELECT COUNT(*) {base} AND outcome='Not interested'")
     voicemail   = one(f"SELECT COUNT(*) {base} AND outcome='Voicemail'")
@@ -1663,8 +1666,22 @@ def api_report():
         AND duration_sec>=120
         AND (outcome IN ('Connected','Engaged','Interested','Meeting secured')
              OR st.status IN ('Contacted','Call back','Interested','Meeting secured','Client'))""", bp) or [[0]])[0][0]
-    meetings        = (q(f"SELECT COUNT(*) {base} AND outcome='Meeting secured'", bp) or [[0]])[0][0]
-    a_grade         = (q(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Interested','Meeting secured')", bp) or [[0]])[0][0]
+    # A meeting counts if EITHER this call's own outcome was 'Meeting secured'
+    # OR the charity's current Stage is 'Meeting secured' (it may have been set
+    # separately from the specific call that led to it) — no duration
+    # requirement, since booking a meeting isn't inherently tied to call length.
+    meetings        = (q(f"""SELECT COUNT(*) FROM call_log
+        LEFT JOIN statuses st ON st.key = call_log.page || '|' || call_log.reg_number
+        WHERE timestamp>=? AND timestamp<=? {cal_filter}
+        AND (outcome='Meeting secured' OR st.status='Meeting secured')""", bp) or [[0]])[0][0]
+    # A-Grade: same idea as Meaningful Interactions but scoped to the stronger
+    # outcomes only (Interested/Meeting secured) — the 2-minute requirement
+    # still applies regardless of which path (outcome or Stage) qualifies it.
+    a_grade         = (q(f"""SELECT COUNT(*) FROM call_log
+        LEFT JOIN statuses st ON st.key = call_log.page || '|' || call_log.reg_number
+        WHERE timestamp>=? AND timestamp<=? {cal_filter}
+        AND duration_sec>=120
+        AND (outcome IN ('Interested','Meeting secured') OR st.status IN ('Interested','Meeting secured'))""", bp) or [[0]])[0][0]
     voicemail       = (q(f"SELECT COUNT(*) {base} AND outcome='Voicemail'", bp) or [[0]])[0][0]
     no_answer       = (q(f"SELECT COUNT(*) {base} AND outcome='No Answer'", bp) or [[0]])[0][0]
     engaged_ct      = (q(f"SELECT COUNT(*) {base} AND outcome='Engaged'", bp) or [[0]])[0][0]
@@ -1972,7 +1989,10 @@ def report_export():
     total_dur   = one(f"SELECT COALESCE(SUM(duration_sec),0) {base}")
     conv2       = one(f"SELECT COUNT(*) {base} AND duration_sec>=120")
     connected   = one(f"SELECT COUNT(*) {base} AND outcome IN ('Connected','Engaged','Interested','Meeting secured','Not interested')")
-    meetings    = one(f"SELECT COUNT(*) {base} AND outcome='Meeting secured'")
+    meetings    = one(f"""SELECT COUNT(*) FROM call_log
+        LEFT JOIN statuses st ON st.key = call_log.page || '|' || call_log.reg_number
+        WHERE timestamp>=? AND timestamp<=? {cf}
+        AND (outcome='Meeting secured' OR st.status='Meeting secured')""")
     interested  = one(f"SELECT COUNT(*) {base} AND outcome='Interested'")
     voicemail   = one(f"SELECT COUNT(*) {base} AND outcome='Voicemail'")
     noans       = one(f"SELECT COUNT(*) {base} AND outcome='No Answer'")
@@ -1982,7 +2002,11 @@ def report_export():
         AND duration_sec>=120
         AND (outcome IN ('Connected','Engaged','Interested','Meeting secured')
              OR st.status IN ('Contacted','Call back','Interested','Meeting secured','Client'))""")
-    a_grade     = one(f"SELECT COUNT(*) {base} AND duration_sec>=120 AND outcome IN ('Interested','Meeting secured')")
+    a_grade     = one(f"""SELECT COUNT(*) FROM call_log
+        LEFT JOIN statuses st ON st.key = call_log.page || '|' || call_log.reg_number
+        WHERE timestamp>=? AND timestamp<=? {cf}
+        AND duration_sec>=120
+        AND (outcome IN ('Interested','Meeting secured') OR st.status IN ('Interested','Meeting secured'))""")
     hours = round(total_dur/3600,2)
     connect_rate = round(connected/total*100) if total else 0
 
