@@ -2925,10 +2925,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.59";
+const APP_VERSION = "1.60";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.60", date:"2026-07", title:"CRITICAL FIX: follow-up times were being progressively corrupted on every restart",
+    changes:[
+      "Found and fixed a serious bug: the one-time migration that converted follow-up times to UTC (added a few versions back) used an in-memory-only \u2018already done\u2019 flag, which reset on every server restart \u2014 including every deploy and every time the free-tier server slept and woke up. Each restart re-ran the conversion against data that was already correct, silently shifting it by another hour. This compounded over many restarts, which is why times had drifted into early morning/late night and even the wrong day.",
+      "Fixed properly: the \u2018already done\u2019 flag is now stored in the database, so the migration genuinely runs exactly once, ever, and can never re-trigger on restart again.",
+      "IMPORTANT: this does not undo damage already done to existing follow-up times \u2014 see the message alongside this update for what to do about that.",
+    ]},
   { v:"1.59", date:"2026-07", title:"Fixed slow calendar; added month/year picker; past dates blocked; removed redundant History button",
     changes:[
       "Found and fixed why the calendar had gotten slow: a recent fix for missing website/phone on some follow-ups was scanning the full Charity Commission data file every time the calendar loaded. It now caches what it finds so repeat lookups are instant, and skips that lookup entirely for the calendar's wide date range (which doesn't need it as urgently as the actionable follow-up list does).",

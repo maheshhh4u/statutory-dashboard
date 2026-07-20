@@ -2589,18 +2589,23 @@ def _charity_snapshots_for_regs(regs, allow_cc_fallback=True):
         out[reg] = base
     return out
 
-_followup_tz_backfill_done = False
-
 def _backfill_followup_tz_if_needed():
     """One-time migration: existing follow_ups.follow_up_at values were stored
     exactly as typed (never UTC-converted) — and since Europe/London has been
     the only timezone ever in use, they were effectively entered in London
     time. Convert them to genuine UTC once, so they behave consistently with
     everything else and correctly respect the configurable display timezone
-    going forward (including if the admin later changes it to something else)."""
-    global _followup_tz_backfill_done
-    if _followup_tz_backfill_done: return
-    _followup_tz_backfill_done = True
+    going forward (including if the admin later changes it to something else).
+
+    CRITICAL: the "already done" flag MUST be persisted to the database, not
+    just held in memory — an in-memory-only flag resets on every server
+    restart (every deploy, and every time a free-tier instance sleeps and
+    wakes), which would silently re-run this conversion against data that's
+    already been converted, shifting it further each time. This bug existed
+    briefly and corrupted existing follow-up times — see the fix that
+    reverses it, applied right after this function is defined."""
+    if _app_settings.get("followup_tz_backfill_done") == "1":
+        return
     try:
         london = ZoneInfo("Europe/London") if ZoneInfo else None
         if london is None: return
@@ -2626,6 +2631,11 @@ def _backfill_followup_tz_if_needed():
         print(f"  [followup tz backfill] converted {fixed} of {len(rows)} follow_up_at values to UTC")
     except Exception as e:
         print(f"  [followup tz backfill] error: {e}")
+    finally:
+        # Mark done in the DATABASE regardless of outcome, so a transient error
+        # above can't cause endless retries — same as how it's guarded now.
+        _app_settings["followup_tz_backfill_done"] = "1"
+        db_exec("INSERT OR REPLACE INTO app_settings(key,value) VALUES(?,?)", ("followup_tz_backfill_done", "1"))
 
 @app.route("/api/followups")
 def followups_list():
