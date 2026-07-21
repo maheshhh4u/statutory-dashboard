@@ -413,6 +413,73 @@ def set_timezone_setting():
     db_exec("INSERT OR REPLACE INTO app_settings(key,value) VALUES(?,?)", ("display_timezone", tz))
     return jsonify({"ok": True, "timezone": tz})
 
+def _validate_readonly_sql(sql):
+    """Returns (ok, error_message). Only a single, standalone SELECT statement
+    is allowed here — this is a read-only diagnostic tool for Admin, not a
+    general SQL console. Any change (UPDATE/DELETE/INSERT/DROP/etc.) must go
+    through the Turso dashboard directly, deliberately, outside this app.
+    Enforced here on the server — never trust a client-side-only check for
+    something this consequential."""
+    s = (sql or "").strip()
+    if not s:
+        return False, "Query is empty."
+    # Allow (and strip) a single trailing semicolon before checking for
+    # additional statements stacked after it.
+    s_check = s[:-1].strip() if s.endswith(";") else s
+    if ";" in s_check:
+        return False, "Only a single SELECT statement is allowed \u2014 remove anything after the ';'."
+    # Strip leading SQL comments so a non-SELECT statement can't hide behind one.
+    stripped = s_check
+    while True:
+        t = stripped.lstrip()
+        if t.startswith("--"):
+            nl = t.find("\n")
+            stripped = t[nl+1:] if nl >= 0 else ""
+        elif t.startswith("/*"):
+            end = t.find("*/")
+            stripped = t[end+2:] if end >= 0 else ""
+        else:
+            stripped = t
+            break
+    if not stripped.upper().startswith("SELECT"):
+        return False, "Only SELECT queries are allowed here. For any changes, please use the Turso dashboard directly."
+    return True, ""
+
+ADMIN_SQL_DEFAULT_LIMIT = 500
+
+@app.route("/api/admin/sql_query", methods=["POST"])
+def admin_sql_query():
+    """Read-only SQL query tool for Admin \u2014 SELECT statements only,
+    validated server-side. Applies a default row cap if the query doesn't
+    specify its own LIMIT, so a broad query can't return an unbounded result."""
+    data = request.json or {}
+    sql = str(data.get("sql", ""))
+    ok, err = _validate_readonly_sql(sql)
+    if not ok:
+        return jsonify({"ok": False, "error": err}), 400
+
+    s = sql.strip().rstrip(";").rstrip()
+    has_limit = re.search(r"\bLIMIT\s+\d+\s*$", s, re.IGNORECASE) is not None
+    exec_sql = s if has_limit else f"{s} LIMIT {ADMIN_SQL_DEFAULT_LIMIT + 1}"
+
+    client = _new_conn()
+    if not client:
+        return jsonify({"ok": False, "error": "Could not connect to the database."}), 500
+    try:
+        rs = client.execute(exec_sql)
+        cols = list(rs.columns) if hasattr(rs, "columns") else []
+        rows = [list(tuple(r)) for r in rs.rows]
+        truncated = (not has_limit) and len(rows) > ADMIN_SQL_DEFAULT_LIMIT
+        if truncated:
+            rows = rows[:ADMIN_SQL_DEFAULT_LIMIT]
+        return jsonify({"ok": True, "columns": cols, "rows": rows,
+                        "row_count": len(rows), "truncated": truncated})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:500]}), 400
+    finally:
+        try: client.close()
+        except: pass
+
 # Initialize on import - never let DB issues crash the app
 try:
     db_init()

@@ -1224,6 +1224,8 @@ select:focus{outline:none;border-color:var(--green)}
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--navy);border-bottom:2px solid var(--navy);margin-bottom:-2px">👤 Callers</button>
       <button type="button" class="admin-tab-btn" id="admin-tab-btn-timezone" onclick="switchAdminTab('timezone')"
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">🌍 Timezone</button>
+      <button type="button" class="admin-tab-btn" id="admin-tab-btn-sql" onclick="switchAdminTab('sql')"
+        style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">🗄 SQL Query</button>
     </div>
 
     <div id="admin-tab-panel-callers">
@@ -1341,6 +1343,17 @@ select:focus{outline:none;border-color:var(--green)}
         <button class="btn btn-green btn-sm" style="width:100%" onclick="saveTimezoneSetting()">Save Timezone</button>
         <div id="admin-timezone-status" style="font-size:11px;color:var(--t3);margin-top:8px"></div>
       </div>
+    </div>
+
+    <div id="admin-tab-panel-sql" style="display:none">
+      <p style="font-size:12px;color:var(--t2);margin-bottom:12px">Read-only — <b>SELECT</b> statements only, enforced on the server. For any change to data, use the Turso dashboard directly. Results are capped at 500 rows unless your query includes its own LIMIT.</p>
+      <textarea id="admin-sql-input" placeholder="SELECT * FROM follow_ups WHERE done=0 ORDER BY follow_up_at ASC" spellcheck="false" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault();runAdminSqlQuery();}" style="width:100%;min-height:90px;padding:9px 10px;border:1px solid var(--border);border-radius:var(--radius);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;resize:vertical;margin-bottom:8px"></textarea>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <button class="btn btn-green btn-sm" onclick="runAdminSqlQuery()" id="admin-sql-run-btn">▶ Run Query</button>
+        <span style="font-size:10px;color:var(--t3)">Ctrl/Cmd + Enter to run</span>
+        <span id="admin-sql-status" style="font-size:11px;color:var(--t3)"></span>
+      </div>
+      <div id="admin-sql-results" style="border:1px solid var(--border);border-radius:var(--radius);max-height:340px;overflow:auto;display:none"></div>
     </div>
 
     <div class="modal-btns"><button class="btn btn-green btn-sm" onclick="closeAdmin()">Done</button></div>
@@ -2925,10 +2938,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.61";
+const APP_VERSION = "1.62";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.62", date:"2026-07", title:"Read-only SQL Query tab added to Admin",
+    changes:[
+      "New \u201C\ud83d\uddc4 SQL Query\u201D tab in Admin \u2014 run a query and see the results in a table right there, instead of switching to the Turso dashboard.",
+      "Deliberately read-only: only SELECT statements are allowed, enforced on the server (not just hidden in the interface) \u2014 UPDATE/DELETE/INSERT/DROP/etc. are rejected with a clear message. Any actual data change still needs to go through the Turso dashboard directly.",
+      "Results are capped at 500 rows unless your query has its own LIMIT, so a broad query can't return an unbounded amount of data. Ctrl/Cmd+Enter runs the query from the text box.",
+    ]},
   { v:"1.61", date:"2026-07", title:"Fixed follow-up reminder window not actually being draggable",
     changes:[
       "Found the cause: the drag-setup code was running before the reminder window even existed in the page, so it silently found nothing to attach to \u2014 dragging never actually worked despite being built. Fixed by correctly waiting for the page to finish loading first.",
@@ -4016,7 +4035,7 @@ function loadUsers(){
 }
 
 function switchAdminTab(tab){
-  const tabs=['callers','timezone'];
+  const tabs=['callers','timezone','sql'];
   tabs.forEach(t=>{
     const panel=document.getElementById('admin-tab-panel-'+t);
     const btn=document.getElementById('admin-tab-btn-'+t);
@@ -4027,6 +4046,45 @@ function switchAdminTab(tab){
       btn.style.borderBottomColor=active?'var(--navy)':'transparent';
     }
   });
+  // The SQL tab benefits from more horizontal room for results — widen the
+  // modal while it's active, revert for the other, narrower tabs.
+  const modalBox=document.querySelector('#admin-modal .modal');
+  if(modalBox) modalBox.style.maxWidth=(tab==='sql')?'820px':'540px';
+}
+function runAdminSqlQuery(){
+  const input=document.getElementById('admin-sql-input');
+  const status=document.getElementById('admin-sql-status');
+  const results=document.getElementById('admin-sql-results');
+  const btn=document.getElementById('admin-sql-run-btn');
+  const sql=(input.value||'').trim();
+  if(!sql){ status.textContent='Type a SELECT query first.'; status.style.color='#c0392b'; return; }
+  btn.disabled=true; btn.textContent='Running…';
+  status.textContent='Running…'; status.style.color='var(--t3)';
+  results.style.display='none'; results.innerHTML='';
+  fetch('/api/admin/sql_query',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({sql})})
+    .then(r=>r.json()).then(d=>{
+      btn.disabled=false; btn.textContent='▶ Run Query';
+      if(!d.ok){
+        status.textContent='⚠ '+(d.error||'Query failed');
+        status.style.color='#c0392b';
+        return;
+      }
+      status.textContent=d.row_count+' row'+(d.row_count===1?'':'s')+(d.truncated?' (capped at 500 — add your own LIMIT to see more)':'');
+      status.style.color='var(--t3)';
+      if(!d.columns || !d.columns.length){
+        results.style.display='block';
+        results.innerHTML='<div style="padding:14px;color:var(--t3);font-size:12px">Query ran successfully with no columns to display.</div>';
+        return;
+      }
+      const thead='<thead><tr>'+d.columns.map(c=>`<th style="position:sticky;top:0;background:var(--s2);text-align:left;padding:7px 10px;font-size:11px;font-weight:700;color:var(--t3);border-bottom:1px solid var(--border);white-space:nowrap">${esc(c)}</th>`).join('')+'</tr></thead>';
+      const tbody='<tbody>'+d.rows.map(row=>'<tr>'+row.map(v=>`<td style="padding:6px 10px;font-size:12px;border-bottom:1px solid #f2f2f2;white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" title="${esc(v===null?'NULL':String(v))}">${v===null?'<span style="color:var(--t3);font-style:italic">NULL</span>':esc(String(v))}</td>`).join('')+'</tr>').join('');
+      results.style.display='block';
+      results.innerHTML=`<table style="border-collapse:collapse;width:max-content;min-width:100%">${thead}${tbody}</table>`;
+    }).catch(e=>{
+      btn.disabled=false; btn.textContent='▶ Run Query';
+      status.textContent='⚠ '+e.message; status.style.color='#c0392b';
+    });
 }
 function openAdmin(){
   document.getElementById('admin-modal').classList.add('open');
