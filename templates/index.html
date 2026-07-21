@@ -3014,10 +3014,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.68";
+const APP_VERSION = "1.69";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.69", date:"2026-07", title:"FOUND IT: Area of Operation clicks were silently broken by an HTML-quoting bug",
+    changes:[
+      "The real cause of the filter appearing to do nothing: clicking an item in the Area of Operation dropdown (or removing a chip) generated a broken onclick attribute \u2014 the item name's own quote marks were prematurely closing the attribute, silently truncating the click handler into invalid, incomplete code. The click looked like it worked (dropdown closed) but never actually recorded a selection, which is exactly why the banner correctly reported \u2018no filter applied\u2019 every time.",
+      "Fixed by properly HTML-escaping the value before embedding it in the attribute. Verified this precisely with a real HTML parser and an actual simulated click end-to-end \u2014 confirmed both the broken and fixed versions to be certain.",
+    ]},
   { v:"1.68", date:"2026-07", title:"Diagnostic banner now always shows, even when no area is applied",
     changes:[
       "The Area of Operation confirmation banner previously only appeared when an area WAS selected \u2014 meaning if a selection somehow wasn't being picked up, there'd be nothing to notice. It now always shows a clear status either way, and the exact request URL is also logged to the browser console for anyone comfortable checking it.",
@@ -5268,7 +5273,7 @@ function areaPickerSearch(pickerId, query){
     const shown=matches.slice(0,8);
     totalShown+=shown.length;
     html+=`<div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;padding:6px 10px 3px;background:var(--s2)">${esc(g.group)}</div>`;
-    html+=shown.map(item=>`<div onclick="areaPickerSelect('${pickerId}',${JSON.stringify(item)})" style="padding:6px 10px;cursor:pointer;font-size:12.5px" onmouseover="this.style.background='#eaf2fb'" onmouseout="this.style.background='none'">${esc(item)}</div>`).join('');
+    html+=shown.map(item=>`<div onclick="areaPickerSelect('${pickerId}',${esc(JSON.stringify(item))})" style="padding:6px 10px;cursor:pointer;font-size:12.5px" onmouseover="this.style.background='#eaf2fb'" onmouseout="this.style.background='none'">${esc(item)}</div>`).join('');
     if(matches.length>shown.length) html+=`<div style="padding:3px 10px 6px;font-size:10px;color:var(--t3)">+${matches.length-shown.length} more — keep typing to narrow</div>`;
   });
   dropdown.innerHTML = totalShown ? html : '<div style="padding:10px;font-size:12px;color:var(--t3)">No matches</div>';
@@ -5293,7 +5298,7 @@ function renderAreaPickerChips(pickerId){
   if(!container) return;
   const sel=_areaPickerSelections[pickerId]||[];
   container.innerHTML = sel.length
-    ? sel.map(item=>`<span style="display:inline-flex;align-items:center;gap:4px;background:#e8f0fa;color:#1e3a5f;border-radius:12px;padding:3px 8px 3px 10px;font-size:11.5px;margin:2px 4px 2px 0"><span>${esc(item)}</span><span onclick="areaPickerRemove('${pickerId}',${JSON.stringify(item)})" title="Remove" style="cursor:pointer;font-weight:700;padding-left:2px">✕</span></span>`).join('')
+    ? sel.map(item=>`<span style="display:inline-flex;align-items:center;gap:4px;background:#e8f0fa;color:#1e3a5f;border-radius:12px;padding:3px 8px 3px 10px;font-size:11.5px;margin:2px 4px 2px 0"><span>${esc(item)}</span><span onclick="areaPickerRemove('${pickerId}',${esc(JSON.stringify(item))})" title="Remove" style="cursor:pointer;font-weight:700;padding-left:2px">✕</span></span>`).join('')
     : '<span style="font-size:11px;color:var(--t3)">No areas selected — matches all areas</span>';
 }
 document.addEventListener('click', function(e){
