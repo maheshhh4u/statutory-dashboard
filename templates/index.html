@@ -2938,10 +2938,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.63";
+const APP_VERSION = "1.64";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.64", date:"2026-07", title:"Fixed Generate List filters being bypassed by carried-over leftovers",
+    changes:[
+      "Found the actual cause: it wasn't the income filter specifically \u2014 none of the individual filters had a bug. When \u2018Include leftovers\u2019 is selected (the default whenever a previous list has uncompleted items), those leftover charities were being carried into the new list completely unchecked against the new filters, since they come from whatever the PREVIOUS batch was (which may have used a different source, or no filters at all).",
+      "Fixed: leftovers are now checked against the same filters as everything else in the new list. Verified with income, county, charity type, and name filters together \u2014 all correctly exclude non-matching leftovers now.",
+      "This fixes every advanced filter at once, not just income, since they all share the same underlying check.",
+    ]},
   { v:"1.63", date:"2026-07", title:"Fixed out-of-memory crash when generating a list from a large source",
     changes:[
       "Found the cause: every source (Prospects, New, Late, Old, Milestones) is built from scanning large government data files (the annual returns file alone has 600,000+ rows), and once computed, it stayed in memory permanently \u2014 nothing ever freed it. Over the course of a day these accumulate, and generating a list from Late Accounts (a particularly large one) pushed the server over its memory limit and crashed it.",

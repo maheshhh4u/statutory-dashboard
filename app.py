@@ -493,7 +493,35 @@ def cache_get(key,max_age=180):
         ts,val=_cache[key]
         if (datetime.utcnow()-ts).total_seconds()<max_age*60: return val
     return None
-def cache_set(key,val): _cache[key]=(datetime.utcnow(),val)
+
+# The prospects/new/late/old/milestones sources are each built from large CC
+# bulk-file scans (the annual-returns file alone has 600,000+ rows) and can
+# add up to several hundred MB combined once a few different ones have been
+# computed over the course of a day. On a memory-capped instance (e.g.
+# Render's free 512MB tier), letting them all accumulate in _cache forever —
+# which is what happens by default, since nothing ever evicts old entries —
+# risks an out-of-memory crash exactly like the one that just happened.
+# Cap how many of these large sources can be held at once; anything older
+# gets dropped and will simply be recomputed on next access, same as if it
+# had expired normally.
+_LARGE_SOURCE_CACHE_LIMIT = 2
+def _is_large_source_key(k):
+    return k=="prospects" or k=="late" or k=="old_charities" or k.startswith("new_") or k.startswith("milestones_")
+def _evict_stale_large_sources():
+    large_keys=[k for k in _cache if _is_large_source_key(k)]
+    if len(large_keys) <= _LARGE_SOURCE_CACHE_LIMIT: return
+    large_keys.sort(key=lambda k: _cache[k][0])  # oldest first
+    evicted=large_keys[:-_LARGE_SOURCE_CACHE_LIMIT]
+    for k in evicted:
+        del _cache[k]
+    print(f"  [cache] evicted stale large sources to free memory: {evicted}")
+    import gc; gc.collect()
+
+def cache_set(key,val):
+    _cache[key]=(datetime.utcnow(),val)
+    if _is_large_source_key(key):
+        _evict_stale_large_sources()
+
 def flt(v):
     try: return float(v) if v else 0.0
     except: return 0.0
@@ -673,7 +701,11 @@ def compute_late():
         reg=row.get("registered_charity_number","").strip()
         if not reg: continue
         yr=row.get("fin_period_end_date","")[:10]
-        if reg not in latest or yr>latest[reg].get("fin_period_end_date",""): latest[reg]=row
+        if reg not in latest or yr>latest[reg].get("fin_period_end_date",""):
+            # Drop the reg number from the stored value — it's redundant with
+            # the dict key, and this dict can hold 150-200k+ entries, so
+            # trimming even one small field per entry adds up.
+            latest[reg]={k:v for k,v in row.items() if k!="registered_charity_number"}
 
     # PRE-FILTER: determine which charities are late, then only load contacts for those
     late_regs = set()
@@ -4256,8 +4288,14 @@ def api_calling_batch_generate():
 
     selected = []; used = set()
     if mode == "leftovers":
+        # Leftovers come from whatever the PREVIOUS active batch was (which may
+        # have used a different source or no filters at all) — so they must be
+        # checked against THIS generation's filters too, same as everything
+        # else. Without this, carrying leftovers forward would silently defeat
+        # any advanced filter, since these charities never passed through
+        # _passes_filters() in the first place.
         for c in leftovers:
-            if c["reg_number"] not in used:
+            if c["reg_number"] not in used and (not filters or _passes_filters(c)):
                 selected.append(c); used.add(c["reg_number"])
     excl = set(used)
     # Reserve most of the list for genuinely fresh (never-called) charities —
