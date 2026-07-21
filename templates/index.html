@@ -3014,10 +3014,14 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.66";
+const APP_VERSION = "1.67";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.67", date:"2026-07", title:"Added a visible confirmation of which Area(s) were actually searched",
+    changes:[
+      "Charity Search now shows a small banner confirming exactly which Area of Operation values were sent with the search, right above the results \u2014 makes it immediately obvious whether a selection was picked up correctly, and clarifies that it's checked against the charity's registered operating area, not the \u2018County\u2019 column shown in results (which is the contact address \u2014 a different, separate field that can legitimately differ).",
+    ]},
   { v:"1.66", date:"2026-07", title:"Proper Area of Operation filter, matching the Charity Commission's own list",
     changes:[
       "Replaced the old single, manually-typed 'County / Region' box with a proper multi-select \u2014 type to search, click to add, select as many as you like. Covers the full official list: national options, all England local authorities, all London boroughs, all Wales principal areas, and every country outside England & Wales \u2014 grouped exactly as the Charity Commission's own site presents them.",
@@ -3663,16 +3667,20 @@ function doSimple(){
   fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(data=>{sAll=data;renderSR(data,1);}).catch(e=>showSE(e.message));
 }
 function doAdv(){
-  const p=new URLSearchParams({name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),area_of_operation:areaPickerGetValues('advsearch').join(','),what:v('adv-what'),who:v('adv-who'),how:v('adv-how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to'),limit:'50000'});
+  const areas=areaPickerGetValues('advsearch');
+  const p=new URLSearchParams({name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),area_of_operation:areas.join(','),what:v('adv-what'),who:v('adv-who'),how:v('adv-how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to'),limit:'50000'});
   showSL();
   fetch('/api/advanced_search?'+p).then(r=>r.json()).then(d=>{
     sAll=d.charities||[];
     renderSR(sAll,1);
-    if(d.truncated){
-      document.getElementById('s-msg').innerHTML=`<div style="background:#fef3c7;color:#92400e;padding:10px 14px;border-radius:6px;border:1px solid #fcd34d;font-size:13px;margin-top:10px">⚠ Showing first ${d.limit.toLocaleString()} matches. Narrow your filters to see all.</div>`;
-    } else {
-      document.getElementById('s-msg').innerHTML='';
+    let msgHtml='';
+    if(areas.length){
+      msgHtml+=`<div style="background:#eaf2fb;color:#1e3a5f;padding:8px 14px;border-radius:6px;border:1px solid #c9dcf0;font-size:12px;margin-top:10px">📍 Filtered to Area of Operation: <b>${areas.map(a=>esc(a)).join(', ')}</b> (checked against the charity's registered operating area — a separate field from its contact-address "County" shown in results)</div>`;
     }
+    if(d.truncated){
+      msgHtml+=`<div style="background:#fef3c7;color:#92400e;padding:10px 14px;border-radius:6px;border:1px solid #fcd34d;font-size:13px;margin-top:10px">⚠ Showing first ${d.limit.toLocaleString()} matches. Narrow your filters to see all.</div>`;
+    }
+    document.getElementById('s-msg').innerHTML=msgHtml;
   }).catch(e=>showSE(e.message));
 }
 function v(id){const el=document.getElementById(id);return el?el.value:'';}
