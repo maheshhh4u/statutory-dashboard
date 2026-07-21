@@ -2938,10 +2938,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.62";
+const APP_VERSION = "1.63";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.63", date:"2026-07", title:"Fixed out-of-memory crash when generating a list from a large source",
+    changes:[
+      "Found the cause: every source (Prospects, New, Late, Old, Milestones) is built from scanning large government data files (the annual returns file alone has 600,000+ rows), and once computed, it stayed in memory permanently \u2014 nothing ever freed it. Over the course of a day these accumulate, and generating a list from Late Accounts (a particularly large one) pushed the server over its memory limit and crashed it.",
+      "Fixed: only the 2 most recently used large sources are kept in memory at a time \u2014 older ones are dropped and simply recomputed if needed again, the same as if they'd expired normally. Verified this directly, including confirming unrelated cached data is left alone.",
+      "Also trimmed some avoidable memory usage inside the Late Accounts computation itself.",
+    ]},
   { v:"1.62", date:"2026-07", title:"Read-only SQL Query tab added to Admin",
     changes:[
       "New \u201C\ud83d\uddc4 SQL Query\u201D tab in Admin \u2014 run a query and see the results in a table right there, instead of switching to the Turso dashboard.",
