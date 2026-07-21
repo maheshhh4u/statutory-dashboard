@@ -589,7 +589,8 @@ def cache_get(key,max_age=180):
 # had expired normally.
 _LARGE_SOURCE_CACHE_LIMIT = 2
 def _is_large_source_key(k):
-    return k=="prospects" or k=="late" or k=="old_charities" or k.startswith("new_") or k.startswith("milestones_")
+    return (k=="prospects" or k=="late" or k=="old_charities" or k.startswith("new_")
+            or k.startswith("milestones_") or k.startswith("area_regs_"))
 def _evict_stale_large_sources():
     large_keys=[k for k in _cache if _is_large_source_key(k)]
     if len(large_keys) <= _LARGE_SOURCE_CACHE_LIMIT: return
@@ -977,6 +978,9 @@ def _run_advanced_search(criteria, limit=50000):
     rq=str(criteria.get("reg_number","")).strip()
     pq=str(criteria.get("postcode","")).upper().strip()
     cq=str(criteria.get("county","")).upper().strip()
+    areas=criteria.get("area_of_operation") or []
+    if isinstance(areas, str): areas=[a.strip() for a in areas.split(",") if a.strip()]
+    area_regs = _get_regs_for_areas(areas) if areas else None
     wq=str(criteria.get("what","")).upper().strip()
     sq=str(criteria.get("reg_status","registered")).strip()
     imin=flt(criteria.get("inc_min","")); imax=flt(criteria.get("inc_max","")) or float("inf")
@@ -1001,6 +1005,7 @@ def _run_advanced_search(criteria, limit=50000):
         if nq and nq not in name.upper(): continue
         reg=row.get("registered_charity_number","").strip()
         if rq and rq!=reg: continue
+        if area_regs is not None and reg not in area_regs: continue
         pc=row.get("charity_contact_postcode","").upper()
         if pq and not pc.startswith(pq): continue
         county=row.get("charity_contact_address4","").upper()
@@ -1039,6 +1044,7 @@ def advanced_search():
     criteria = {
         "name": request.args.get("name",""), "reg_number": request.args.get("reg_number",""),
         "postcode": request.args.get("postcode",""), "county": request.args.get("county",""),
+        "area_of_operation": request.args.get("area_of_operation",""),
         "what": request.args.get("what",""), "reg_status": request.args.get("reg_status","registered"),
         "inc_min": request.args.get("inc_min",""), "inc_max": request.args.get("inc_max",""),
         "reg_date_from": request.args.get("reg_date_from",""), "reg_date_to": request.args.get("reg_date_to",""),
@@ -4299,7 +4305,11 @@ def api_calling_batch_generate():
     def _num(v, default=None):
         try: return float(v)
         except: return default
+    _gen_areas = filters.get("area_of_operation") or []
+    if isinstance(_gen_areas, str): _gen_areas=[a.strip() for a in _gen_areas.split(",") if a.strip()]
+    _gen_area_regs = _get_regs_for_areas(_gen_areas) if _gen_areas else None
     def _passes_filters(c):
+        if _gen_area_regs is not None and str(c.get("reg_number","")) not in _gen_area_regs: return False
         # Anniversary milestone (exact years) + timing (months to anniversary)
         yrs = filters.get("years")
         if yrs:
@@ -4978,6 +4988,35 @@ def _scan_area_for(reg_set):
     except Exception as e:
         print(f"enrich_regs_for_export area error: {e}")
     return out
+
+def _get_regs_for_areas(area_names):
+    """Given a list of 'where the charity operates' area names (matching the
+    Charity Commission's own taxonomy — national/England local authorities/
+    London boroughs/Wales local authorities/countries), return the set of
+    registered_charity_number that operate in ANY of them. Scans the
+    area-of-operation bulk file once per distinct area selection and caches
+    the resulting reg-number set (much lighter than caching a full per-charity
+    map, since this is just a set of ID strings) — subject to the same
+    large-source eviction as Prospects/Late/etc. so it can't accumulate
+    unbounded memory across many different searches over a day."""
+    area_names = sorted({str(a).strip() for a in (area_names or []) if str(a).strip()})
+    if not area_names: return set()
+    wanted_lower = {a.lower() for a in area_names}
+    cache_key = "area_regs_" + "|".join(area_names)
+    cached = cache_get(cache_key, max_age=1440)  # 24h — this data changes rarely
+    if cached is not None: return cached
+    matched = set()
+    try:
+        cols = {"registered_charity_number","geographic_area_description"}
+        for row in stream_zip_csv(AREA_URL, cols):
+            adesc = row.get("geographic_area_description","").strip()
+            if adesc.lower() in wanted_lower:
+                reg = row.get("registered_charity_number","").strip()
+                if reg: matched.add(reg)
+    except Exception as e:
+        print(f"_get_regs_for_areas error: {e}")
+    cache_set(cache_key, matched)
+    return matched
 
 # The Charity Commission's fixed set of policy category labels (confirmed from a
 # charity's own XML annual-return export). Used to detect which column in the
