@@ -480,6 +480,89 @@ def admin_sql_query():
         try: client.close()
         except: pass
 
+# ── Admin-editable Call Outcome / Stage dropdown options ─────────────────────
+# These seed exactly the options that were previously hardcoded, so existing
+# behaviour/data is unaffected until someone actually edits them in Admin.
+# Stored as JSON in app_settings so they persist and apply to everyone.
+DEFAULT_OUTCOME_OPTIONS = [
+    {"value":"Connected","label":"Connected","icon":"✓"},
+    {"value":"Engaged","label":"Engaged","icon":"💬"},
+    {"value":"Voicemail","label":"Voicemail","icon":"📧"},
+    {"value":"No Answer","label":"No Answer","icon":"📵"},
+    {"value":"Wrong Number","label":"Wrong Number","icon":"⚠"},
+    {"value":"Busy","label":"Busy","icon":"⏱"},
+    {"value":"Line Dropped","label":"Line Dropped","icon":"📴"},
+    {"value":"Email Sent Follow Up","label":"Email Sent Follow Up","icon":"✉"},
+    {"value":"SLT Unavailable - Send Email","label":"SLT Unavailable - Send Email","icon":"📩"},
+    {"value":"No Budget","label":"No Budget","icon":"💷"},
+    {"value":"Info Requested - Will Reach Out","label":"Info Requested – Will Reach Out","icon":"📨"},
+    {"value":"Not Interested","label":"Not Interested","icon":"✗"},
+    {"value":"Interested","label":"Interested — Follow Up","icon":"★"},
+    {"value":"Meeting secured","label":"Meeting Secured","icon":"🤝"},
+]
+DEFAULT_STAGE_OPTIONS = [
+    {"value":"Contacted","label":"Contacted"},
+    {"value":"Call back","label":"Call back"},
+    {"value":"Interested","label":"Interested"},
+    {"value":"Meeting secured","label":"Meeting secured"},
+    {"value":"Not interested","label":"Not interested"},
+    {"value":"Client","label":"Client"},
+]
+
+def get_dropdown_options(kind):
+    key = f"dropdown_options_{kind}"
+    raw = _app_settings.get(key)
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list) and parsed:
+                return parsed
+        except Exception:
+            pass
+    return DEFAULT_OUTCOME_OPTIONS if kind == "outcome" else DEFAULT_STAGE_OPTIONS
+
+@app.route("/api/admin/dropdown_options", methods=["GET"])
+def get_dropdown_options_api():
+    kind = str(request.args.get("type","")).strip()
+    if kind not in ("outcome","stage"):
+        return jsonify({"ok": False, "error": "type must be 'outcome' or 'stage'"}), 400
+    return jsonify({"ok": True, "options": get_dropdown_options(kind)})
+
+@app.route("/api/admin/dropdown_options", methods=["POST"])
+def save_dropdown_options_api():
+    """Admin editing the Call Outcome / Stage option lists. Note: this only
+    changes what's SELECTABLE going forward and what's stored for new
+    entries — it deliberately does NOT change which specific outcomes count
+    toward existing report metrics (Meaningful Interactions, A-Grade Calls,
+    etc.), since that's a business-logic decision that shouldn't silently
+    change just because a new option was added to a dropdown."""
+    data = request.json or {}
+    kind = str(data.get("type","")).strip()
+    options = data.get("options")
+    if kind not in ("outcome","stage"):
+        return jsonify({"ok": False, "error": "type must be 'outcome' or 'stage'"}), 400
+    if not isinstance(options, list) or not options:
+        return jsonify({"ok": False, "error": "Provide a non-empty list of options"}), 400
+    clean = []
+    seen = set()
+    for opt in options:
+        if not isinstance(opt, dict): continue
+        val = str(opt.get("value","")).strip()
+        if not val or val in seen: continue
+        seen.add(val)
+        label = str(opt.get("label","")).strip() or val
+        entry = {"value": val, "label": label}
+        if kind == "outcome":
+            entry["icon"] = str(opt.get("icon","")).strip()
+        clean.append(entry)
+    if not clean:
+        return jsonify({"ok": False, "error": "No valid options after validation"}), 400
+    key = f"dropdown_options_{kind}"
+    val_json = json.dumps(clean)
+    _app_settings[key] = val_json
+    db_exec("INSERT OR REPLACE INTO app_settings(key,value) VALUES(?,?)", (key, val_json))
+    return jsonify({"ok": True, "options": clean})
+
 # Initialize on import - never let DB issues crash the app
 try:
     db_init()

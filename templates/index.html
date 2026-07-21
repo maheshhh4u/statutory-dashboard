@@ -1226,6 +1226,8 @@ select:focus{outline:none;border-color:var(--green)}
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">🌍 Timezone</button>
       <button type="button" class="admin-tab-btn" id="admin-tab-btn-sql" onclick="switchAdminTab('sql')"
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">🗄 SQL Query</button>
+      <button type="button" class="admin-tab-btn" id="admin-tab-btn-dropdowns" onclick="switchAdminTab('dropdowns')"
+        style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">📋 Dropdowns</button>
     </div>
 
     <div id="admin-tab-panel-callers">
@@ -1354,6 +1356,45 @@ select:focus{outline:none;border-color:var(--green)}
         <span id="admin-sql-status" style="font-size:11px;color:var(--t3)"></span>
       </div>
       <div id="admin-sql-results" style="border:1px solid var(--border);border-radius:var(--radius);max-height:340px;overflow:auto;display:none"></div>
+    </div>
+
+    <div id="admin-tab-panel-dropdowns" style="display:none">
+      <p style="font-size:12px;color:var(--t2);margin-bottom:12px">Manage what's selectable in the Call Outcome and Stage dropdowns. Changes apply for everyone immediately. Note: adding a new option makes it selectable and stored correctly — it does not automatically change which outcomes count toward existing report metrics (e.g. Meaningful Interactions); ask if you'd like a new one included in a specific metric.</p>
+
+      <div style="display:flex;gap:4px;border-bottom:1px solid var(--s2);margin-bottom:14px">
+        <button type="button" id="dd-subtab-btn-outcome" onclick="switchDropdownSubTab('outcome')"
+          style="background:none;border:none;padding:7px 12px;font-size:12.5px;font-weight:700;cursor:pointer;color:var(--navy);border-bottom:2px solid var(--navy);margin-bottom:-1px">📞 Call Outcome</button>
+        <button type="button" id="dd-subtab-btn-stage" onclick="switchDropdownSubTab('stage')"
+          style="background:none;border:none;padding:7px 12px;font-size:12.5px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-1px">🏷 Stage</button>
+      </div>
+
+      <div id="dd-subtab-panel-outcome">
+        <div id="dd-outcome-list" style="max-height:250px;overflow-y:auto;margin-bottom:12px;border:1px solid var(--border);border-radius:var(--radius)"></div>
+        <div style="background:var(--s2);border-radius:var(--radius);padding:10px;margin-bottom:10px;position:relative">
+          <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">Add New Outcome</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button type="button" id="dd-outcome-icon-btn" onclick="toggleIconPicker()" title="Choose an icon" style="width:38px;height:34px;font-size:16px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">🙂</button>
+            <input id="dd-outcome-new-label" placeholder="e.g. Callback Requested" maxlength="60" style="flex:1;padding:7px 9px;border:1px solid var(--border);border-radius:4px;font-family:inherit;font-size:13px" onkeydown="if(event.key==='Enter')addOutcomeOption()">
+            <button class="btn btn-green btn-sm" onclick="addOutcomeOption()">+ Add</button>
+          </div>
+          <div id="dd-icon-picker" style="display:none;position:absolute;top:100%;left:10px;z-index:20;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:8px;margin-top:4px;width:280px;max-height:220px;overflow-y:auto"></div>
+        </div>
+        <button class="btn btn-green btn-sm" style="width:100%" onclick="saveOutcomeOptions()">Save Call Outcome Changes</button>
+        <div id="dd-outcome-status" style="font-size:11px;color:var(--t3);margin-top:6px"></div>
+      </div>
+
+      <div id="dd-subtab-panel-stage" style="display:none">
+        <div id="dd-stage-list" style="max-height:250px;overflow-y:auto;margin-bottom:12px;border:1px solid var(--border);border-radius:var(--radius)"></div>
+        <div style="background:var(--s2);border-radius:var(--radius);padding:10px;margin-bottom:10px">
+          <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">Add New Stage</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input id="dd-stage-new-label" placeholder="e.g. Awaiting Trustee Decision" maxlength="60" style="flex:1;padding:7px 9px;border:1px solid var(--border);border-radius:4px;font-family:inherit;font-size:13px" onkeydown="if(event.key==='Enter')addStageOption()">
+            <button class="btn btn-green btn-sm" onclick="addStageOption()">+ Add</button>
+          </div>
+        </div>
+        <button class="btn btn-green btn-sm" style="width:100%" onclick="saveStageOptions()">Save Stage Changes</button>
+        <div id="dd-stage-status" style="font-size:11px;color:var(--t3);margin-top:6px"></div>
+      </div>
     </div>
 
     <div class="modal-btns"><button class="btn btn-green btn-sm" onclick="closeAdmin()">Done</button></div>
@@ -1896,20 +1937,7 @@ function openCallModal(pg,reg,name,ccPhone){
     <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase">Call Outcome</label>
     <select id="call-outcome" onchange="onCallOutcomeChange();saveCallDraft('${esc(reg)}')" style="width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:13px;margin-bottom:10px">
       <option value="">— Select outcome —</option>
-      <option value="Connected">✓ Connected</option>
-      <option value="Engaged">💬 Engaged</option>
-      <option value="Voicemail">📧 Voicemail</option>
-      <option value="No Answer">📵 No Answer</option>
-      <option value="Wrong Number">⚠ Wrong Number</option>
-      <option value="Busy">⏱ Busy</option>
-      <option value="Line Dropped">📴 Line Dropped</option>
-      <option value="Email Sent Follow Up">✉ Email Sent Follow Up</option>
-      <option value="SLT Unavailable - Send Email">📩 SLT Unavailable - Send Email</option>
-      <option value="No Budget">💷 No Budget</option>
-      <option value="Info Requested - Will Reach Out">📨 Info Requested – Will Reach Out</option>
-      <option value="Not Interested">✗ Not Interested</option>
-      <option value="Interested">★ Interested — Follow Up</option>
-      <option value="Meeting secured">🤝 Meeting Secured</option>
+      ${buildOutcomeOptionsHtml()}
     </select>
 
     <div id="call-retry-box" style="display:none;background:#fff9e0;border:1px solid #e8b339;border-radius:6px;padding:8px 10px;margin-bottom:10px">
@@ -2739,8 +2767,52 @@ function sa(a,col,dir,nest){
 }
 
 // ── Status helpers ─────────────────────────────────────────────────────────────
-const STATUS_OPTS=['','Contacted','Call back','Interested','Meeting secured','Not interested','Client'];
-const STATUS_LABELS={'':'— Set Stage —','Contacted':'1. Contacted','Call back':'2. Call back','Interested':'3. Interested','Meeting secured':'4. Meeting secured','Not interested':'5. Not interested','Client':'6. Client'};
+let STATUS_OPTS=['','Contacted','Call back','Interested','Meeting secured','Not interested','Client'];
+let STATUS_LABELS={'':'— Set Stage —','Contacted':'1. Contacted','Call back':'2. Call back','Interested':'3. Interested','Meeting secured':'4. Meeting secured','Not interested':'5. Not interested','Client':'6. Client'};
+let OUTCOME_OPTIONS=[]; // populated from Admin-configured list; falls back to hardcoded defaults in the call popup until loaded
+const DEFAULT_OUTCOME_OPTIONS_FALLBACK=[
+  {value:'Connected',label:'Connected',icon:'✓'},
+  {value:'Engaged',label:'Engaged',icon:'💬'},
+  {value:'Voicemail',label:'Voicemail',icon:'📧'},
+  {value:'No Answer',label:'No Answer',icon:'📵'},
+  {value:'Wrong Number',label:'Wrong Number',icon:'⚠'},
+  {value:'Busy',label:'Busy',icon:'⏱'},
+  {value:'Line Dropped',label:'Line Dropped',icon:'📴'},
+  {value:'Email Sent Follow Up',label:'Email Sent Follow Up',icon:'✉'},
+  {value:'SLT Unavailable - Send Email',label:'SLT Unavailable - Send Email',icon:'📩'},
+  {value:'No Budget',label:'No Budget',icon:'💷'},
+  {value:'Info Requested - Will Reach Out',label:'Info Requested – Will Reach Out',icon:'📨'},
+  {value:'Not Interested',label:'Not Interested',icon:'✗'},
+  {value:'Interested',label:'Interested — Follow Up',icon:'★'},
+  {value:'Meeting secured',label:'Meeting Secured',icon:'🤝'},
+];
+function buildOutcomeOptionsHtml(){
+  const list=(OUTCOME_OPTIONS && OUTCOME_OPTIONS.length) ? OUTCOME_OPTIONS : DEFAULT_OUTCOME_OPTIONS_FALLBACK;
+  return list.map(o=>`<option value="${esc(o.value)}">${o.icon?esc(o.icon)+' ':''}${esc(o.label)}</option>`).join('');
+}
+function applyStageOptions(list){
+  STATUS_OPTS=[''].concat(list.map(o=>o.value));
+  STATUS_LABELS={'':'— Set Stage —'};
+  list.forEach(o=>{ STATUS_LABELS[o.value]=o.label; });
+  // Keep the Daily Calling "Stage" filter dropdown in sync too, preserving
+  // whatever's currently selected if it still exists in the new list.
+  const cfStage=document.getElementById('cf-stage');
+  if(cfStage){
+    const cur=cfStage.value;
+    cfStage.innerHTML='<option value="">All stages</option>'+list.map(o=>`<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+    if(list.some(o=>o.value===cur)) cfStage.value=cur;
+  }
+}
+fetch('/api/admin/dropdown_options?type=stage').then(r=>r.json()).then(d=>{
+  if(d && d.ok && d.options && d.options.length){
+    applyStageOptions(d.options);
+    // Refresh already-rendered Stage dropdowns if the page loaded before this returned
+    if(document.getElementById('callingBody') && typeof loadCalling==='function') loadCalling();
+  }
+}).catch(()=>{});
+fetch('/api/admin/dropdown_options?type=outcome').then(r=>r.json()).then(d=>{
+  if(d && d.ok && d.options) OUTCOME_OPTIONS=d.options;
+}).catch(()=>{});
 function sCls(s){const m={'Client':'s-client','Interested':'s-interested','Meeting secured':'s-meeting','Contacted':'s-contacted','Call back':'s-callback','Not interested':'s-notinterested'};return m[s]||'';}
 function sSelect(pg,reg){
   const k=pg+'|'+reg,cur=statuses[k]||'';
@@ -2938,10 +3010,17 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.64";
+const APP_VERSION = "1.65";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.65", date:"2026-07", title:"Call Outcome and Stage dropdowns now editable from Admin",
+    changes:[
+      "New \u201C\ud83d\udccb Dropdowns\u201D tab in Admin \u2014 add, remove, reorder, and rename the options in the Call Outcome and Stage dropdowns yourselves, no need to ask for every small addition.",
+      "Call Outcome options can have an icon prefix, picked from a built-in icon grid (like Excel's symbol picker) \u2014 Stage options deliberately don't have icons, matching how it's always worked.",
+      "Changes apply to everyone immediately and are used everywhere the dropdowns appear (call popup, the inline Stage selector, and the Stage filter).",
+      "Note: adding a new option makes it selectable and stored correctly, but doesn't automatically fold into existing report metrics like Meaningful Interactions \u2014 that's a separate, deliberate choice so a new dropdown item can't silently change what a report counts.",
+    ]},
   { v:"1.64", date:"2026-07", title:"Fixed Generate List filters being bypassed by carried-over leftovers",
     changes:[
       "Found the actual cause: it wasn't the income filter specifically \u2014 none of the individual filters had a bug. When \u2018Include leftovers\u2019 is selected (the default whenever a previous list has uncompleted items), those leftover charities were being carried into the new list completely unchecked against the new filters, since they come from whatever the PREVIOUS batch was (which may have used a different source, or no filters at all).",
@@ -4047,7 +4126,7 @@ function loadUsers(){
 }
 
 function switchAdminTab(tab){
-  const tabs=['callers','timezone','sql'];
+  const tabs=['callers','timezone','sql','dropdowns'];
   tabs.forEach(t=>{
     const panel=document.getElementById('admin-tab-panel-'+t);
     const btn=document.getElementById('admin-tab-btn-'+t);
@@ -4061,7 +4140,142 @@ function switchAdminTab(tab){
   // The SQL tab benefits from more horizontal room for results — widen the
   // modal while it's active, revert for the other, narrower tabs.
   const modalBox=document.querySelector('#admin-modal .modal');
-  if(modalBox) modalBox.style.maxWidth=(tab==='sql')?'820px':'540px';
+  if(modalBox) modalBox.style.maxWidth=(tab==='sql'||tab==='dropdowns')?'820px':'540px';
+  if(tab==='dropdowns') loadDropdownOptionsTab();
+}
+// ── Admin: Call Outcome / Stage dropdown management ──────────────────────────
+const ICON_PICKER_EMOJIS=['✓','✗','⚠','★','⏱','📞','☎️','📱','📵','📴','💬','📧','✉️','📨','📩','💌','🔔','🔕',
+  '💷','💰','💵','📅','📆','🕐','📋','📝','🤝','👔','👍','👎','😊','🙂','😐','😞','🔥','⭐','🎯','📌','🚫','⛔',
+  '✔️','❌','❓','❗','🔄','📤','📥','🏆','🎉','📈','📉','🚀','⏰','📮','🏢','👤','👥','🧾','💼'];
+let _ddOutcomeWorking=[];
+let _ddStageWorking=[];
+let _ddSelectedIcon='';
+
+function loadDropdownOptionsTab(){
+  Promise.all([
+    fetch('/api/admin/dropdown_options?type=outcome').then(r=>r.json()),
+    fetch('/api/admin/dropdown_options?type=stage').then(r=>r.json()),
+  ]).then(([oRes, sRes])=>{
+    _ddOutcomeWorking=((oRes && oRes.ok && oRes.options) ? oRes.options : DEFAULT_OUTCOME_OPTIONS_FALLBACK).map(o=>Object.assign({},o));
+    _ddStageWorking=((sRes && sRes.ok && sRes.options) ? sRes.options : []).map(o=>Object.assign({},o));
+    renderDdOutcomeList();
+    renderDdStageList();
+  }).catch(()=>{});
+  switchDropdownSubTab('outcome');
+}
+function switchDropdownSubTab(sub){
+  ['outcome','stage'].forEach(s=>{
+    const panel=document.getElementById('dd-subtab-panel-'+s);
+    const btn=document.getElementById('dd-subtab-btn-'+s);
+    const active=(s===sub);
+    if(panel) panel.style.display=active?'block':'none';
+    if(btn){ btn.style.color=active?'var(--navy)':'var(--t3)'; btn.style.borderBottomColor=active?'var(--navy)':'transparent'; }
+  });
+}
+function toggleIconPicker(){
+  const picker=document.getElementById('dd-icon-picker');
+  if(!picker) return;
+  const showing=picker.style.display==='block';
+  if(showing){ picker.style.display='none'; return; }
+  picker.innerHTML=ICON_PICKER_EMOJIS.map(e=>
+    `<span onclick="selectOutcomeIcon('${e}')" title="Use this icon" style="display:inline-block;width:32px;height:32px;line-height:32px;text-align:center;font-size:17px;cursor:pointer;border-radius:5px" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background='none'">${e}</span>`
+  ).join('');
+  picker.style.display='block';
+}
+function selectOutcomeIcon(e){
+  _ddSelectedIcon=e;
+  const btn=document.getElementById('dd-outcome-icon-btn');
+  if(btn) btn.textContent=e;
+  const picker=document.getElementById('dd-icon-picker');
+  if(picker) picker.style.display='none';
+}
+function renderDdOutcomeList(){
+  const el=document.getElementById('dd-outcome-list');
+  if(!el) return;
+  el.innerHTML=_ddOutcomeWorking.map((o,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid #f2f2f2">
+      <span style="font-size:16px;width:20px;text-align:center;flex-shrink:0">${esc(o.icon||'')}</span>
+      <input value="${esc(o.label)}" oninput="_ddOutcomeWorking[${i}].label=this.value" style="flex:1;min-width:0;padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-size:12.5px">
+      <span style="font-size:10px;color:var(--t3);white-space:nowrap;flex-shrink:0">→ ${esc(o.value)}</span>
+      <button type="button" onclick="moveDdOption('outcome',${i},-1)" title="Move up" ${i===0?'disabled':''} style="background:none;border:none;cursor:pointer;font-size:12px;color:var(--t3);flex-shrink:0">▲</button>
+      <button type="button" onclick="moveDdOption('outcome',${i},1)" title="Move down" ${i===_ddOutcomeWorking.length-1?'disabled':''} style="background:none;border:none;cursor:pointer;font-size:12px;color:var(--t3);flex-shrink:0">▼</button>
+      <button type="button" onclick="removeDdOption('outcome',${i})" title="Remove" style="background:none;border:none;cursor:pointer;font-size:14px;color:#c0392b;flex-shrink:0">✕</button>
+    </div>`).join('');
+}
+function renderDdStageList(){
+  const el=document.getElementById('dd-stage-list');
+  if(!el) return;
+  el.innerHTML=_ddStageWorking.map((o,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid #f2f2f2">
+      <input value="${esc(o.label)}" oninput="_ddStageWorking[${i}].label=this.value" style="flex:1;min-width:0;padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-size:12.5px">
+      <span style="font-size:10px;color:var(--t3);white-space:nowrap;flex-shrink:0">→ ${esc(o.value)}</span>
+      <button type="button" onclick="moveDdOption('stage',${i},-1)" title="Move up" ${i===0?'disabled':''} style="background:none;border:none;cursor:pointer;font-size:12px;color:var(--t3);flex-shrink:0">▲</button>
+      <button type="button" onclick="moveDdOption('stage',${i},1)" title="Move down" ${i===_ddStageWorking.length-1?'disabled':''} style="background:none;border:none;cursor:pointer;font-size:12px;color:var(--t3);flex-shrink:0">▼</button>
+      <button type="button" onclick="removeDdOption('stage',${i})" title="Remove" style="background:none;border:none;cursor:pointer;font-size:14px;color:#c0392b;flex-shrink:0">✕</button>
+    </div>`).join('');
+}
+function moveDdOption(kind,i,dir){
+  const arr=kind==='outcome'?_ddOutcomeWorking:_ddStageWorking;
+  const j=i+dir;
+  if(j<0||j>=arr.length) return;
+  const tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp;
+  if(kind==='outcome') renderDdOutcomeList(); else renderDdStageList();
+}
+function removeDdOption(kind,i){
+  const arr=kind==='outcome'?_ddOutcomeWorking:_ddStageWorking;
+  if(arr.length<=1){ alert('At least one option must remain — add a replacement before removing the last one.'); return; }
+  arr.splice(i,1);
+  if(kind==='outcome') renderDdOutcomeList(); else renderDdStageList();
+}
+function addOutcomeOption(){
+  const input=document.getElementById('dd-outcome-new-label');
+  const label=(input.value||'').trim();
+  if(!label){ input.focus(); return; }
+  if(_ddOutcomeWorking.some(o=>o.value.toLowerCase()===label.toLowerCase())){
+    alert('An outcome with that name already exists.'); return;
+  }
+  _ddOutcomeWorking.push({value:label, label:label, icon:_ddSelectedIcon||''});
+  input.value=''; _ddSelectedIcon='';
+  const iconBtn=document.getElementById('dd-outcome-icon-btn'); if(iconBtn) iconBtn.textContent='🙂';
+  renderDdOutcomeList();
+}
+function addStageOption(){
+  const input=document.getElementById('dd-stage-new-label');
+  const label=(input.value||'').trim();
+  if(!label){ input.focus(); return; }
+  if(_ddStageWorking.some(o=>o.value.toLowerCase()===label.toLowerCase())){
+    alert('A stage with that name already exists.'); return;
+  }
+  _ddStageWorking.push({value:label, label:label});
+  input.value='';
+  renderDdStageList();
+}
+function saveOutcomeOptions(){
+  const status=document.getElementById('dd-outcome-status');
+  status.textContent='Saving…'; status.style.color='var(--t3)';
+  fetch('/api/admin/dropdown_options',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({type:'outcome', options:_ddOutcomeWorking})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ status.textContent='⚠ '+(d.error||'Save failed'); status.style.color='#c0392b'; return; }
+      OUTCOME_OPTIONS=d.options;
+      _ddOutcomeWorking=d.options.map(o=>Object.assign({},o));
+      renderDdOutcomeList();
+      status.textContent='✓ Saved — applies to everyone now.'; status.style.color='var(--green)';
+    }).catch(e=>{ status.textContent='⚠ '+e.message; status.style.color='#c0392b'; });
+}
+function saveStageOptions(){
+  const status=document.getElementById('dd-stage-status');
+  status.textContent='Saving…'; status.style.color='var(--t3)';
+  fetch('/api/admin/dropdown_options',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({type:'stage', options:_ddStageWorking})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ status.textContent='⚠ '+(d.error||'Save failed'); status.style.color='#c0392b'; return; }
+      applyStageOptions(d.options);
+      _ddStageWorking=d.options.map(o=>Object.assign({},o));
+      renderDdStageList();
+      status.textContent='✓ Saved — applies to everyone now.'; status.style.color='var(--green)';
+      if(document.getElementById('callingBody') && typeof loadCalling==='function') loadCalling();
+    }).catch(e=>{ status.textContent='⚠ '+e.message; status.style.color='#c0392b'; });
 }
 function runAdminSqlQuery(){
   const input=document.getElementById('admin-sql-input');
