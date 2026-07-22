@@ -590,7 +590,7 @@ def cache_get(key,max_age=180):
 _LARGE_SOURCE_CACHE_LIMIT = 2
 def _is_large_source_key(k):
     return (k=="prospects" or k=="late" or k=="old_charities" or k.startswith("new_")
-            or k.startswith("milestones_") or k.startswith("area_regs_"))
+            or k.startswith("milestones_") or k.startswith("area_regs_") or k.startswith("classif_regs_"))
 def _evict_stale_large_sources():
     large_keys=[k for k in _cache if _is_large_source_key(k)]
     if len(large_keys) <= _LARGE_SOURCE_CACHE_LIMIT: return
@@ -981,6 +981,15 @@ def _run_advanced_search(criteria, limit=50000):
     areas=criteria.get("area_of_operation") or []
     if isinstance(areas, str): areas=[a.strip() for a in areas.split(",") if a.strip()]
     area_regs = _get_regs_for_areas(areas) if areas else None
+    what_names=criteria.get("what_class") or []
+    if isinstance(what_names, str): what_names=[a.strip() for a in what_names.split(",") if a.strip()]
+    what_class_regs = _get_regs_for_classification("what", what_names) if what_names else None
+    who_names=criteria.get("who_class") or []
+    if isinstance(who_names, str): who_names=[a.strip() for a in who_names.split(",") if a.strip()]
+    who_class_regs = _get_regs_for_classification("who", who_names) if who_names else None
+    how_names=criteria.get("how_class") or []
+    if isinstance(how_names, str): how_names=[a.strip() for a in how_names.split(",") if a.strip()]
+    how_class_regs = _get_regs_for_classification("how", how_names) if how_names else None
     wq=str(criteria.get("what","")).upper().strip()
     sq=str(criteria.get("reg_status","registered")).strip()
     imin=flt(criteria.get("inc_min","")); imax=flt(criteria.get("inc_max","")) or float("inf")
@@ -1006,6 +1015,9 @@ def _run_advanced_search(criteria, limit=50000):
         reg=row.get("registered_charity_number","").strip()
         if rq and rq!=reg: continue
         if area_regs is not None and reg not in area_regs: continue
+        if what_class_regs is not None and reg not in what_class_regs: continue
+        if who_class_regs is not None and reg not in who_class_regs: continue
+        if how_class_regs is not None and reg not in how_class_regs: continue
         pc=row.get("charity_contact_postcode","").upper()
         if pq and not pc.startswith(pq): continue
         county=row.get("charity_contact_address4","").upper()
@@ -1045,6 +1057,8 @@ def advanced_search():
         "name": request.args.get("name",""), "reg_number": request.args.get("reg_number",""),
         "postcode": request.args.get("postcode",""), "county": request.args.get("county",""),
         "area_of_operation": request.args.get("area_of_operation",""),
+        "what_class": request.args.get("what_class",""), "who_class": request.args.get("who_class",""),
+        "how_class": request.args.get("how_class",""),
         "what": request.args.get("what",""), "reg_status": request.args.get("reg_status","registered"),
         "inc_min": request.args.get("inc_min",""), "inc_max": request.args.get("inc_max",""),
         "reg_date_from": request.args.get("reg_date_from",""), "reg_date_to": request.args.get("reg_date_to",""),
@@ -4318,8 +4332,20 @@ def api_calling_batch_generate():
     _gen_areas = filters.get("area_of_operation") or []
     if isinstance(_gen_areas, str): _gen_areas=[a.strip() for a in _gen_areas.split(",") if a.strip()]
     _gen_area_regs = _get_regs_for_areas(_gen_areas) if _gen_areas else None
+    _gen_what = filters.get("what_class") or []
+    if isinstance(_gen_what, str): _gen_what=[a.strip() for a in _gen_what.split(",") if a.strip()]
+    _gen_what_regs = _get_regs_for_classification("what", _gen_what) if _gen_what else None
+    _gen_who = filters.get("who_class") or []
+    if isinstance(_gen_who, str): _gen_who=[a.strip() for a in _gen_who.split(",") if a.strip()]
+    _gen_who_regs = _get_regs_for_classification("who", _gen_who) if _gen_who else None
+    _gen_how = filters.get("how_class") or []
+    if isinstance(_gen_how, str): _gen_how=[a.strip() for a in _gen_how.split(",") if a.strip()]
+    _gen_how_regs = _get_regs_for_classification("how", _gen_how) if _gen_how else None
     def _passes_filters(c):
         if _gen_area_regs is not None and str(c.get("reg_number","")) not in _gen_area_regs: return False
+        if _gen_what_regs is not None and str(c.get("reg_number","")) not in _gen_what_regs: return False
+        if _gen_who_regs is not None and str(c.get("reg_number","")) not in _gen_who_regs: return False
+        if _gen_how_regs is not None and str(c.get("reg_number","")) not in _gen_how_regs: return False
         # Anniversary milestone (exact years) + timing (months to anniversary)
         yrs = filters.get("years")
         if yrs:
@@ -5025,6 +5051,44 @@ def _get_regs_for_areas(area_names):
                 if reg: matched.add(reg)
     except Exception as e:
         print(f"_get_regs_for_areas error: {e}")
+    cache_set(cache_key, matched)
+    return matched
+
+# Reverse of CC_CODE_MAP (defined further below) is built lazily on first use,
+# since CC_CODE_MAP itself is defined later in the file.
+_CC_NAME_TO_CODE = None
+def _cc_name_to_code():
+    global _CC_NAME_TO_CODE
+    if _CC_NAME_TO_CODE is None:
+        _CC_NAME_TO_CODE = {v.lower(): k for k, v in CC_CODE_MAP.items()}
+    return _CC_NAME_TO_CODE
+
+def _get_regs_for_classification(kind, names):
+    """kind: 'what' / 'who' / 'how'. names: human-readable classification
+    labels (e.g. ['Disability', 'Education/training'], matching the
+    Charity Commission's own What/Who/How taxonomy — see CC_CODE_MAP below,
+    which is the same reference data the official site itself uses). Returns
+    the set of registered_charity_number classified under ANY of them.
+    Same scan-once-per-selection-and-cache pattern as _get_regs_for_areas."""
+    names = sorted({str(n).strip() for n in (names or []) if str(n).strip()})
+    if not names: return set()
+    name_to_code = _cc_name_to_code()
+    codes = {name_to_code.get(n.lower()) for n in names}
+    codes = {c for c in codes if c}
+    if not codes: return set()
+    cache_key = f"classif_regs_{kind}_" + "|".join(sorted(codes))
+    cached = cache_get(cache_key, max_age=1440)
+    if cached is not None: return cached
+    matched = set()
+    try:
+        cols = {"registered_charity_number","classification_code","classification_type"}
+        for row in stream_zip_csv(CLASSIF_URL, cols):
+            if row.get("classification_type","").strip().lower() != kind: continue
+            if row.get("classification_code","").strip() in codes:
+                reg = row.get("registered_charity_number","").strip()
+                if reg: matched.add(reg)
+    except Exception as e:
+        print(f"_get_regs_for_classification error: {e}")
     cache_set(cache_key, matched)
     return matched
 

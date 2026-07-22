@@ -698,9 +698,18 @@ select:focus{outline:none;border-color:var(--green)}
         <button type="button" id="area-picker-btn-advsearch" onclick="openAreaPickerModal('advsearch')" style="width:100%;text-align:left;padding:7px 9px;border:1px solid var(--bd,#ccd3dc);border-radius:4px;font-family:inherit;font-size:13px;background:#fff;cursor:pointer">🌍 Select Area of Operation…</button>
         <div id="area-picker-chips-advsearch" style="margin-top:6px"></div>
       </div>
-      <div class="adv-field"><label>What it does (activities)</label><input id="adv-what" placeholder="e.g. education, housing"></div>
-      <div class="adv-field"><label>Who it helps</label><input id="adv-who" placeholder="e.g. children, elderly"></div>
-      <div class="adv-field"><label>How it helps</label><input id="adv-how" placeholder="e.g. grants, services"></div>
+      <div class="adv-field"><label>What it does (activities)</label>
+        <button type="button" id="area-picker-btn-advsearch_what" onclick="openAreaPickerModal('advsearch_what')" style="width:100%;text-align:left;padding:7px 9px;border:1px solid var(--bd,#ccd3dc);border-radius:4px;font-family:inherit;font-size:13px;background:#fff;cursor:pointer">📋 Select What it does…</button>
+        <div id="area-picker-chips-advsearch_what" style="margin-top:6px"></div>
+      </div>
+      <div class="adv-field"><label>Who it helps</label>
+        <button type="button" id="area-picker-btn-advsearch_who" onclick="openAreaPickerModal('advsearch_who')" style="width:100%;text-align:left;padding:7px 9px;border:1px solid var(--bd,#ccd3dc);border-radius:4px;font-family:inherit;font-size:13px;background:#fff;cursor:pointer">🤝 Select Who it helps…</button>
+        <div id="area-picker-chips-advsearch_who" style="margin-top:6px"></div>
+      </div>
+      <div class="adv-field"><label>How it helps</label>
+        <button type="button" id="area-picker-btn-advsearch_how" onclick="openAreaPickerModal('advsearch_how')" style="width:100%;text-align:left;padding:7px 9px;border:1px solid var(--bd,#ccd3dc);border-radius:4px;font-family:inherit;font-size:13px;background:#fff;cursor:pointer">🛠 Select How it helps…</button>
+        <div id="area-picker-chips-advsearch_how" style="margin-top:6px"></div>
+      </div>
       <div class="adv-field"><label>Registration Status</label><select id="adv-status"><option value="registered">Registered only</option><option value="removed">Removed only</option><option value="all">All</option></select></div>
       <div class="adv-field"><label>Charity Type</label><select id="adv-type"><option value="">Any</option><option value="CIO">CIO</option><option value="Charitable Company">Charitable Company</option><option value="Trust">Trust</option></select></div>
       <div class="adv-field"><label>Min Income £</label><input type="number" id="adv-inc-min" placeholder="e.g. 100000"></div>
@@ -3013,10 +3022,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.71";
+const APP_VERSION = "1.72";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.72", date:"2026-07", title:"What/Who/How filters get the same visual checklist treatment",
+    changes:[
+      "\u201CWhat it does\u201D, \u201CWho it helps\u201D, and \u201CHow it helps\u201D are now the same visual checklist popup as Area of Operation, using the Charity Commission's own official categories (17 What / 7 Who / 10 How) \u2014 available in both Charity Search and Generate List.",
+      "Along the way, found and fixed something that had never worked: \u201CWho it helps\u201D and \u201CHow it helps\u201D were previously silently ignored by the search entirely \u2014 typing into those boxes did nothing. They're now properly wired up using the Charity Commission's structured classification data, which is more accurate than free text ever could have been anyway.",
+      "The confirmation banner above Charity Search results now shows all active Area/What/Who/How filters together in one place.",
+    ]},
   { v:"1.71", date:"2026-07", title:"Area of Operation is now a visual checklist popup, not a text box",
     changes:[
       "Replaced the type-to-search box with a button (\u201C\ud83c\udf0d Select Area of Operation\u2026\u201D) that opens a large, scrollable popup listing all 453 areas as checkboxes, grouped exactly as before \u2014 tick as many as you like, with a live selected count, a filter box at the top if you want to jump to a section quickly, a Clear all option, and Apply/Cancel. Available in both Charity Search and Generate List.",
@@ -3686,17 +3701,25 @@ function doSimple(){
 }
 function doAdv(){
   const areas=areaPickerGetValues('advsearch');
-  const p=new URLSearchParams({name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),area_of_operation:areas.join(','),what:v('adv-what'),who:v('adv-who'),how:v('adv-how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to'),limit:'50000'});
+  const whatSel=areaPickerGetValues('advsearch_what');
+  const whoSel=areaPickerGetValues('advsearch_who');
+  const howSel=areaPickerGetValues('advsearch_how');
+  const p=new URLSearchParams({name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),area_of_operation:areas.join(','),what_class:whatSel.join(','),who_class:whoSel.join(','),how_class:howSel.join(','),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to'),limit:'50000'});
   console.log('[Advanced Search] full request URL:', '/api/advanced_search?'+p.toString());
   showSL();
   fetch('/api/advanced_search?'+p).then(r=>r.json()).then(d=>{
     sAll=d.charities||[];
     renderSR(sAll,1);
     let msgHtml='';
-    if(areas.length){
-      msgHtml+=`<div style="background:#eaf2fb;color:#1e3a5f;padding:8px 14px;border-radius:6px;border:1px solid #c9dcf0;font-size:12px;margin-top:10px">📍 Filtered to Area of Operation: <b>${areas.map(a=>esc(a)).join(', ')}</b> (checked against the charity's registered operating area — a separate field from its contact-address "County" shown in results)</div>`;
+    const filterParts=[];
+    if(areas.length) filterParts.push(`Area of Operation: <b>${areas.map(a=>esc(a)).join(', ')}</b>`);
+    if(whatSel.length) filterParts.push(`What it does: <b>${whatSel.map(a=>esc(a)).join(', ')}</b>`);
+    if(whoSel.length) filterParts.push(`Who it helps: <b>${whoSel.map(a=>esc(a)).join(', ')}</b>`);
+    if(howSel.length) filterParts.push(`How it helps: <b>${howSel.map(a=>esc(a)).join(', ')}</b>`);
+    if(filterParts.length){
+      msgHtml+=`<div style="background:#eaf2fb;color:#1e3a5f;padding:8px 14px;border-radius:6px;border:1px solid #c9dcf0;font-size:12px;margin-top:10px">📍 ${filterParts.join(' &nbsp;|&nbsp; ')}</div>`;
     } else {
-      msgHtml+=`<div style="background:#f5f5f5;color:#666;padding:8px 14px;border-radius:6px;border:1px solid #ddd;font-size:12px;margin-top:10px">📍 No Area of Operation filter applied — showing all areas.</div>`;
+      msgHtml+=`<div style="background:#f5f5f5;color:#666;padding:8px 14px;border-radius:6px;border:1px solid #ddd;font-size:12px;margin-top:10px">📍 No Area/What/Who/How filters applied.</div>`;
     }
     if(d.truncated){
       msgHtml+=`<div style="background:#fef3c7;color:#92400e;padding:10px 14px;border-radius:6px;border:1px solid #fcd34d;font-size:13px;margin-top:10px">⚠ Showing first ${d.limit.toLocaleString()} matches. Narrow your filters to see all.</div>`;
@@ -3753,7 +3776,7 @@ function renderSR(data,pg){
 }
 function sortS(col){const s=srt.s;s.d=(s.c===col)?-s.d:1;s.c=col;renderSR(sAll,1);}
 function clearSearch(){document.getElementById('search-q').value='';document.getElementById('s-results').style.display='none';document.getElementById('s-empty').style.display='block';sAll=[];}
-function clearAdv(){['adv-name','adv-reg','adv-postcode','adv-what','adv-who','adv-how','adv-inc-min','adv-inc-max','adv-date-from','adv-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('adv-status').value='registered';document.getElementById('adv-type').value='';areaPickerClear('advsearch');}
+function clearAdv(){['adv-name','adv-reg','adv-postcode','adv-inc-min','adv-inc-max','adv-date-from','adv-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('adv-status').value='registered';document.getElementById('adv-type').value='';areaPickerClear('advsearch');areaPickerClear('advsearch_what');areaPickerClear('advsearch_who');areaPickerClear('advsearch_how');}
 function dlSearch(btn){
   if(!sAll.length)return;
   const regs=sAll.map(c=>c.reg_number);
@@ -3793,7 +3816,7 @@ function openSaveModal(){document.getElementById('save-modal').classList.add('op
 function closeSave(){document.getElementById('save-modal').classList.remove('open');}
 function confirmSave(){
   const name=document.getElementById('save-name').value.trim();if(!name)return;
-  const criteria={name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),area_of_operation:areaPickerGetValues('advsearch'),what:v('adv-what'),who:v('adv-who'),how:v('adv-how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to')};
+  const criteria={name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),area_of_operation:areaPickerGetValues('advsearch'),what_class:areaPickerGetValues('advsearch_what'),who_class:areaPickerGetValues('advsearch_who'),how_class:areaPickerGetValues('advsearch_how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to')};
   ss[name]=criteria;
   fetch('/api/saved_searches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,criteria})});
   closeSave();document.getElementById('save-name').value='';loadSavedList();
@@ -3809,9 +3832,12 @@ function loadSaved(){
   const name=document.getElementById('saved-sel').value;if(!name)return;
   fetch('/api/saved_searches/'+encodeURIComponent(name)).then(r=>r.json()).then(c=>{
     setMode('advanced');
-    const fm={'adv-name':'name','adv-reg':'reg_number','adv-postcode':'postcode','adv-what':'what','adv-who':'who','adv-how':'how','adv-status':'reg_status','adv-type':'charity_type','adv-inc-min':'inc_min','adv-inc-max':'inc_max','adv-date-from':'reg_date_from','adv-date-to':'reg_date_to'};
+    const fm={'adv-name':'name','adv-reg':'reg_number','adv-postcode':'postcode','adv-status':'reg_status','adv-type':'charity_type','adv-inc-min':'inc_min','adv-inc-max':'inc_max','adv-date-from':'reg_date_from','adv-date-to':'reg_date_to'};
     Object.entries(fm).forEach(([id,key])=>{const el=document.getElementById(id);if(el&&c[key])el.value=c[key];});
     areaPickerInit('advsearch', Array.isArray(c.area_of_operation)?c.area_of_operation:[]);
+    areaPickerInit('advsearch_what', Array.isArray(c.what_class)?c.what_class:[]);
+    areaPickerInit('advsearch_who', Array.isArray(c.who_class)?c.who_class:[]);
+    areaPickerInit('advsearch_how', Array.isArray(c.how_class)?c.how_class:[]);
     doAdv();
   });
 }
@@ -5258,6 +5284,21 @@ function generateList(){
   }).catch(()=>showGeneratePopup(cat, 0));
 }
 const AREA_OF_OPERATION_GROUPS=[{"group": "National", "items": ["Throughout England and Wales", "Throughout England", "Throughout London", "Throughout Wales"]}, {"group": "Local areas in England", "items": ["Barnsley", "Bath And North East Somerset", "Bedford", "Birmingham City", "Blackburn With Darwen", "Blackpool", "Bolton", "Bournemouth", "Bracknell Forest", "Bradford City", "Brighton And Hove", "Bristol City", "Buckinghamshire", "Bury", "Calderdale", "Cambridgeshire", "Central Bedfordshire", "Cheshire East", "Cheshire West & Chester", "City Of Wakefield", "City Of York", "Cornwall", "Coventry City", "Cumbria", "Darlington", "Derby City", "Derbyshire", "Devon", "Doncaster", "Dorset", "Dudley", "Durham", "East Riding Of Yorkshire", "East Sussex", "Essex", "Gateshead", "Gloucestershire", "Halton", "Hampshire", "Hartlepool", "Herefordshire", "Hertfordshire", "Isle Of Wight", "Isles Of Scilly", "Kent", "Kingston Upon Hull City", "Kirklees", "Knowsley", "Lancashire", "Leeds City", "Leicester City", "Leicestershire", "Lincolnshire", "Liverpool City", "Luton", "Manchester City", "Medway", "Middlesbrough", "Milton Keynes", "Newcastle Upon Tyne City", "Norfolk", "North East Lincolnshire", "North Lincolnshire", "North Somerset", "North Tyneside", "North Yorkshire", "Northamptonshire", "Northumberland", "Nottingham City", "Nottinghamshire", "Oldham", "Oxfordshire", "Peterborough City", "Plymouth City", "Poole", "Portsmouth City", "Reading", "Redcar And Cleveland", "Rochdale", "Rotherham", "Rutland", "Salford City", "Sandwell", "Sefton", "Sheffield City", "Shropshire", "Slough", "Solihull", "Somerset", "South Gloucestershire", "South Tyneside", "Southampton City", "Southend-on-sea", "St Helens", "Staffordshire", "Stockport", "Stockton-on-tees", "Stoke-on-trent City", "Suffolk", "Sunderland", "Surrey", "Swindon", "Tameside", "Telford & Wrekin", "Thurrock", "Torbay", "Trafford", "Walsall", "Warrington", "Warwickshire", "West Berkshire", "West Sussex", "Wigan", "Wiltshire", "Windsor And Maidenhead", "Wirral", "Wokingham", "Wolverhampton", "Worcestershire"]}, {"group": "London Boroughs", "items": ["Barking And Dagenham", "Barnet", "Bexley", "Brent", "Bromley", "Camden", "City Of London", "City Of Westminster", "Croydon", "Ealing", "Enfield", "Greenwich", "Hackney", "Hammersmith And Fulham", "Haringey", "Harrow", "Havering", "Hillingdon", "Hounslow", "Islington", "Kensington And Chelsea", "Kingston Upon Thames", "Lambeth", "Lewisham", "Merton", "Newham", "Redbridge", "Richmond Upon Thames", "Southwark", "Sutton", "Tower Hamlets", "Waltham Forest", "Wandsworth"]}, {"group": "Local areas in Wales", "items": ["Blaenau Gwent", "Bridgend", "Caerphilly", "Cardiff", "Carmarthenshire", "Ceredigion", "City Of Swansea", "Conwy", "Denbighshire", "Flintshire", "Gwynedd", "Isle Of Anglesey", "Merthyr Tydfil", "Monmouthshire", "Neath Port Talbot", "Newport City", "Pembrokeshire", "Powys", "Rhondda Cynon Taff", "Torfaen", "Vale Of Glamorgan", "Wrexham"]}, {"group": "Countries (outside England & Wales)", "items": ["Abu Dhabi", "Afghanistan", "Ajman", "Akrotiri", "Aland Islands", "Albania", "Algeria", "American Samoa", "Andorra", "Angola", "Anguilla", "Antarctica", "Antigua And Barbuda", "Argentina", "Armenia", "Aruba", "Ascension", "Australia", "Austria", "Azerbaijan", "Bahrain", "Baker Island", "Bangladesh", "Barbados", "Belarus", "Belgium", "Belize", "Benin", "Bermuda", "Bhutan", "Bolivia", "Bonaire", "Bosnia And Herzegovina", "Botswana", "Bouvet Island", "Brazil", "British Antarctic Territory", "British Indian Ocean Territory", "British Virgin Islands", "Brunei", "Bulgaria", "Burkina Faso", "Burma", "Burundi", "Cambodia", "Cameroon", "Canada", "Cape Verde", "Cayman Islands", "Central African Republic", "Ceuta", "Chad", "Chile", "China", "Christmas Island", "Cocos (KEELING) ISLANDS", "Colombia", "Comoros", "Congo", "Congo (Democratic Republic)", "Cook Islands", "Costa Rica", "Croatia", "Cuba", "Cyprus", "Czech Republic", "Denmark", "Dhekelia", "Djibouti", "Dominica", "Dominican Republic", "Dubai", "East Timor", "Easter Island", "Ecuador", "Egypt", "El Salvador", "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini", "Ethiopia", "Falkland Islands", "Faroe Islands", "Fiji", "Finland", "France", "French Guiana", "French Polynesia", "French Southern Territories", "Fujairah", "Gabon", "Georgia", "Germany", "Ghana", "Gibraltar", "Greece", "Greenland", "Grenada", "Guadeloupe", "Guam", "Guatemala", "Guernsey", "Guinea", "Guinea-bissau", "Guyana", "Haiti", "Heard Island And Mcdonald Islands", "Honduras", "Hong Kong", "Howland Island", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", "Isle Of Man", "Israel", "Italy", "Ivory Coast", "Jamaica", "Japan", "Jarvis Island", "Jersey", "Johnston Atoll", "Jordan", "Kazakhstan", "Kenya", "Kingman Reef", "Kiribati", "Kosovo", "Kuwait", "Kyrgyzstan", "Laos", "Latvia", "Lebanon", "Lesotho", "Liberia", "Libya", "Liechtenstein", "Lithuania", "Luxembourg", "Macau", "Macedonia", "Madagascar", "Malawi", "Malaysia", "Maldives", "Mali", "Malta", "Marshall Islands", "Martinique", "Mauritania", "Mauritius", "Mayotte", "Melilla", "Mexico", "Micronesia", "Midway Islands", "Moldova", "Monaco", "Mongolia", "Montenegro", "Montserrat", "Morocco", "Mozambique", "Namibia", "Nauru", "Navassa Island", "Nepal", "Netherlands", "Netherlands Antilles", "New Caledonia", "New Zealand", "Nicaragua", "Niger", "Nigeria", "Niue", "Norfolk Island", "North Korea", "Northern Ireland", "Northern Mariana Islands", "Norway", "Occupied Palestinian Territories", "Oman", "Pakistan", "Palau", "Palmyra Atoll", "Panama", "Papua New Guinea", "Paraguay", "Peru", "Philippines", "Pitcairn, Henderson, Ducie And Oeno Islands", "Poland", "Portugal", "Puerto Rico", "Qatar", "Ras Al-khaimah", "Romania", "Russia", "Rwanda", "Réunion", "Saba", "Saint Barthélemy", "Saint Helena", "Saint Pierre And Miquelon", "Saint Vincent", "Saint-Martin", "Samoa", "San Marino", "Saudi Arabia", "Scotland", "Senegal", "Serbia", "Seychelles", "Sierra Leone", "Singapore", "Sint Eustatius", "Sint Maarten", "Slovakia", "Slovenia", "Solomon Islands", "Somalia", "South Africa", "South Georgia And South Sandwich Islands", "South Korea", "South Sudan", "Spain", "Sri Lanka", "St Kitts And Nevis", "St Lucia", "Sudan", "Suriname", "Svalbard And Jan Mayen", "Sweden", "Switzerland", "Syria", "São Tomé And Principe", "Taiwan", "Tajikistan", "Tanzania", "Thailand", "The Bahamas", "The Gambia", "Togo", "Tokelau", "Tonga", "Trinidad And Tobago", "Tristan Da Cunha", "Tunisia", "Turkey", "Turkmenistan", "Turks And Caicos Islands", "Tuvalu", "Uganda", "Ukraine", "Umm Al-quwain", "United Arab Emirates", "United States", "United States Virgin Islands", "Uruguay", "Uzbekistan", "Vanuatu", "Vatican City", "Venezuela", "Vietnam", "Wake Island", "Wallis And Futuna", "Western Sahara", "Yemen", "Zambia", "Zimbabwe"]}];
+const WHAT_GROUPS=[{"group":"What the charity does","items":["General Charitable Purposes","Education/training","The Advancement Of Health Or Saving Of Lives","Disability","The Prevention Or Relief Of Poverty","Overseas Aid/famine Relief","Accommodation/housing","Religious Activities","Arts/culture/heritage/science","Amateur Sport","Animals","Environment/conservation/heritage","Economic/community Development/employment","Armed Forces/emergency Service Efficiency","Human Rights/religious Or Racial Harmony/equality Or Diversity","Recreation","Other Charitable Purposes"]}];
+const WHO_GROUPS=[{"group":"Who the charity helps","items":["Children/young People","Elderly/old People","People With Disabilities","People Of A Particular Ethnic Or Racial Origin","Other Charities Or Voluntary Bodies","Other Defined Groups","The General Public/mankind"]}];
+const HOW_GROUPS=[{"group":"How the charity helps","items":["Makes Grants To Individuals","Makes Grants To Organisations","Provides Other Finance","Provides Human Resources","Provides Buildings/facilities/open Space","Provides Services","Provides Advocacy/advice/information","Sponsors Or Undertakes Research","Acts As An Umbrella Or Resource Body","Other Charitable Activities"]}];
+// Registry so the one checklist-modal implementation can serve any picker —
+// each pickerId maps to its own data source, modal title, and button icon/label.
+const AREA_PICKER_REGISTRY={
+  advsearch:      {groups:AREA_OF_OPERATION_GROUPS, title:'🌍 Select Area(s) of Operation',       icon:'🌍', label:'Area of Operation'},
+  genlist:        {groups:AREA_OF_OPERATION_GROUPS, title:'🌍 Select Area(s) of Operation',       icon:'🌍', label:'Area of Operation'},
+  advsearch_what: {groups:WHAT_GROUPS,              title:'📋 Select What The Charity Does',      icon:'📋', label:'What it does'},
+  genlist_what:   {groups:WHAT_GROUPS,              title:'📋 Select What The Charity Does',      icon:'📋', label:'What it does'},
+  advsearch_who:  {groups:WHO_GROUPS,               title:'🤝 Select Who The Charity Helps',      icon:'🤝', label:'Who it helps'},
+  genlist_who:    {groups:WHO_GROUPS,               title:'🤝 Select Who The Charity Helps',      icon:'🤝', label:'Who it helps'},
+  advsearch_how:  {groups:HOW_GROUPS,               title:'🛠 Select How The Charity Helps',       icon:'🛠', label:'How it helps'},
+  genlist_how:    {groups:HOW_GROUPS,               title:'🛠 Select How The Charity Helps',       icon:'🛠', label:'How it helps'},
+};
 
 // ── Reusable "Area of Operation" multi-select picker ─────────────────────────
 // Supports multiple independent instances on the page via a unique pickerId
@@ -5271,8 +5312,9 @@ function areaPickerClear(pickerId){ areaPickerInit(pickerId, []); }
 function refreshAreaPickerButton(pickerId){
   const btn=document.getElementById('area-picker-btn-'+pickerId);
   if(!btn) return;
+  const cfg=AREA_PICKER_REGISTRY[pickerId] || {icon:'🌍', label:'Options'};
   const n=(_areaPickerSelections[pickerId]||[]).length;
-  btn.textContent = n ? `🌍 Area of Operation — ${n} selected` : `🌍 Select Area of Operation…`;
+  btn.textContent = n ? `${cfg.icon} ${cfg.label} — ${n} selected` : `${cfg.icon} Select ${cfg.label}…`;
 }
 
 // ── Big checklist modal for browsing/selecting areas visually ───────────────
@@ -5284,7 +5326,7 @@ function refreshAreaPickerButton(pickerId){
 // from) already uses that shared container for itself, so reusing it here
 // would silently wipe out whatever she'd already filled in on that popup.
 let _areaModalWorking={};
-function showAreaModal(html){
+function showAreaModal(html, title){
   let m=document.getElementById('area-modal-bg');
   if(!m){
     m=document.createElement('div');
@@ -5292,7 +5334,7 @@ function showAreaModal(html){
     m.className='modal-bg';
     m.innerHTML=`<div class="modal" style="max-width:640px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <h3 style="margin:0;font-size:16px">🌍 Select Area(s) of Operation</h3>
+        <h3 id="area-modal-title" style="margin:0;font-size:16px"></h3>
         <button onclick="closeAreaModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--t3);padding:0 6px;line-height:1">×</button>
       </div>
       <div id="area-modal-content"></div>
@@ -5301,6 +5343,7 @@ function showAreaModal(html){
     m.addEventListener('mousedown', function(e){ m._mdownBg=(e.target===m); });
     m.addEventListener('click', function(e){ if(e.target===m && m._mdownBg) closeAreaModal(); });
   }
+  document.getElementById('area-modal-title').textContent=title||'Select Options';
   document.getElementById('area-modal-content').innerHTML=html;
   m.classList.add('open');
 }
@@ -5309,6 +5352,7 @@ function closeAreaModal(){
   if(m) m.classList.remove('open');
 }
 function openAreaPickerModal(pickerId){
+  const cfg=AREA_PICKER_REGISTRY[pickerId] || {groups:AREA_OF_OPERATION_GROUPS, title:'Select Options'};
   _areaModalWorking[pickerId]=(_areaPickerSelections[pickerId]||[]).slice();
   const html=`
     <input type="text" placeholder="Type to filter the list below…" oninput="areaModalFilter('${pickerId}', this.value)" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:inherit;font-size:13px;margin-bottom:8px">
@@ -5321,7 +5365,7 @@ function openAreaPickerModal(pickerId){
       <button class="btn btn-outline btn-sm" onclick="closeAreaModal()">Cancel</button>
       <button class="btn btn-green btn-sm" onclick="areaModalApply('${pickerId}')">✓ Apply</button>
     </div>`;
-  showAreaModal(html);
+  showAreaModal(html, cfg.title);
   renderAreaModalChecklist(pickerId, '');
 }
 function areaModalSyncFromDom(pickerId){
@@ -5332,6 +5376,7 @@ function areaModalSyncFromDom(pickerId){
   _areaModalWorking[pickerId]=Array.from(working);
 }
 function renderAreaModalChecklist(pickerId, query){
+  const cfg=AREA_PICKER_REGISTRY[pickerId] || {groups:AREA_OF_OPERATION_GROUPS};
   const body=document.getElementById('area-modal-body-'+pickerId);
   const countEl=document.getElementById('area-modal-count-'+pickerId);
   if(!body) return;
@@ -5339,7 +5384,7 @@ function renderAreaModalChecklist(pickerId, query){
   if(countEl) countEl.textContent=sel.size+' selected';
   const q=(query||'').trim().toLowerCase();
   let html='';
-  AREA_OF_OPERATION_GROUPS.forEach(g=>{
+  cfg.groups.forEach(g=>{
     const items=q ? g.items.filter(i=>i.toLowerCase().includes(q)) : g.items;
     if(!items.length) return;
     html+=`<div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.03em;padding:8px 2px 3px;position:sticky;top:-1px;background:#fff">${esc(g.group)}</div>`;
@@ -5434,12 +5479,19 @@ const GEN_ADV_FIELDS=[
   {id:'genf-name',key:'name',label:'Charity Name',ph:'e.g. Age UK'},
   {id:'genf-reg',key:'reg_number',label:'Registration Number',ph:'e.g. 1128267'},
   {id:'genf-postcode',key:'postcode',label:'Postcode (prefix)',ph:'e.g. SW1A'},
-  {id:'genf-what',key:'what',label:'What it does (activities)',ph:'e.g. education, housing'},
   {id:'genf-type',key:'charity_type',label:'Charity Type',ph:'e.g. CIO'},
   {id:'genf-inc-min',key:'inc_min',label:'Min Income £',ph:'e.g. 100000',type:'number'},
   {id:'genf-inc-max',key:'inc_max',label:'Max Income £',ph:'e.g. 5000000',type:'number'},
   {id:'genf-date-from',key:'reg_date_from',label:'Registered From',type:'date'},
   {id:'genf-date-to',key:'reg_date_to',label:'Registered To',type:'date'},
+];
+// Checklist-style pickers shown in the Generate List popup, alongside the plain
+// text fields above — each maps a picker id to the criteria key it fills in.
+const GEN_PICKER_FIELDS=[
+  {pickerId:'genlist', key:'area_of_operation'},
+  {pickerId:'genlist_what', key:'what_class'},
+  {pickerId:'genlist_who', key:'who_class'},
+  {pickerId:'genlist_how', key:'how_class'},
 ];
 function showGeneratePopup(cat, remaining){
   const modeHtml = remaining>0
@@ -5453,14 +5505,18 @@ function showGeneratePopup(cat, remaining){
     `<div><label style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;display:block;margin-bottom:2px">${esc(f.label)}</label>
      <input id="${f.id}" type="${f.type||'text'}" placeholder="${esc(f.ph||'')}" style="width:100%;padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:12px">
      </div>`).join('');
+  const pickerBtn=(pickerId)=>{
+    const cfg=AREA_PICKER_REGISTRY[pickerId];
+    return `<div class="area-picker-wrap" style="position:relative;margin-bottom:10px">
+      <label style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;display:block;margin-bottom:2px">${esc(cfg.label)}</label>
+      <button type="button" id="area-picker-btn-${pickerId}" onclick="openAreaPickerModal('${pickerId}')" style="width:100%;text-align:left;padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:12px;background:#fff;cursor:pointer">${cfg.icon} Select ${cfg.label}…</button>
+      <div id="area-picker-chips-${pickerId}" style="margin-top:6px"></div>
+    </div>`;
+  };
   const html=`
     ${modeHtml}
     <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Narrow this list (optional) — same filters as Charity Search</div>
-    <div class="area-picker-wrap" style="position:relative;margin-bottom:10px">
-      <label style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;display:block;margin-bottom:2px">Area of Operation</label>
-      <button type="button" id="area-picker-btn-genlist" onclick="openAreaPickerModal('genlist')" style="width:100%;text-align:left;padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:12px;background:#fff;cursor:pointer">🌍 Select Area of Operation…</button>
-      <div id="area-picker-chips-genlist" style="margin-top:6px"></div>
-    </div>
+    ${GEN_PICKER_FIELDS.map(p=>pickerBtn(p.pickerId)).join('')}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">${fieldsHtml}</div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button class="btn btn-outline btn-sm" onclick="closeGenericModal(true)">Cancel</button>
@@ -5468,18 +5524,20 @@ function showGeneratePopup(cat, remaining){
       <button class="btn btn-green btn-sm" onclick="submitGeneratePopup('${cat}')">✨ Generate List</button>
     </div>`;
   showModal('Generate new calling list', html);
-  areaPickerInit('genlist', []);
+  GEN_PICKER_FIELDS.forEach(p=>areaPickerInit(p.pickerId, []));
 }
 function clearGenAdvFields(){
   GEN_ADV_FIELDS.forEach(f=>{ const el=document.getElementById(f.id); if(el) el.value=''; });
-  areaPickerClear('genlist');
+  GEN_PICKER_FIELDS.forEach(p=>areaPickerClear(p.pickerId));
 }
 function submitGeneratePopup(cat){
   const modeEl=document.querySelector('input[name="genmode"]:checked');
   const mode=modeEl?modeEl.value:'fresh';
   const advFilters={};
-  const areas=areaPickerGetValues('genlist');
-  if(areas.length) advFilters.area_of_operation=areas;
+  GEN_PICKER_FIELDS.forEach(p=>{
+    const vals=areaPickerGetValues(p.pickerId);
+    if(vals.length) advFilters[p.key]=vals;
+  });
   GEN_ADV_FIELDS.forEach(f=>{
     const el=document.getElementById(f.id);
     if(el && el.value.trim()) advFilters[f.key]=el.value.trim();
