@@ -975,7 +975,7 @@ def _run_advanced_search(criteria, limit=50000):
     'Charity Search (saved)' source), since saved searches only store the filter
     criteria, not stale results."""
     nq=str(criteria.get("name","")).upper().strip()
-    rq=str(criteria.get("reg_number","")).strip()
+    rq_set={r.strip() for r in str(criteria.get("reg_number","")).split(",") if r.strip()}
     pq=str(criteria.get("postcode","")).upper().strip()
     cq=str(criteria.get("county","")).upper().strip()
     areas=criteria.get("area_of_operation") or []
@@ -1016,7 +1016,7 @@ def _run_advanced_search(criteria, limit=50000):
         name=row.get("charity_name","")
         if nq and nq not in name.upper(): continue
         reg=row.get("registered_charity_number","").strip()
-        if rq and rq!=reg: continue
+        if rq_set and reg not in rq_set: continue
         if area_regs is not None and reg not in area_regs: continue
         if what_class_regs is not None and reg not in what_class_regs: continue
         if who_class_regs is not None and reg not in who_class_regs: continue
@@ -4402,6 +4402,8 @@ def api_calling_batch_generate():
         # available as extra narrowing filters on top of ANY source category ──
         nq = str(filters.get("name","")).upper().strip()
         if nq and nq not in str(c.get("name","")).upper(): return False
+        rqf = {r.strip() for r in str(filters.get("reg_number","")).split(",") if r.strip()}
+        if rqf and str(c.get("reg_number","")) not in rqf: return False
         pq = str(filters.get("postcode","")).upper().strip()
         if pq and not str(c.get("postcode","")).upper().startswith(pq): return False
         cq = str(filters.get("county","")).upper().strip()

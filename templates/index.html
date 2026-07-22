@@ -692,7 +692,7 @@ select:focus{outline:none;border-color:var(--green)}
   <div id="adv-bar" style="display:none">
     <div class="adv-grid">
       <div class="adv-field"><label>Charity Name</label><input id="adv-name" placeholder="e.g. Age UK"></div>
-      <div class="adv-field"><label>Registration Number</label><input id="adv-reg" placeholder="e.g. 1128267"></div>
+      <div class="adv-field"><label>Registration Number</label><input id="adv-reg" placeholder="e.g. 1195246,1190556,1190582"></div>
       <div class="adv-field"><label>Postcode (prefix)</label><input id="adv-postcode" placeholder="e.g. SW1A"></div>
       <div class="adv-field" style="position:relative"><label>Area of Operation</label>
         <button type="button" id="area-picker-btn-advsearch" onclick="openAreaPickerModal('advsearch')" style="width:100%;text-align:left;padding:7px 9px;border:1px solid var(--bd,#ccd3dc);border-radius:4px;font-family:inherit;font-size:13px;background:#fff;cursor:pointer">🌍 Select Area of Operation…</button>
@@ -3025,10 +3025,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.73";
+const APP_VERSION = "1.74";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.74", date:"2026-07", title:"Registration Number field now accepts multiple, comma-separated numbers",
+    changes:[
+      "Type several registration numbers separated by commas (e.g. 1195246,1190556,1190582) in Charity Search or Generate List and find all of them at once \u2014 spaces around commas are fine too. A single number still works exactly as before.",
+      "Also found and fixed: Generate List's Registration Number field had never actually been wired up to the filter logic at all \u2014 typing into it did nothing. It's fully functional now, including the new multi-number support.",
+    ]},
   { v:"1.73", date:"2026-07", title:"Added Expenditure range and full-address Location filters",
     changes:[
       "New Min/Max Expenditure £ fields, matching Min/Max Income exactly, in both Charity Search and Generate List.",
@@ -5486,7 +5491,7 @@ document.addEventListener('click', function(e){
 
 const GEN_ADV_FIELDS=[
   {id:'genf-name',key:'name',label:'Charity Name',ph:'e.g. Age UK'},
-  {id:'genf-reg',key:'reg_number',label:'Registration Number',ph:'e.g. 1128267'},
+  {id:'genf-reg',key:'reg_number',label:'Registration Number',ph:'e.g. 1195246,1190556,1190582'},
   {id:'genf-postcode',key:'postcode',label:'Postcode (prefix)',ph:'e.g. SW1A'},
   {id:'genf-location',key:'location',label:'Location',ph:'e.g. London, Manchester'},
   {id:'genf-type',key:'charity_type',label:'Charity Type',ph:'e.g. CIO'},
