@@ -3014,10 +3014,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.69";
+const APP_VERSION = "1.70";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.70", date:"2026-07", title:"Daily Calling from a saved search now matches Charity Search exactly",
+    changes:[
+      "Found the real cause: Daily Calling silently excludes any charity already called before (successfully, not just retry-due) \u2014 correct behaviour for Prospects/New/Late/Old/Milestones, since the point there is fresh charities to call, but wrong for a saved search, which is a specific, deliberate set the caller defined and expects to see in full, exactly as Charity Search shows it.",
+      "Fixed: generating from a saved search now shows the exact same set of charities as Charity Search would for that search \u2014 verified directly, including confirming already-called charities now correctly appear. The Exclude-from-list checkboxes and permanent exclusions (which you control directly) still apply as normal.",
+    ]},
   { v:"1.69", date:"2026-07", title:"FOUND IT: Area of Operation clicks were silently broken by an HTML-quoting bug",
     changes:[
       "The real cause of the filter appearing to do nothing: clicking an item in the Area of Operation dropdown (or removing a chip) generated a broken onclick attribute \u2014 the item name's own quote marks were prematurely closing the attribute, silently truncating the click handler into invalid, incomplete code. The click looked like it worked (dropdown closed) but never actually recorded a selection, which is exactly why the banner correctly reported \u2018no filter applied\u2019 every time.",

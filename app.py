@@ -4299,7 +4299,17 @@ def api_calling_batch_generate():
         rs = retry_states.get(str(reg))
         return bool(rs and rs.get("retry_due"))
 
-    pool = [c for c in scored if _retry_ok(c["reg_number"]) and not _name_excluded(c) and c["reg_number"] not in _calling_excl]
+    # For a saved search specifically, show the exact same set of charities as
+    # the Charity Search page would (full parity, per explicit request) — the
+    # "already called" retry exclusion below is the right behaviour for the
+    # other sources (don't resurface charities already worked through a
+    # prospecting list), but a saved search is a specific, deliberate set of
+    # charities the caller defined themselves, and expects to see in full.
+    # The explicit, caller-controlled exclusions (Exclude-from-list checkboxes,
+    # permanent exclusions) still apply either way.
+    pool = [c for c in scored
+            if (category == "search" or _retry_ok(c["reg_number"]))
+            and not _name_excluded(c) and c["reg_number"] not in _calling_excl]
 
     # ── Source-specific filters (Anniversary milestone/timing, Late months, New days) ──
     def _num(v, default=None):
