@@ -378,6 +378,12 @@ select:focus{outline:none;border-color:var(--green)}
         <div class="home-card-desc" style="color:rgba(255,255,255,.8)">Weekly performance dashboard — calls made, conversations, meetings booked, hours on RC and more.</div>
         <span class="home-card-count" style="background:#e8b339;color:#1e3a5f">View Report</span>
       </div>
+      <div class="home-card" style="background:linear-gradient(135deg,#3d2d5a,#5a3d8f)" onclick="navTo('customreport')">
+        <div class="home-card-icon" style="font-size:36px">🧩</div>
+        <div class="home-card-title" style="color:#fff">Custom Report</div>
+        <div class="home-card-desc" style="color:rgba(255,255,255,.8)">Build your own view — drag a measure and a field onto the canvas, pick a chart, save it. Doesn't touch the Calling Report above.</div>
+        <span class="home-card-count" style="background:#e8b339;color:#1e3a5f">Build a Report</span>
+      </div>
     </div>
   </div>
 </section>
@@ -1140,6 +1146,78 @@ select:focus{outline:none;border-color:var(--green)}
         <div id="rpt-followups-completed"></div>
       </div>
     </div>
+
+  </div>
+</section>
+
+<!-- CUSTOM REPORT -->
+<section id="tab-customreport" class="section">
+  <div class="ctrl">
+    <div class="ctrl-left"><h2>🧩 Custom Report</h2><p>Build your own view — drag a measure and a field onto the canvas. Separate from Calling Report; nothing here affects it.</p></div>
+    <div class="ctrl-right">
+      <button class="btn btn-home btn-sm" onclick="navTo('home')">← Home</button>
+    </div>
+  </div>
+  <div style="padding:0 24px 24px">
+
+    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:#f7f5fb;border:1px solid #e2dcf0;border-radius:8px;padding:12px 16px;margin-bottom:16px">
+      <label style="font-size:12px;font-weight:700;color:#3d2d5a">From <input type="date" id="cr-date-from" style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px"></label>
+      <label style="font-size:12px;font-weight:700;color:#3d2d5a">To <input type="date" id="cr-date-to" style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px"></label>
+      <label style="font-size:12px;font-weight:700;color:#3d2d5a">Caller(s)
+        <select id="cr-callers" multiple style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px;min-width:140px;height:34px"></select>
+      </label>
+      <span style="font-size:11px;color:var(--t3)">(none selected = everyone)</span>
+    </div>
+
+    <div style="display:grid;grid-template-columns:220px 1fr;gap:16px;margin-bottom:16px">
+      <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px">
+        <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">📏 Measures</div>
+        <div id="cr-palette-measures" style="margin-bottom:14px"></div>
+        <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">🔀 Fields</div>
+        <div id="cr-palette-dims"></div>
+        <p style="font-size:10.5px;color:var(--t3);margin-top:10px;line-height:1.4">Drag a measure into Values, and a field into Rows (Columns is optional) — or tap a chip then tap a well.</p>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div id="cr-well-values" data-well="values" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:44px;border:2px dashed #d8c9ee;border-radius:8px;padding:8px 12px;background:#faf8fd;display:flex;align-items:center;gap:8px">
+          <span style="font-size:11px;font-weight:700;color:#6a4d99;text-transform:uppercase;width:80px;flex-shrink:0">Values</span>
+          <span id="cr-well-values-content" style="color:var(--t3);font-size:12px">Drag a measure here</span>
+        </div>
+        <div id="cr-well-rows" data-well="rows" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:44px;border:2px dashed #c9dcee;border-radius:8px;padding:8px 12px;background:#f8fafd;display:flex;align-items:center;gap:8px">
+          <span style="font-size:11px;font-weight:700;color:#2d5a8f;text-transform:uppercase;width:80px;flex-shrink:0">Rows</span>
+          <span id="cr-well-rows-content" style="color:var(--t3);font-size:12px">Drag a field here</span>
+        </div>
+        <div id="cr-well-columns" data-well="columns" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:44px;border:2px dashed #eee0c9;border-radius:8px;padding:8px 12px;background:#fdfbf8;display:flex;align-items:center;gap:8px">
+          <span style="font-size:11px;font-weight:700;color:#8a6d1a;text-transform:uppercase;width:80px;flex-shrink:0">Columns</span>
+          <span id="cr-well-columns-content" style="color:var(--t3);font-size:12px">Optional — drag a field here</span>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap">
+          <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Chart</span>
+          <select id="cr-chart-type" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12.5px">
+            <option value="bar">Bar</option>
+            <option value="line">Line</option>
+            <option value="doughnut">Pie / Doughnut</option>
+            <option value="table">Table</option>
+          </select>
+          <button class="btn btn-green btn-sm" onclick="runCustomReport()">▶ Run</button>
+          <button class="btn btn-outline btn-sm" onclick="clearCustomReportCanvas()">Clear</button>
+          <span style="flex:1"></span>
+          <input id="cr-tile-name" placeholder="Name this report…" maxlength="80" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12.5px;width:180px">
+          <button class="btn btn-outline btn-sm" onclick="saveCustomReportTile()">💾 Save as Tile</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="cr-result-status" style="font-size:12px;color:var(--t3);margin-bottom:8px"></div>
+    <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:16px;min-height:120px;margin-bottom:22px">
+      <div id="cr-result-chart-wrap" style="display:none;max-width:900px;margin:0 auto"><canvas id="cr-chart"></canvas></div>
+      <div id="cr-result-table-wrap" style="display:none;overflow-x:auto"></div>
+      <div id="cr-result-empty" style="color:var(--t3);font-size:13px;text-align:center;padding:30px 0">Drag a measure and a field above, then hit Run.</div>
+    </div>
+
+    <div style="font-size:13px;font-weight:700;color:#3d2d5a;margin-bottom:8px">💾 Saved Tiles</div>
+    <div id="cr-tiles-gallery" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px"></div>
 
   </div>
 </section>
@@ -2249,6 +2327,248 @@ function initReportCallers(){
   });
   updateCallerDdLabel();
 }
+
+// ── Custom Report (v1) ────────────────────────────────────────────────────────
+let _crMeasures=[], _crDimensions=[];
+let _crCanvas={values:null, rows:null, columns:null};  // holds {value,label} or null
+let _crTapSelected=null;  // {value,label,kind} picked via click, waiting for a well tap
+let _crChartInst=null;
+let _crFieldsLoaded=false;
+
+function initCustomReport(){
+  const from=document.getElementById('cr-date-from'), to=document.getElementById('cr-date-to');
+  if(from && !from.value){
+    const now=new Date(); const day=now.getDay(); const diffToMon=day===0?-6:1-day;
+    const mon=new Date(now); mon.setDate(now.getDate()+diffToMon);
+    const sun=new Date(mon); sun.setDate(mon.getDate()+6);
+    const fmt=d=>d.toISOString().slice(0,10);
+    from.value=fmt(mon); if(to) to.value=fmt(sun);
+  }
+  const sel=document.getElementById('cr-callers');
+  if(sel && !sel.dataset.filled){
+    sel.innerHTML=(userList||[]).map(u=>`<option value="${esc(u)}">${esc(u)}</option>`).join('');
+    sel.dataset.filled='1';
+  }
+  if(!_crFieldsLoaded){
+    fetch('/api/custom_report/fields').then(r=>r.json()).then(d=>{
+      if(!d.ok) return;
+      _crMeasures=d.measures; _crDimensions=d.dimensions;
+      _crFieldsLoaded=true;
+      renderCrPalette();
+    }).catch(()=>{});
+  } else {
+    renderCrPalette();
+  }
+  loadCustomReportTiles();
+}
+function renderCrPalette(){
+  const mEl=document.getElementById('cr-palette-measures');
+  const dEl=document.getElementById('cr-palette-dims');
+  if(!mEl || !dEl) return;
+  const chip=(f,kind)=>`<div draggable="true" ondragstart="crChipDragStart(event,'${kind}','${f.value}',${JSON.stringify(f.label)})" onclick="crChipTap('${kind}','${f.value}',${JSON.stringify(f.label)})"
+      style="background:${kind==='measure'?'#f0e9fb':'#e9f1fb'};border:1px solid ${kind==='measure'?'#d2bdf0':'#bdd7f0'};border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;cursor:grab;user-select:none">${esc(f.label)}</div>`;
+  mEl.innerHTML=_crMeasures.map(f=>chip(f,'measure')).join('');
+  dEl.innerHTML=_crDimensions.map(f=>chip(f,'dim')).join('');
+}
+function crChipDragStart(e, kind, value, label){
+  e.dataTransfer.effectAllowed='copy';
+  try{ e.dataTransfer.setData('text/plain', JSON.stringify({kind,value,label})); }catch(err){}
+  _crTapSelected=null;
+}
+function crChipTap(kind, value, label){
+  _crTapSelected={kind,value,label};
+  document.getElementById('cr-result-status').textContent='Selected "'+label+'" — now click a well (Values/Rows/Columns) to place it.';
+}
+function crWellDragOver(e){ e.preventDefault(); e.dataTransfer.dropEffect='copy'; }
+function crWellDrop(e){
+  e.preventDefault();
+  const well=e.currentTarget.dataset.well;
+  let payload=null;
+  try{ payload=JSON.parse(e.dataTransfer.getData('text/plain')); }catch(err){}
+  if(payload) crPlaceInWell(well, payload);
+}
+// Click-to-place fallback: click a chip, then click a well
+document.addEventListener('click', function(e){
+  const well=e.target.closest && e.target.closest('[data-well]');
+  if(well && _crTapSelected){
+    crPlaceInWell(well.dataset.well, _crTapSelected);
+    _crTapSelected=null;
+    document.getElementById('cr-result-status').textContent='';
+  }
+});
+function crPlaceInWell(well, payload){
+  if(well==='values' && payload.kind!=='measure'){
+    document.getElementById('cr-result-status').textContent='⚠ Values needs a measure, not a field.'; return;
+  }
+  if((well==='rows'||well==='columns') && payload.kind!=='dim'){
+    document.getElementById('cr-result-status').textContent='⚠ Rows/Columns need a field, not a measure.'; return;
+  }
+  _crCanvas[well]={value:payload.value, label:payload.label};
+  renderCrWells();
+}
+function crClearWell(well){ _crCanvas[well]=null; renderCrWells(); }
+function renderCrWells(){
+  ['values','rows','columns'].forEach(w=>{
+    const el=document.getElementById('cr-well-'+w+'-content');
+    if(!el) return;
+    const v=_crCanvas[w];
+    el.innerHTML = v
+      ? `<span style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:3px 10px;font-size:12px">${esc(v.label)} <span onclick="crClearWell('${w}')" style="cursor:pointer;font-weight:700;margin-left:4px">✕</span></span>`
+      : (w==='columns' ? 'Optional — drag a field here' : `Drag a ${w==='values'?'measure':'field'} here`);
+  });
+}
+function clearCustomReportCanvas(){
+  _crCanvas={values:null, rows:null, columns:null};
+  renderCrWells();
+  document.getElementById('cr-result-status').textContent='';
+  document.getElementById('cr-result-chart-wrap').style.display='none';
+  document.getElementById('cr-result-table-wrap').style.display='none';
+  document.getElementById('cr-result-empty').style.display='block';
+}
+function crCurrentConfig(){
+  return {
+    measure: _crCanvas.values ? _crCanvas.values.value : '',
+    rows: _crCanvas.rows ? _crCanvas.rows.value : '',
+    columns: _crCanvas.columns ? _crCanvas.columns.value : '',
+    chart_type: document.getElementById('cr-chart-type').value,
+    date_from: document.getElementById('cr-date-from').value,
+    date_to: document.getElementById('cr-date-to').value,
+    callers: Array.from(document.getElementById('cr-callers').selectedOptions).map(o=>o.value),
+  };
+}
+function runCustomReport(targetChartId, targetTableId, cfgOverride){
+  const cfg = cfgOverride || crCurrentConfig();
+  const chartId = targetChartId || 'cr-chart';
+  const statusEl = targetChartId ? null : document.getElementById('cr-result-status');
+  if(!cfg.measure){ if(statusEl){statusEl.textContent='⚠ Drag a measure into Values first.'; statusEl.style.color='#c0392b';} return Promise.resolve(); }
+  if(!cfg.rows){ if(statusEl){statusEl.textContent='⚠ Drag a field into Rows first.'; statusEl.style.color='#c0392b';} return Promise.resolve(); }
+  if(statusEl){ statusEl.textContent='Running…'; statusEl.style.color='var(--t3)'; }
+  return fetch('/api/custom_report/run',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({measure:cfg.measure, rows:cfg.rows, columns:cfg.columns||null,
+      date_from:cfg.date_from, date_to:cfg.date_to, callers:cfg.callers})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ if(statusEl){statusEl.textContent='⚠ '+(d.error||'Failed'); statusEl.style.color='#c0392b';} return; }
+      if(!targetChartId){
+        document.getElementById('cr-result-empty').style.display='none';
+        statusEl.textContent = d.note || (d.row_labels.length+' row'+(d.row_labels.length===1?'':'s'));
+        statusEl.style.color='var(--t3)';
+      }
+      renderCrResult(d, cfg.chart_type, chartId, targetTableId||'cr-result-table-wrap', !!targetChartId);
+    }).catch(e=>{ if(statusEl){statusEl.textContent='⚠ '+e.message; statusEl.style.color='#c0392b';} });
+}
+function renderCrResult(d, chartType, chartId, tableWrapId, isTile){
+  const chartWrap = document.getElementById(isTile ? chartId+'-wrap' : 'cr-result-chart-wrap');
+  const tableWrap = document.getElementById(tableWrapId);
+  if(chartType==='table'){
+    if(chartWrap) chartWrap.style.display='none';
+    if(tableWrap){
+      tableWrap.style.display='block';
+      const cols = d.column_labels;
+      let html = '<table style="border-collapse:collapse;width:100%;font-size:12.5px">';
+      html += '<thead><tr><th style="text-align:left;padding:6px 10px;border-bottom:2px solid var(--border)">'+esc(d.row_field_label)+'</th>';
+      if(cols) cols.forEach(c=>html+='<th style="text-align:right;padding:6px 10px;border-bottom:2px solid var(--border)">'+esc(String(c))+'</th>');
+      else html+='<th style="text-align:right;padding:6px 10px;border-bottom:2px solid var(--border)">'+esc(d.measure_label)+'</th>';
+      html+='</tr></thead><tbody>';
+      d.row_labels.forEach((rk,i)=>{
+        html+='<tr><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0">'+esc(String(rk))+'</td>';
+        if(cols) cols.forEach((c,j)=>html+='<td style="text-align:right;padding:5px 10px;border-bottom:1px solid #f0f0f0">'+esc(String(d.data[i][j]))+'</td>');
+        else html+='<td style="text-align:right;padding:5px 10px;border-bottom:1px solid #f0f0f0">'+esc(String(d.data[i]))+'</td>';
+        html+='</tr>';
+      });
+      html+='</tbody></table>';
+      tableWrap.innerHTML=html;
+    }
+    return;
+  }
+  if(tableWrap) tableWrap.style.display='none';
+  if(chartWrap) chartWrap.style.display='block';
+  const canvasEl=document.getElementById(chartId);
+  if(!canvasEl || typeof Chart==='undefined') return;
+  if(canvasEl._chartInst){ canvasEl._chartInst.destroy(); canvasEl._chartInst=null; }
+  const palette=['#1e3a5f','#e8b339','#1d7a3a','#a02c2c','#6a4d99','#2d8f8f','#c47a2c','#4d6a99'];
+  let datasets;
+  if(d.column_labels){
+    datasets = d.column_labels.map((c,j)=>({
+      label:String(c),
+      data: d.row_labels.map((rk,i)=>d.data[i][j]),
+      backgroundColor: palette[j%palette.length],
+      borderColor: palette[j%palette.length],
+      fill: chartType==='line'?false:true,
+    }));
+  } else if(chartType==='doughnut'){
+    datasets=[{data:d.data, backgroundColor:d.row_labels.map((_,i)=>palette[i%palette.length])}];
+  } else {
+    datasets=[{label:d.measure_label, data:d.data, backgroundColor:palette[0], borderColor:palette[0], fill:chartType==='line'?false:true}];
+  }
+  canvasEl._chartInst = new Chart(canvasEl, {
+    type: chartType, data: {labels: d.row_labels, datasets},
+    options: {responsive:true, plugins:{legend:{display: !!d.column_labels || chartType==='doughnut'}},
+      scales: chartType==='doughnut' ? {} : {y:{beginAtZero:true, title:{display:true, text:d.measure_label}}}}
+  });
+}
+
+// ── Saved tiles ──────────────────────────────────────────────────────────────
+function saveCustomReportTile(){
+  const name=(document.getElementById('cr-tile-name').value||'').trim();
+  const status=document.getElementById('cr-result-status');
+  if(!name){ status.textContent='⚠ Give this report a name first.'; status.style.color='#c0392b'; return; }
+  const cfg=crCurrentConfig();
+  if(!cfg.measure || !cfg.rows){ status.textContent='⚠ Drag a measure and a field onto the canvas first.'; status.style.color='#c0392b'; return; }
+  fetch('/api/custom_report/tiles',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name, config:cfg})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ status.textContent='⚠ '+(d.error||'Save failed'); status.style.color='#c0392b'; return; }
+      status.textContent='✓ Saved "'+name+'"'; status.style.color='var(--green)';
+      document.getElementById('cr-tile-name').value='';
+      loadCustomReportTiles();
+    }).catch(e=>{ status.textContent='⚠ '+e.message; status.style.color='#c0392b'; });
+}
+function loadCustomReportTiles(){
+  fetch('/api/custom_report/tiles').then(r=>r.json()).then(d=>{
+    if(!d.ok) return;
+    renderCrTilesGallery(d.tiles);
+  }).catch(()=>{});
+}
+function renderCrTilesGallery(tiles){
+  const gal=document.getElementById('cr-tiles-gallery');
+  if(!gal) return;
+  if(!tiles.length){ gal.innerHTML='<p style="color:var(--t3);font-size:12.5px;grid-column:1/-1">No saved reports yet — build one above and save it.</p>'; return; }
+  gal.innerHTML=tiles.map((t,i)=>{
+    const isTable=t.config.chart_type==='table';
+    const chartId='cr-tile-chart-'+i;
+    return `<div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <strong style="font-size:13px">${esc(t.name)}</strong>
+        <span>
+          <button type="button" onclick='loadCustomReportTileConfig(${JSON.stringify(t.config)})' title="Load into canvas above" style="background:none;border:none;cursor:pointer;font-size:13px;margin-right:6px">✏️</button>
+          <button type="button" onclick="deleteCustomReportTile(${JSON.stringify(t.name)})" title="Delete" style="background:none;border:none;cursor:pointer;font-size:13px;color:#c0392b">🗑</button>
+        </span>
+      </div>
+      <div id="${chartId}-wrap" style="display:${isTable?'none':'block'};max-height:220px"><canvas id="${chartId}"></canvas></div>
+      <div id="${chartId}-table" style="display:${isTable?'block':'none'};overflow-x:auto;max-height:220px;overflow-y:auto"></div>
+    </div>`;
+  }).join('');
+  tiles.forEach((t,i)=>{
+    runCustomReport('cr-tile-chart-'+i, 'cr-tile-chart-'+i+'-table', t.config);
+  });
+}
+function loadCustomReportTileConfig(cfg){
+  _crCanvas.values = cfg.measure ? {value:cfg.measure, label:(_crMeasures.find(m=>m.value===cfg.measure)||{}).label||cfg.measure} : null;
+  _crCanvas.rows = cfg.rows ? {value:cfg.rows, label:(_crDimensions.find(m=>m.value===cfg.rows)||{}).label||cfg.rows} : null;
+  _crCanvas.columns = cfg.columns ? {value:cfg.columns, label:(_crDimensions.find(m=>m.value===cfg.columns)||{}).label||cfg.columns} : null;
+  renderCrWells();
+  const ct=document.getElementById('cr-chart-type'); if(ct && cfg.chart_type) ct.value=cfg.chart_type;
+  if(cfg.date_from) document.getElementById('cr-date-from').value=cfg.date_from;
+  if(cfg.date_to) document.getElementById('cr-date-to').value=cfg.date_to;
+  const sel=document.getElementById('cr-callers');
+  if(sel && cfg.callers) Array.from(sel.options).forEach(o=>{ o.selected = cfg.callers.includes(o.value); });
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+function deleteCustomReportTile(name){
+  if(!confirm('Delete the saved report "'+name+'"?')) return;
+  fetch('/api/custom_report/tiles/'+encodeURIComponent(name),{method:'DELETE'})
+    .then(r=>r.json()).then(()=>loadCustomReportTiles());
+}
 function toggleCallerDd(){
   const m=document.getElementById('caller-dd-menu');
   if(!m) return;
@@ -2680,7 +3000,7 @@ function renderFundraiserView(d){
 function switchTab(id,btn){
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
-  const tabs=['home','calling','prospects','search','new','late','old','milestones','report'];
+  const tabs=['home','calling','prospects','search','new','late','old','milestones','report','customreport'];
   if(btn)btn.classList.add('active');
   else { const nb=document.querySelectorAll('.nav-btn')[tabs.indexOf(id)]; if(nb) nb.classList.add('active'); }
   document.getElementById('tab-'+id).classList.add('active');
@@ -2692,6 +3012,7 @@ function switchTab(id,btn){
   if(id==='prospects'&&!pLoaded)loadProspects();
   if(id==='search')loadSavedList();
   if(id==='report'){ window._rptCurrentView='overview'; initReportDates(); initReportCallers(); loadReport(); }
+  if(id==='customreport') initCustomReport();
   setTimeout(setupResizableTables,80);
 }
 function navTo(id){switchTab(id,null);window.scrollTo(0,0);}
@@ -3014,10 +3335,18 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.76";
+const APP_VERSION = "1.77";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.77", date:"2026-07", title:"New: Custom Report — build your own dashboard views",
+    changes:[
+      "New \u201C\ud83e\udde9 Custom Report\u201D card on Home, completely separate from Calling Report \u2014 nothing there is touched or affected.",
+      "Drag-and-drop canvas: drag a measure (Calls Made, Unique Charities, Total/Average Duration, Meaningful Interactions, Meetings Secured) into Values, and a field (Caller, Outcome, Stage, Source List, Day/Week/Month, Hour of Day) into Rows \u2014 an optional second field can go into Columns for a grouped/cross-tab view. Click-to-place works as an alternative to dragging.",
+      "Choose Bar, Line, Pie/Doughnut, or Table, filter by date range and caller, then save your view as a named tile \u2014 saved tiles show up together below as your own build-it-yourself dashboard.",
+      "Runs against your own calling data (fast, already in the database) \u2014 date and hour groupings correctly account for your configured display timezone, the same fix applied to follow-up times earlier. Meaningful Interactions and Meetings Secured use the exact same rules as Calling Report, so the numbers agree.",
+      "v1 scope: charity type, county, and total income aren't available as fields yet, since that data isn't efficiently queryable for every call without extra work \u2014 planned as a future addition.",
+    ]},
   { v:"1.76", date:"2026-07", title:"Exclude Types moved into a drag-and-drop popup",
     changes:[
       "The always-visible \u2018Exclude from list\u2019 checkboxes are gone \u2014 replaced with a \u201C\ud83d\udeab Exclude Types\u201D button next to Generate List that opens a popup with two boxes, Include and Exclude. Drag a type between them, or just click it, to move it \u2014 saved automatically, same as before.",

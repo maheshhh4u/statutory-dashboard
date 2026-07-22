@@ -83,6 +83,12 @@ def db_init():
             name TEXT PRIMARY KEY, criteria TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )""")
+        # Custom Report tiles — user-built pivot/chart configurations, saved by name
+        client.execute("""CREATE TABLE IF NOT EXISTS custom_report_tiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE, config TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )""")
         # Phone overrides — user-edited phone numbers per charity
         # (Table also holds email + website overrides — kept this name for migration compat)
         client.execute("""CREATE TABLE IF NOT EXISTS phone_overrides (
@@ -1674,6 +1680,202 @@ def tips_daily():
     tip = {"icon": "☀️", "text": tip_text}
     _daily_tip_cache[today][caller] = tip
     return jsonify({"tip": tip})
+
+# ── Custom Report (v1) ────────────────────────────────────────────────────────
+# A separate, fully user-configurable report — deliberately kept apart from the
+# existing "Calling Report" so nothing there can be disturbed. Runs entirely
+# against the app's own call_log/statuses/calling_batch data (fast, already
+# indexed), NOT the live Charity Commission files — pivoting across those
+# would reintroduce the exact memory risk that caused the earlier OOM crash.
+#
+# Grouping and aggregation happen in Python rather than SQL GROUP BY, mainly
+# because date/hour breakdowns must respect the configurable display timezone
+# (the same lesson learned from the follow-up-time bug earlier this session) —
+# SQLite's date functions can't do IANA-timezone-aware, DST-correct conversion,
+# but the app's existing utc_to_display_str() can. Data volume here (one
+# team's calls in a date range) is small enough that this is still fast.
+REPORT_DIMENSIONS = {
+    "caller":      {"label": "Caller"},
+    "outcome":     {"label": "Outcome"},
+    "stage":       {"label": "Stage"},
+    "source_list": {"label": "Source List"},
+    "date_day":    {"label": "Day"},
+    "date_week":   {"label": "Week"},
+    "date_month":  {"label": "Month"},
+    "hour":        {"label": "Hour of Day"},
+}
+REPORT_MEASURES = {
+    "calls_made":              {"label": "Calls Made"},
+    "unique_charities":        {"label": "Unique Charities Called"},
+    "total_duration_min":      {"label": "Total Call Duration (min)"},
+    "avg_duration_sec":        {"label": "Average Call Duration (sec)"},
+    "meaningful_interactions": {"label": "Meaningful Interactions"},
+    "meetings_secured":        {"label": "Meetings Secured"},
+}
+# Same rules as the main Calling Report, for consistency (see report_export/api_report).
+_CR_MEANINGFUL_OUTCOMES = {'Connected','Engaged','Interested','Meeting secured'}
+_CR_MEANINGFUL_STAGES   = {'Contacted','Call back','Interested','Meeting secured','Client'}
+
+def _cr_dim_key(dim, row):
+    """row is a dict with reg_number/page/outcome/duration_sec/caller/timestamp/
+    stage/source_list already resolved. Returns the group-by key (a string) for
+    the given dimension, or None if not applicable to this row."""
+    if dim == "caller": return row["caller"] or "(no caller)"
+    if dim == "outcome": return row["outcome"] or "(no outcome)"
+    if dim == "stage": return row["stage"] or "(no stage)"
+    if dim == "source_list": return row["source_list"]
+    if dim in ("date_day","date_week","date_month","hour"):
+        local = utc_to_display_str(row["timestamp"], "%Y-%m-%d %H:%M")
+        if not local: return None
+        try:
+            dt = datetime.strptime(local, "%Y-%m-%d %H:%M")
+        except Exception:
+            return None
+        if dim == "date_day": return dt.strftime("%Y-%m-%d")
+        if dim == "date_week": return dt.strftime("%G-W%V")
+        if dim == "date_month": return dt.strftime("%Y-%m")
+        if dim == "hour": return dt.strftime("%H:00")
+    return None
+
+def _cr_compute_measure(measure, rows):
+    if measure == "calls_made":
+        return len(rows)
+    if measure == "unique_charities":
+        return len({r["reg_number"] for r in rows if r["reg_number"]})
+    if measure == "total_duration_min":
+        return round(sum(r["duration_sec"] or 0 for r in rows) / 60, 1)
+    if measure == "avg_duration_sec":
+        return round(sum(r["duration_sec"] or 0 for r in rows) / len(rows)) if rows else 0
+    if measure == "meaningful_interactions":
+        return sum(1 for r in rows if (r["duration_sec"] or 0) >= 120
+                   and (r["outcome"] in _CR_MEANINGFUL_OUTCOMES or r["stage"] in _CR_MEANINGFUL_STAGES))
+    if measure == "meetings_secured":
+        return sum(1 for r in rows if r["outcome"] == "Meeting secured" or r["stage"] == "Meeting secured")
+    return 0
+
+def _cr_sort_keys(dim, keys):
+    if dim in ("date_day","date_week","date_month","hour"):
+        return sorted(keys)
+    return keys  # caller sorts these by value after aggregation instead
+
+@app.route("/api/custom_report/run", methods=["POST"])
+def custom_report_run():
+    data = request.json or {}
+    measure = str(data.get("measure","")).strip()
+    rows_dim = str(data.get("rows","")).strip()
+    cols_dim = str(data.get("columns","")).strip() or None
+    date_from = str(data.get("date_from","")).strip()
+    date_to = str(data.get("date_to","")).strip()
+    callers = [c.strip() for c in (data.get("callers") or []) if c.strip()]
+
+    if measure not in REPORT_MEASURES:
+        return jsonify({"ok": False, "error": f"Unknown measure '{measure}'"}), 400
+    if rows_dim not in REPORT_DIMENSIONS:
+        return jsonify({"ok": False, "error": "Drag a field onto Rows first"}), 400
+    if cols_dim is not None and cols_dim not in REPORT_DIMENSIONS:
+        return jsonify({"ok": False, "error": f"Unknown field '{cols_dim}'"}), 400
+    if not date_from or not date_to:
+        return jsonify({"ok": False, "error": "Missing date range"}), 400
+
+    ts_from, ts_to = display_date_range_to_utc(date_from, date_to)
+    cf, cp = "", ()
+    if len(callers) == 1:
+        cf, cp = "AND cl.caller=?", (callers[0],)
+    elif len(callers) > 1:
+        ph = ",".join(["?"]*len(callers))
+        cf, cp = f"AND cl.caller IN ({ph})", tuple(callers)
+
+    sql = f"""SELECT cl.reg_number, cl.page, cl.outcome, cl.duration_sec, cl.caller, cl.timestamp,
+                     st.status, CASE WHEN cl.page='calling' THEN COALESCE(cb.category,'calling') ELSE cl.page END
+              FROM call_log cl
+              LEFT JOIN statuses st ON st.key = cl.page || '|' || cl.reg_number
+              LEFT JOIN calling_batch cb ON cb.reg_number=cl.reg_number AND cb.active=1
+              WHERE cl.timestamp>=? AND cl.timestamp<=? {cf}"""
+    raw = db_query(sql, (ts_from, ts_to) + cp) or []
+    if not raw:
+        return jsonify({"ok": True, "row_labels": [], "column_labels": [], "data": [],
+                        "measure_label": REPORT_MEASURES[measure]["label"],
+                        "row_field_label": REPORT_DIMENSIONS[rows_dim]["label"],
+                        "column_field_label": REPORT_DIMENSIONS[cols_dim]["label"] if cols_dim else None,
+                        "note": "No calls found for this date range/caller selection."})
+
+    rows = [{"reg_number": r[0], "page": r[1], "outcome": r[2], "duration_sec": r[3] or 0,
+             "caller": r[4], "timestamp": r[5], "stage": r[6], "source_list": r[7]} for r in raw]
+    src_labels = {r["source_list"]: CALLING_CATEGORIES.get(r["source_list"], r["source_list"] or "Unknown") for r in rows}
+    for r in rows: r["source_list"] = src_labels.get(r["source_list"], r["source_list"])
+
+    # Bucket rows into groups by (row_key[, col_key])
+    groups = {}  # row_key -> {col_key_or_None: [rows]}
+    for r in rows:
+        rk = _cr_dim_key(rows_dim, r)
+        if rk is None: continue
+        ck = _cr_dim_key(cols_dim, r) if cols_dim else None
+        groups.setdefault(rk, {}).setdefault(ck, []).append(r)
+
+    row_keys = _cr_sort_keys(rows_dim, list(groups.keys()))
+    col_keys = None
+    if cols_dim:
+        all_cols = set()
+        for sub in groups.values(): all_cols.update(sub.keys())
+        col_keys = _cr_sort_keys(cols_dim, list(all_cols))
+
+    if col_keys is None:
+        computed = [(rk, _cr_compute_measure(measure, groups[rk].get(None, []))) for rk in row_keys]
+        if rows_dim not in ("date_day","date_week","date_month","hour"):
+            computed.sort(key=lambda x: x[1], reverse=True)
+        return jsonify({"ok": True,
+            "row_labels": [c[0] for c in computed],
+            "column_labels": None,
+            "data": [c[1] for c in computed],
+            "measure_label": REPORT_MEASURES[measure]["label"],
+            "row_field_label": REPORT_DIMENSIONS[rows_dim]["label"],
+            "column_field_label": None})
+    else:
+        # Sort rows by their total across all columns (for non-chronological dims)
+        totals = {rk: sum(_cr_compute_measure(measure, groups[rk].get(ck, [])) for ck in col_keys) for rk in row_keys}
+        if rows_dim not in ("date_day","date_week","date_month","hour"):
+            row_keys = sorted(row_keys, key=lambda rk: totals[rk], reverse=True)
+        matrix = [[_cr_compute_measure(measure, groups[rk].get(ck, [])) for ck in col_keys] for rk in row_keys]
+        return jsonify({"ok": True,
+            "row_labels": row_keys, "column_labels": col_keys, "data": matrix,
+            "measure_label": REPORT_MEASURES[measure]["label"],
+            "row_field_label": REPORT_DIMENSIONS[rows_dim]["label"],
+            "column_field_label": REPORT_DIMENSIONS[cols_dim]["label"]})
+
+@app.route("/api/custom_report/fields", methods=["GET"])
+def custom_report_fields():
+    return jsonify({"ok": True,
+        "measures": [{"value": k, "label": v["label"]} for k, v in REPORT_MEASURES.items()],
+        "dimensions": [{"value": k, "label": v["label"]} for k, v in REPORT_DIMENSIONS.items()]})
+
+@app.route("/api/custom_report/tiles", methods=["GET"])
+def custom_report_tiles_list():
+    rows = db_query("SELECT name, config FROM custom_report_tiles ORDER BY id ASC") or []
+    tiles = []
+    for name, config in rows:
+        try: cfg = json.loads(config)
+        except Exception: cfg = {}
+        tiles.append({"name": name, "config": cfg})
+    return jsonify({"ok": True, "tiles": tiles})
+
+@app.route("/api/custom_report/tiles", methods=["POST"])
+def custom_report_tiles_save():
+    data = request.json or {}
+    name = str(data.get("name","")).strip()[:80]
+    config = data.get("config") or {}
+    if not name:
+        return jsonify({"ok": False, "error": "Name is required"}), 400
+    if not isinstance(config, dict) or not config.get("measure") or not config.get("rows"):
+        return jsonify({"ok": False, "error": "Invalid report configuration"}), 400
+    db_exec("DELETE FROM custom_report_tiles WHERE name=?", (name,))
+    db_exec("INSERT INTO custom_report_tiles(name, config, created_at) VALUES(?,?,?)",
+            (name, json.dumps(config), datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+    return jsonify({"ok": True})
+
+@app.route("/api/custom_report/tiles/<name>", methods=["DELETE"])
+def custom_report_tiles_delete(name):
+    db_exec("DELETE FROM custom_report_tiles WHERE name=?", (name,))
+    return jsonify({"ok": True})
 
 @app.route("/api/ai/coach_chat", methods=["POST"])
 def ai_coach_chat():
