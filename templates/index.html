@@ -415,24 +415,11 @@ select:focus{outline:none;border-color:var(--green)}
         <option value="search">🔍 Charity Search (saved)</option>
       </select>
       <button id="genListBtn" class="btn btn-sm" style="background:#1e3a5f;color:#fff;margin-left:8px" onclick="generateList()">✨ Generate List</button>
+      <button id="exclTypesBtn" class="btn btn-outline btn-sm" style="margin-left:6px" onclick="openExclModal()">🚫 Exclude Types</button>
     </div>
     <div id="sourceFilters" style="display:none;margin-top:10px;padding:10px 14px;background:#f0f4f9;border:1px solid #d5dfeb;border-radius:8px;font-size:12px">
       <span style="font-weight:700;color:#1e3a5f;margin-right:10px">🔎 Refine before generating:</span>
       <span id="sourceFiltersInner" style="display:inline-flex;gap:16px;flex-wrap:wrap;align-items:center"></span>
-    </div>
-    <div class="calling-exclude" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--t2)">
-      <span style="color:var(--t3);font-weight:600">Exclude from list:</span>
-      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="wi" checked onchange="saveExclusions()"> Women's Institute</label>
-      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="schools" checked onchange="saveExclusions()"> Schools</label>
-      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="colleges" checked onchange="saveExclusions()"> Colleges</label>
-      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="mens_shed" checked onchange="saveExclusions()"> Men's Shed</label>
-      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="rotary" checked onchange="saveExclusions()"> Rotary</label>
-      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="childcare" checked onchange="saveExclusions()"> Childcare Providers</label>
-      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="churches" checked onchange="saveExclusions()"> Churches</label>
-      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="trusts" checked onchange="saveExclusions()"> Trusts</label>
-      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="school_pta" checked onchange="saveExclusions()"> School PTA</label>
-      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="pfa" checked onchange="saveExclusions()"> PFA</label>
-      <label style="cursor:pointer"><input type="checkbox" class="excl-cb" value="foundation" checked onchange="saveExclusions()"> Foundation</label>
     </div>
     <div class="calling-progress">
       <div class="calling-progress-label"><span id="callingDone">0</span> / <span id="callingTotal">0</span> completed<span id="callingSpokenNote" style="color:var(--t3);font-weight:500"></span></div>
@@ -3027,10 +3014,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.75";
+const APP_VERSION = "1.76";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.76", date:"2026-07", title:"Exclude Types moved into a drag-and-drop popup",
+    changes:[
+      "The always-visible \u2018Exclude from list\u2019 checkboxes are gone \u2014 replaced with a \u201C\ud83d\udeab Exclude Types\u201D button next to Generate List that opens a popup with two boxes, Include and Exclude. Drag a type between them, or just click it, to move it \u2014 saved automatically, same as before.",
+      "Existing saved preferences carry over automatically \u2014 nothing to reconfigure.",
+    ]},
   { v:"1.75", date:"2026-07", title:"Fixed Admin panel sizing, added AI icon suggestions",
     changes:[
       "Found the cause of needing to zoom out in Admin: the panel had no height limit at all, so tall content (like the icon picker) could get pushed off both the top and bottom of the screen with no way to scroll to it. The panel now scrolls properly within the visible screen, and the Dropdowns tab is noticeably wider too.",
@@ -5589,17 +5581,121 @@ function submitGeneratePopup(cat){
   });
   doGenerate(cat, mode, advFilters);
 }
+// ── Exclude Types: drag-and-drop between Include/Exclude, replacing the old
+// always-visible checkbox row. Same localStorage key/semantics as before, so
+// anyone's existing saved preference carries over transparently.
+const EXCL_CATEGORIES=[
+  {value:'wi',label:"Women's Institute"},
+  {value:'schools',label:'Schools'},
+  {value:'colleges',label:'Colleges'},
+  {value:'mens_shed',label:"Men's Shed"},
+  {value:'rotary',label:'Rotary'},
+  {value:'childcare',label:'Childcare Providers'},
+  {value:'churches',label:'Churches'},
+  {value:'trusts',label:'Trusts'},
+  {value:'school_pta',label:'School PTA'},
+  {value:'pfa',label:'PFA'},
+  {value:'foundation',label:'Foundation'},
+];
+let _excludedSet=new Set(EXCL_CATEGORIES.map(c=>c.value));  // default: all excluded, matching the old "all checked" default
 function getExclusions(){
-  return Array.from(document.querySelectorAll('.excl-cb:checked')).map(cb=>cb.value);
+  return Array.from(_excludedSet);
 }
 function saveExclusions(){
   try{ localStorage.setItem('sp_exclusions', JSON.stringify(getExclusions())); }catch(e){}
+  refreshExclTypesBtn();
 }
 function restoreExclusions(){
   let saved=null;
   try{ saved=JSON.parse(localStorage.getItem('sp_exclusions')||'null'); }catch(e){}
-  if(!Array.isArray(saved)) return;   // keep defaults (all checked) if never set
-  document.querySelectorAll('.excl-cb').forEach(cb=>{ cb.checked=saved.includes(cb.value); });
+  if(Array.isArray(saved)) _excludedSet=new Set(saved);   // keep default (all excluded) if never set
+  refreshExclTypesBtn();
+}
+function refreshExclTypesBtn(){
+  const btn=document.getElementById('exclTypesBtn');
+  if(btn) btn.textContent=`🚫 Exclude Types (${_excludedSet.size})`;
+}
+function showExclModal(html){
+  let m=document.getElementById('excl-modal-bg');
+  if(!m){
+    m=document.createElement('div');
+    m.id='excl-modal-bg';
+    m.className='modal-bg';
+    m.innerHTML=`<div class="modal" style="max-width:640px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <h3 style="margin:0;font-size:16px">🚫 Include / Exclude Charity Types</h3>
+        <button onclick="closeExclModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--t3);padding:0 6px;line-height:1">×</button>
+      </div>
+      <p style="margin:0 0 12px;font-size:12px;color:var(--t2)">Drag a type between the two boxes — or just click it — to include or exclude it from generated lists. Saved automatically.</p>
+      <div id="excl-modal-content"></div>
+    </div>`;
+    document.body.appendChild(m);
+    m.addEventListener('mousedown', function(e){ m._mdownBg=(e.target===m); });
+    m.addEventListener('click', function(e){ if(e.target===m && m._mdownBg) closeExclModal(); });
+  }
+  document.getElementById('excl-modal-content').innerHTML=html;
+  m.classList.add('open');
+}
+function closeExclModal(){
+  const m=document.getElementById('excl-modal-bg');
+  if(m) m.classList.remove('open');
+}
+function openExclModal(){
+  const html=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:#1d7a3a;text-transform:uppercase;margin-bottom:6px">✅ Include (${EXCL_CATEGORIES.length-_excludedSet.size})</div>
+        <div id="excl-zone-include" ondragover="exclDragOver(event)" ondrop="exclDrop(event,'include')" style="min-height:260px;border:2px dashed #bcdfc7;border-radius:8px;padding:8px;background:#f6fbf7"></div>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:700;color:#a02c2c;text-transform:uppercase;margin-bottom:6px">🚫 Exclude (${_excludedSet.size})</div>
+        <div id="excl-zone-exclude" ondragover="exclDragOver(event)" ondrop="exclDrop(event,'exclude')" style="min-height:260px;border:2px dashed #f0c6c6;border-radius:8px;padding:8px;background:#fdf6f6"></div>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-outline btn-sm" onclick="closeExclModal()">Done</button>
+    </div>`;
+  showExclModal(html);
+  renderExclZones();
+}
+function renderExclZones(){
+  const inc=document.getElementById('excl-zone-include');
+  const exc=document.getElementById('excl-zone-exclude');
+  if(!inc || !exc) return;
+  const chip=(cat, zone)=>`<div draggable="true" ondragstart="exclDragStart(event,'${cat.value}')" onclick="exclToggle('${cat.value}')" title="Drag to the other box, or click to move it"
+      style="display:flex;align-items:center;justify-content:space-between;gap:6px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:7px 10px;margin-bottom:6px;cursor:grab;font-size:12.5px;box-shadow:0 1px 2px rgba(0,0,0,.05)">
+      <span>${esc(cat.label)}</span><span style="color:var(--t3);font-size:11px">${zone==='include'?'→':'←'}</span>
+    </div>`;
+  const includeCats=EXCL_CATEGORIES.filter(c=>!_excludedSet.has(c.value));
+  const excludeCats=EXCL_CATEGORIES.filter(c=>_excludedSet.has(c.value));
+  inc.innerHTML = includeCats.length ? includeCats.map(c=>chip(c,'include')).join('') : '<div style="padding:10px;color:var(--t3);font-size:11.5px;text-align:center">Drag types here to include them</div>';
+  exc.innerHTML = excludeCats.length ? excludeCats.map(c=>chip(c,'exclude')).join('') : '<div style="padding:10px;color:var(--t3);font-size:11.5px;text-align:center">Drag types here to exclude them</div>';
+  const headers=document.querySelectorAll('#excl-modal-content [style*="text-transform:uppercase"]');
+  if(headers[0]) headers[0].textContent=`✅ Include (${includeCats.length})`;
+  if(headers[1]) headers[1].textContent=`🚫 Exclude (${excludeCats.length})`;
+}
+let _exclDragValue=null;
+function exclDragStart(e, value){
+  _exclDragValue=value;
+  e.dataTransfer.effectAllowed='move';
+  try{ e.dataTransfer.setData('text/plain', value); }catch(err){}
+}
+function exclDragOver(e){ e.preventDefault(); e.dataTransfer.dropEffect='move'; }
+function exclDrop(e, targetZone){
+  e.preventDefault();
+  const value=_exclDragValue || e.dataTransfer.getData('text/plain');
+  if(!value) return;
+  exclMoveTo(value, targetZone);
+  _exclDragValue=null;
+}
+function exclToggle(value){
+  exclMoveTo(value, _excludedSet.has(value) ? 'include' : 'exclude');
+}
+function exclMoveTo(value, targetZone){
+  if(targetZone==='exclude') _excludedSet.add(value);
+  else _excludedSet.delete(value);
+  saveExclusions();
+  renderExclZones();
 }
 function sourceEndpoints(cat){
   const m={
