@@ -1231,7 +1231,7 @@ select:focus{outline:none;border-color:var(--green)}
 
 <!-- Admin modal -->
 <div class="modal-bg" id="admin-modal">
-  <div class="modal" style="max-width:540px">
+  <div class="modal" style="max-width:540px;max-height:85vh;overflow-y:auto">
     <h3>⚙ Admin — Settings</h3>
 
     <div style="display:flex;gap:4px;border-bottom:2px solid var(--s2);margin-bottom:16px">
@@ -1390,8 +1390,10 @@ select:focus{outline:none;border-color:var(--green)}
           <div style="display:flex;gap:6px;align-items:center">
             <button type="button" id="dd-outcome-icon-btn" onclick="toggleIconPicker()" title="Choose an icon" style="width:38px;height:34px;font-size:16px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">🙂</button>
             <input id="dd-outcome-new-label" placeholder="e.g. Callback Requested" maxlength="60" style="flex:1;padding:7px 9px;border:1px solid var(--border);border-radius:4px;font-family:inherit;font-size:13px" onkeydown="if(event.key==='Enter')addOutcomeOption()">
+            <button type="button" id="dd-ai-icon-btn" onclick="suggestOutcomeIcon()" title="Ask AI to suggest an icon based on the label you've typed" style="padding:7px 10px;border:1px solid #c9a94a;border-radius:4px;background:#fff8e6;color:#8a6d1a;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">✨ AI Suggest</button>
             <button class="btn btn-green btn-sm" onclick="addOutcomeOption()">+ Add</button>
           </div>
+          <div id="dd-ai-icon-status" style="font-size:11px;color:var(--t3);margin-top:5px"></div>
           <div id="dd-icon-picker" style="display:none;position:absolute;top:100%;left:10px;z-index:20;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:8px;margin-top:4px;width:280px;max-height:220px;overflow-y:auto"></div>
         </div>
         <button class="btn btn-green btn-sm" style="width:100%" onclick="saveOutcomeOptions()">Save Call Outcome Changes</button>
@@ -3025,10 +3027,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.74";
+const APP_VERSION = "1.75";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.75", date:"2026-07", title:"Fixed Admin panel sizing, added AI icon suggestions",
+    changes:[
+      "Found the cause of needing to zoom out in Admin: the panel had no height limit at all, so tall content (like the icon picker) could get pushed off both the top and bottom of the screen with no way to scroll to it. The panel now scrolls properly within the visible screen, and the Dropdowns tab is noticeably wider too.",
+      "New \u201C\u2728 AI Suggest\u201D button next to Add New Outcome \u2014 type a label and it asks AI to pick a fitting emoji for it, useful for anything the built-in icon grid doesn't cover well. You can still pick from the grid manually instead if you prefer.",
+    ]},
   { v:"1.74", date:"2026-07", title:"Registration Number field now accepts multiple, comma-separated numbers",
     changes:[
       "Type several registration numbers separated by commas (e.g. 1195246,1190556,1190582) in Charity Search or Generate List and find all of them at once \u2014 spaces around commas are fine too. A single number still works exactly as before.",
@@ -4220,7 +4227,7 @@ function switchAdminTab(tab){
   // The SQL tab benefits from more horizontal room for results — widen the
   // modal while it's active, revert for the other, narrower tabs.
   const modalBox=document.querySelector('#admin-modal .modal');
-  if(modalBox) modalBox.style.maxWidth=(tab==='sql'||tab==='dropdowns')?'820px':'540px';
+  if(modalBox) modalBox.style.maxWidth=(tab==='dropdowns')?'min(960px,94vw)':((tab==='sql')?'820px':'540px');
   if(tab==='dropdowns') loadDropdownOptionsTab();
 }
 // ── Admin: Call Outcome / Stage dropdown management ──────────────────────────
@@ -4268,6 +4275,27 @@ function selectOutcomeIcon(e){
   if(btn) btn.textContent=e;
   const picker=document.getElementById('dd-icon-picker');
   if(picker) picker.style.display='none';
+}
+function suggestOutcomeIcon(){
+  const input=document.getElementById('dd-outcome-new-label');
+  const status=document.getElementById('dd-ai-icon-status');
+  const label=(input.value||'').trim();
+  if(!label){ status.textContent='Type a label first, then ask AI for an icon.'; status.style.color='#c0392b'; input.focus(); return; }
+  const btn=document.getElementById('dd-ai-icon-btn');
+  btn.disabled=true; btn.textContent='✨ Thinking…';
+  status.textContent=''; status.style.color='var(--t3)';
+  fetch('/api/admin/suggest_icon',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({label})})
+    .then(r=>r.json()).then(d=>{
+      btn.disabled=false; btn.textContent='✨ AI Suggest';
+      if(!d.ok){ status.textContent='⚠ '+(d.error||'Could not get a suggestion'); status.style.color='#c0392b'; return; }
+      selectOutcomeIcon(d.icon);
+      status.textContent='AI suggested '+d.icon+' — click the icon button to pick a different one instead.';
+      status.style.color='var(--green)';
+    }).catch(e=>{
+      btn.disabled=false; btn.textContent='✨ AI Suggest';
+      status.textContent='⚠ '+e.message; status.style.color='#c0392b';
+    });
 }
 function renderDdOutcomeList(){
   const el=document.getElementById('dd-outcome-list');

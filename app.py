@@ -563,6 +563,44 @@ def save_dropdown_options_api():
     db_exec("INSERT OR REPLACE INTO app_settings(key,value) VALUES(?,?)", (key, val_json))
     return jsonify({"ok": True, "options": clean})
 
+@app.route("/api/admin/suggest_icon", methods=["POST"])
+def admin_suggest_icon():
+    """Suggest a single, appropriate emoji icon for a new Call Outcome label,
+    using OpenAI — the fixed picker only covers a modest set of common icons,
+    so this gives a broader, better-tailored option for anything unusual."""
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False,
+            "error": "AI is not configured. Add the OPENAI_API_KEY environment variable in Render."}), 400
+    data = request.json or {}
+    label = str(data.get("label","")).strip()[:100]
+    if not label:
+        return jsonify({"ok": False, "error": "Type a label first, then ask for a suggestion."}), 400
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={"model": OPENAI_MODEL, "messages": [
+                {"role": "system", "content": "You suggest a single emoji to represent a phone-call outcome "
+                 "label in a CRM dropdown (e.g. 'Voicemail' -> a phone/message-style emoji, 'Meeting Secured' "
+                 "-> a handshake-style emoji). Reply with ONLY the emoji character itself, nothing else — no "
+                 "words, no explanation, no quotes, no punctuation."},
+                {"role": "user", "content": f"Call outcome: {label}"},
+            ], "temperature": 0.3, "max_tokens": 10},
+            timeout=20)
+        if resp.status_code != 200:
+            return jsonify({"ok": False, "error": f"OpenAI error {resp.status_code}: {resp.text[:200]}"}), 502
+        out = resp.json()
+        icon = (out.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        icon = icon.strip("\"' \n\t")
+        if not icon:
+            return jsonify({"ok": False, "error": "Empty response from OpenAI"}), 502
+        # Defensive cap — most emoji are 1-2 codepoints, some (flags, family
+        # groups, skin-tone modifiers) run longer; this comfortably covers
+        # those without letting a runaway text response through.
+        return jsonify({"ok": True, "icon": icon[:8]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"AI request failed: {str(e)[:200]}"}), 500
+
 # Initialize on import - never let DB issues crash the app
 try:
     db_init()
