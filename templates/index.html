@@ -695,8 +695,7 @@ select:focus{outline:none;border-color:var(--green)}
       <div class="adv-field"><label>Registration Number</label><input id="adv-reg" placeholder="e.g. 1128267"></div>
       <div class="adv-field"><label>Postcode (prefix)</label><input id="adv-postcode" placeholder="e.g. SW1A"></div>
       <div class="adv-field" style="position:relative"><label>Area of Operation</label>
-        <input type="text" class="area-picker-input" placeholder="Type to search (e.g. Kent, London, India)…" oninput="areaPickerSearch('advsearch', this.value)" onfocus="areaPickerSearch('advsearch', this.value)" style="width:100%;padding:7px 9px;border:1px solid var(--bd,#ccd3dc);border-radius:4px;font-family:inherit;font-size:13px">
-        <div class="area-picker-dropdown" id="area-picker-dropdown-advsearch" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:30;background:#fff;border:1px solid var(--bd,#ccd3dc);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.18);max-height:260px;overflow-y:auto;margin-top:2px"></div>
+        <button type="button" id="area-picker-btn-advsearch" onclick="openAreaPickerModal('advsearch')" style="width:100%;text-align:left;padding:7px 9px;border:1px solid var(--bd,#ccd3dc);border-radius:4px;font-family:inherit;font-size:13px;background:#fff;cursor:pointer">🌍 Select Area of Operation…</button>
         <div id="area-picker-chips-advsearch" style="margin-top:6px"></div>
       </div>
       <div class="adv-field"><label>What it does (activities)</label><input id="adv-what" placeholder="e.g. education, housing"></div>
@@ -3014,10 +3013,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.70";
+const APP_VERSION = "1.71";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.71", date:"2026-07", title:"Area of Operation is now a visual checklist popup, not a text box",
+    changes:[
+      "Replaced the type-to-search box with a button (\u201C\ud83c\udf0d Select Area of Operation\u2026\u201D) that opens a large, scrollable popup listing all 453 areas as checkboxes, grouped exactly as before \u2014 tick as many as you like, with a live selected count, a filter box at the top if you want to jump to a section quickly, a Clear all option, and Apply/Cancel. Available in both Charity Search and Generate List.",
+      "Selections made in one part of the list are preserved even while filtering to look at another part \u2014 nothing gets silently unchecked just because it scrolled out of view.",
+    ]},
   { v:"1.70", date:"2026-07", title:"Daily Calling from a saved search now matches Charity Search exactly",
     changes:[
       "Found the real cause: Daily Calling silently excludes any charity already called before (successfully, not just retry-due) \u2014 correct behaviour for Prospects/New/Late/Old/Milestones, since the point there is fresh charities to call, but wrong for a saved search, which is a specific, deliberate set the caller defined and expects to see in full, exactly as Charity Search shows it.",
@@ -5264,6 +5268,114 @@ function areaPickerInit(pickerId, initialSelections){
   renderAreaPickerChips(pickerId);
 }
 function areaPickerClear(pickerId){ areaPickerInit(pickerId, []); }
+function refreshAreaPickerButton(pickerId){
+  const btn=document.getElementById('area-picker-btn-'+pickerId);
+  if(!btn) return;
+  const n=(_areaPickerSelections[pickerId]||[]).length;
+  btn.textContent = n ? `🌍 Area of Operation — ${n} selected` : `🌍 Select Area of Operation…`;
+}
+
+// ── Big checklist modal for browsing/selecting areas visually ───────────────
+// Uses checkbox value= (not inline onclick with an embedded item string) to
+// avoid any HTML-attribute quoting risk entirely, rather than relying on
+// careful escaping for every one of 453 items.
+// IMPORTANT: uses its OWN dedicated modal container, separate from the shared
+// generic modal — the Generate List popup (where this can also be opened
+// from) already uses that shared container for itself, so reusing it here
+// would silently wipe out whatever she'd already filled in on that popup.
+let _areaModalWorking={};
+function showAreaModal(html){
+  let m=document.getElementById('area-modal-bg');
+  if(!m){
+    m=document.createElement('div');
+    m.id='area-modal-bg';
+    m.className='modal-bg';
+    m.innerHTML=`<div class="modal" style="max-width:640px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="margin:0;font-size:16px">🌍 Select Area(s) of Operation</h3>
+        <button onclick="closeAreaModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--t3);padding:0 6px;line-height:1">×</button>
+      </div>
+      <div id="area-modal-content"></div>
+    </div>`;
+    document.body.appendChild(m);
+    m.addEventListener('mousedown', function(e){ m._mdownBg=(e.target===m); });
+    m.addEventListener('click', function(e){ if(e.target===m && m._mdownBg) closeAreaModal(); });
+  }
+  document.getElementById('area-modal-content').innerHTML=html;
+  m.classList.add('open');
+}
+function closeAreaModal(){
+  const m=document.getElementById('area-modal-bg');
+  if(m) m.classList.remove('open');
+}
+function openAreaPickerModal(pickerId){
+  _areaModalWorking[pickerId]=(_areaPickerSelections[pickerId]||[]).slice();
+  const html=`
+    <input type="text" placeholder="Type to filter the list below…" oninput="areaModalFilter('${pickerId}', this.value)" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-family:inherit;font-size:13px;margin-bottom:8px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span id="area-modal-count-${pickerId}" style="font-size:11px;color:var(--t3)"></span>
+      <button type="button" onclick="areaModalClearAll('${pickerId}')" style="background:none;border:none;color:#1e40af;font-size:11px;cursor:pointer;text-decoration:underline">Clear all</button>
+    </div>
+    <div id="area-modal-body-${pickerId}" style="max-height:min(55vh,440px);overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:4px 8px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-outline btn-sm" onclick="closeAreaModal()">Cancel</button>
+      <button class="btn btn-green btn-sm" onclick="areaModalApply('${pickerId}')">✓ Apply</button>
+    </div>`;
+  showAreaModal(html);
+  renderAreaModalChecklist(pickerId, '');
+}
+function areaModalSyncFromDom(pickerId){
+  const boxes=document.querySelectorAll(`.area-modal-cb[data-picker="${pickerId}"]`);
+  if(!boxes.length) return;
+  const working=new Set(_areaModalWorking[pickerId]||[]);
+  boxes.forEach(cb=>{ if(cb.checked) working.add(cb.value); else working.delete(cb.value); });
+  _areaModalWorking[pickerId]=Array.from(working);
+}
+function renderAreaModalChecklist(pickerId, query){
+  const body=document.getElementById('area-modal-body-'+pickerId);
+  const countEl=document.getElementById('area-modal-count-'+pickerId);
+  if(!body) return;
+  const sel=new Set(_areaModalWorking[pickerId]||[]);
+  if(countEl) countEl.textContent=sel.size+' selected';
+  const q=(query||'').trim().toLowerCase();
+  let html='';
+  AREA_OF_OPERATION_GROUPS.forEach(g=>{
+    const items=q ? g.items.filter(i=>i.toLowerCase().includes(q)) : g.items;
+    if(!items.length) return;
+    html+=`<div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.03em;padding:8px 2px 3px;position:sticky;top:-1px;background:#fff">${esc(g.group)}</div>`;
+    html+=items.map(item=>{
+      const id='am-cb-'+pickerId+'-'+item.replace(/[^a-zA-Z0-9]/g,'_');
+      const checked=sel.has(item)?'checked':'';
+      return `<label for="${id}" style="display:flex;align-items:center;gap:8px;padding:4px 6px;cursor:pointer;border-radius:4px;font-size:13px" onmouseover="this.style.background='#f2f6fa'" onmouseout="this.style.background='none'">
+        <input type="checkbox" class="area-modal-cb" id="${id}" data-picker="${pickerId}" value="${esc(item)}" ${checked} onchange="areaModalOneToggled('${pickerId}', this)">
+        <span>${esc(item)}</span>
+      </label>`;
+    }).join('');
+  });
+  body.innerHTML = html || '<div style="padding:14px;color:var(--t3);font-size:12px">No matches</div>';
+}
+function areaModalOneToggled(pickerId, cb){
+  const working=new Set(_areaModalWorking[pickerId]||[]);
+  if(cb.checked) working.add(cb.value); else working.delete(cb.value);
+  _areaModalWorking[pickerId]=Array.from(working);
+  const countEl=document.getElementById('area-modal-count-'+pickerId);
+  if(countEl) countEl.textContent=working.size+' selected';
+}
+function areaModalFilter(pickerId, query){
+  areaModalSyncFromDom(pickerId);
+  renderAreaModalChecklist(pickerId, query);
+}
+function areaModalClearAll(pickerId){
+  _areaModalWorking[pickerId]=[];
+  const activeQuery=(document.querySelector('#area-modal-bg .modal input[type="text"]')||{}).value||'';
+  renderAreaModalChecklist(pickerId, activeQuery);
+}
+function areaModalApply(pickerId){
+  areaModalSyncFromDom(pickerId);
+  areaPickerInit(pickerId, _areaModalWorking[pickerId]||[]);
+  refreshAreaPickerButton(pickerId);
+  closeAreaModal();
+}
 function areaPickerGetValues(pickerId){ return (_areaPickerSelections[pickerId]||[]).slice(); }
 function areaPickerSearch(pickerId, query){
   const dropdown=document.getElementById('area-picker-dropdown-'+pickerId);
@@ -5300,11 +5412,13 @@ function areaPickerRemove(pickerId, item){
 }
 function renderAreaPickerChips(pickerId){
   const container=document.getElementById('area-picker-chips-'+pickerId);
-  if(!container) return;
-  const sel=_areaPickerSelections[pickerId]||[];
-  container.innerHTML = sel.length
-    ? sel.map(item=>`<span style="display:inline-flex;align-items:center;gap:4px;background:#e8f0fa;color:#1e3a5f;border-radius:12px;padding:3px 8px 3px 10px;font-size:11.5px;margin:2px 4px 2px 0"><span>${esc(item)}</span><span onclick="areaPickerRemove('${pickerId}',${esc(JSON.stringify(item))})" title="Remove" style="cursor:pointer;font-weight:700;padding-left:2px">✕</span></span>`).join('')
-    : '<span style="font-size:11px;color:var(--t3)">No areas selected — matches all areas</span>';
+  if(container){
+    const sel=_areaPickerSelections[pickerId]||[];
+    container.innerHTML = sel.length
+      ? sel.map(item=>`<span style="display:inline-flex;align-items:center;gap:4px;background:#e8f0fa;color:#1e3a5f;border-radius:12px;padding:3px 8px 3px 10px;font-size:11.5px;margin:2px 4px 2px 0"><span>${esc(item)}</span><span onclick="areaPickerRemove('${pickerId}',${esc(JSON.stringify(item))})" title="Remove" style="cursor:pointer;font-weight:700;padding-left:2px">✕</span></span>`).join('')
+      : '<span style="font-size:11px;color:var(--t3)">No areas selected — matches all areas</span>';
+  }
+  refreshAreaPickerButton(pickerId);
 }
 document.addEventListener('click', function(e){
   ['advsearch','genlist'].forEach(pickerId=>{
@@ -5344,8 +5458,7 @@ function showGeneratePopup(cat, remaining){
     <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Narrow this list (optional) — same filters as Charity Search</div>
     <div class="area-picker-wrap" style="position:relative;margin-bottom:10px">
       <label style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;display:block;margin-bottom:2px">Area of Operation</label>
-      <input type="text" class="area-picker-input" placeholder="Type to search (e.g. Kent, London, India)…" oninput="areaPickerSearch('genlist', this.value)" onfocus="areaPickerSearch('genlist', this.value)" style="width:100%;padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:12px">
-      <div class="area-picker-dropdown" id="area-picker-dropdown-genlist" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:30;background:#fff;border:1px solid var(--bd);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.18);max-height:220px;overflow-y:auto;margin-top:2px"></div>
+      <button type="button" id="area-picker-btn-genlist" onclick="openAreaPickerModal('genlist')" style="width:100%;text-align:left;padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:12px;background:#fff;cursor:pointer">🌍 Select Area of Operation…</button>
       <div id="area-picker-chips-genlist" style="margin-top:6px"></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">${fieldsHtml}</div>
