@@ -991,15 +991,18 @@ def _run_advanced_search(criteria, limit=50000):
     if isinstance(how_names, str): how_names=[a.strip() for a in how_names.split(",") if a.strip()]
     how_class_regs = _get_regs_for_classification("how", how_names) if how_names else None
     wq=str(criteria.get("what","")).upper().strip()
+    lq=str(criteria.get("location","")).upper().strip()
     sq=str(criteria.get("reg_status","registered")).strip()
     imin=flt(criteria.get("inc_min","")); imax=flt(criteria.get("inc_max","")) or float("inf")
+    emin=flt(criteria.get("exp_min","")); emax=flt(criteria.get("exp_max","")) or float("inf")
     df=str(criteria.get("reg_date_from","")).strip(); dt=str(criteria.get("reg_date_to","")).strip()
     tq=str(criteria.get("charity_type","")).upper().strip()
     limit = max(1, min(int(limit or 50000), 200000))
     COLS={"registered_charity_number","charity_name","charity_registration_status",
           "date_of_registration","date_of_removal","charity_contact_web",
           "charity_contact_phone","charity_contact_email",
-          "charity_contact_address3","charity_contact_address4",
+          "charity_contact_address1","charity_contact_address2",
+          "charity_contact_address3","charity_contact_address4","charity_contact_address5",
           "charity_contact_postcode","charity_activities","charity_type","latest_income",
           "organisation_number","charity_company_registration_number","linked_charity_number",
           "latest_acc_fin_period_start_date","latest_acc_fin_period_end_date",
@@ -1024,11 +1027,19 @@ def _run_advanced_search(criteria, limit=50000):
         if cq and cq not in county: continue
         what=row.get("charity_activities","").upper()
         if wq and wq not in what: continue
+        if lq:
+            addr_blob = " ".join([row.get("charity_contact_address1",""), row.get("charity_contact_address2",""),
+                                   row.get("charity_contact_address3",""), row.get("charity_contact_address4",""),
+                                   row.get("charity_contact_address5",""), row.get("charity_contact_postcode","")]).upper()
+            if lq not in addr_blob: continue
         ctype=row.get("charity_type","").upper()
         if tq and tq not in ctype: continue
         inc=flt(row.get("latest_income",""))
         if imin and inc<imin: continue
         if imax<float("inf") and inc>imax: continue
+        exp=flt(row.get("latest_expenditure",""))
+        if emin and exp<emin: continue
+        if emax<float("inf") and exp>emax: continue
         dtreg=row.get("date_of_registration","")[:10]
         if df and dtreg<df: continue
         if dt and dtreg>dt: continue
@@ -1060,7 +1071,9 @@ def advanced_search():
         "what_class": request.args.get("what_class",""), "who_class": request.args.get("who_class",""),
         "how_class": request.args.get("how_class",""),
         "what": request.args.get("what",""), "reg_status": request.args.get("reg_status","registered"),
+        "location": request.args.get("location",""),
         "inc_min": request.args.get("inc_min",""), "inc_max": request.args.get("inc_max",""),
+        "exp_min": request.args.get("exp_min",""), "exp_max": request.args.get("exp_max",""),
         "reg_date_from": request.args.get("reg_date_from",""), "reg_date_to": request.args.get("reg_date_to",""),
         "charity_type": request.args.get("charity_type",""),
     }
@@ -3782,6 +3795,7 @@ def _normalize_for_calling(c, source):
         "source": source,
         "source_detail": detail,
         "activities": c.get("activities",""),
+        "latest_expenditure": c.get("latest_expenditure",""),
         "charity_type": c.get("charity_type",""),
     }
 
@@ -4394,6 +4408,10 @@ def api_calling_batch_generate():
         if cq and cq not in str(c.get("county","")).upper(): return False
         wq = str(filters.get("what","")).upper().strip()
         if wq and wq not in str(c.get("activities","")).upper(): return False
+        lq = str(filters.get("location","")).upper().strip()
+        if lq:
+            addr_blob = (str(c.get("town","")) + " " + str(c.get("county",""))).upper()
+            if lq not in addr_blob: return False
         tq = str(filters.get("charity_type","")).upper().strip()
         if tq and tq not in str(c.get("charity_type","")).upper(): return False
         imin = _num(filters.get("inc_min"), None)
@@ -4404,6 +4422,13 @@ def api_calling_batch_generate():
             if inc is None: return False
             if imin is not None and inc < imin: return False
             if imax is not None and inc > imax: return False
+        emin = _num(filters.get("exp_min"), None)
+        emax = _num(filters.get("exp_max"), None)
+        if emin is not None or emax is not None:
+            exp = _num(c.get("latest_expenditure"), None)
+            if exp is None: return False
+            if emin is not None and exp < emin: return False
+            if emax is not None and exp > emax: return False
         adv_df = str(filters.get("reg_date_from","")).strip()
         adv_dt = str(filters.get("reg_date_to","")).strip()
         if adv_df or adv_dt:

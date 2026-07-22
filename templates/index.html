@@ -714,6 +714,9 @@ select:focus{outline:none;border-color:var(--green)}
       <div class="adv-field"><label>Charity Type</label><select id="adv-type"><option value="">Any</option><option value="CIO">CIO</option><option value="Charitable Company">Charitable Company</option><option value="Trust">Trust</option></select></div>
       <div class="adv-field"><label>Min Income £</label><input type="number" id="adv-inc-min" placeholder="e.g. 100000"></div>
       <div class="adv-field"><label>Max Income £</label><input type="number" id="adv-inc-max" placeholder="e.g. 5000000"></div>
+      <div class="adv-field"><label>Min Expenditure £</label><input type="number" id="adv-exp-min" placeholder="e.g. 100000"></div>
+      <div class="adv-field"><label>Max Expenditure £</label><input type="number" id="adv-exp-max" placeholder="e.g. 5000000"></div>
+      <div class="adv-field"><label>Location</label><input id="adv-location" placeholder="e.g. London, Manchester, SW1A"></div>
       <div class="adv-field"><label>Registered From</label><input type="date" id="adv-date-from"></div>
       <div class="adv-field"><label>Registered To</label><input type="date" id="adv-date-to"></div>
     </div>
@@ -3022,10 +3025,16 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.72";
+const APP_VERSION = "1.73";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.73", date:"2026-07", title:"Added Expenditure range and full-address Location filters",
+    changes:[
+      "New Min/Max Expenditure £ fields, matching Min/Max Income exactly, in both Charity Search and Generate List.",
+      "New Location field (free text) that searches across every address field the Charity Commission holds for a charity \u2014 both address lines, town, county, and postcode \u2014 not just the postcode prefix or county fields that existed before.",
+      "Note: Expenditure and full-address Location are fully reliable for Charity Search and saved searches, where the underlying data is already fetched. For Generate List's other sources (Prospects, New, Late, Old, Milestones), Location currently matches against town/county only (expenditure isn't fetched for those sources yet) \u2014 happy to extend full support to those too if it'd help.",
+    ]},
   { v:"1.72", date:"2026-07", title:"What/Who/How filters get the same visual checklist treatment",
     changes:[
       "\u201CWhat it does\u201D, \u201CWho it helps\u201D, and \u201CHow it helps\u201D are now the same visual checklist popup as Area of Operation, using the Charity Commission's own official categories (17 What / 7 Who / 10 How) \u2014 available in both Charity Search and Generate List.",
@@ -3704,7 +3713,7 @@ function doAdv(){
   const whatSel=areaPickerGetValues('advsearch_what');
   const whoSel=areaPickerGetValues('advsearch_who');
   const howSel=areaPickerGetValues('advsearch_how');
-  const p=new URLSearchParams({name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),area_of_operation:areas.join(','),what_class:whatSel.join(','),who_class:whoSel.join(','),how_class:howSel.join(','),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to'),limit:'50000'});
+  const p=new URLSearchParams({name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),location:v('adv-location'),area_of_operation:areas.join(','),what_class:whatSel.join(','),who_class:whoSel.join(','),how_class:howSel.join(','),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),exp_min:v('adv-exp-min'),exp_max:v('adv-exp-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to'),limit:'50000'});
   console.log('[Advanced Search] full request URL:', '/api/advanced_search?'+p.toString());
   showSL();
   fetch('/api/advanced_search?'+p).then(r=>r.json()).then(d=>{
@@ -3776,7 +3785,7 @@ function renderSR(data,pg){
 }
 function sortS(col){const s=srt.s;s.d=(s.c===col)?-s.d:1;s.c=col;renderSR(sAll,1);}
 function clearSearch(){document.getElementById('search-q').value='';document.getElementById('s-results').style.display='none';document.getElementById('s-empty').style.display='block';sAll=[];}
-function clearAdv(){['adv-name','adv-reg','adv-postcode','adv-inc-min','adv-inc-max','adv-date-from','adv-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('adv-status').value='registered';document.getElementById('adv-type').value='';areaPickerClear('advsearch');areaPickerClear('advsearch_what');areaPickerClear('advsearch_who');areaPickerClear('advsearch_how');}
+function clearAdv(){['adv-name','adv-reg','adv-postcode','adv-location','adv-inc-min','adv-inc-max','adv-exp-min','adv-exp-max','adv-date-from','adv-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('adv-status').value='registered';document.getElementById('adv-type').value='';areaPickerClear('advsearch');areaPickerClear('advsearch_what');areaPickerClear('advsearch_who');areaPickerClear('advsearch_how');}
 function dlSearch(btn){
   if(!sAll.length)return;
   const regs=sAll.map(c=>c.reg_number);
@@ -3816,7 +3825,7 @@ function openSaveModal(){document.getElementById('save-modal').classList.add('op
 function closeSave(){document.getElementById('save-modal').classList.remove('open');}
 function confirmSave(){
   const name=document.getElementById('save-name').value.trim();if(!name)return;
-  const criteria={name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),area_of_operation:areaPickerGetValues('advsearch'),what_class:areaPickerGetValues('advsearch_what'),who_class:areaPickerGetValues('advsearch_who'),how_class:areaPickerGetValues('advsearch_how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to')};
+  const criteria={name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),location:v('adv-location'),area_of_operation:areaPickerGetValues('advsearch'),what_class:areaPickerGetValues('advsearch_what'),who_class:areaPickerGetValues('advsearch_who'),how_class:areaPickerGetValues('advsearch_how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),exp_min:v('adv-exp-min'),exp_max:v('adv-exp-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to')};
   ss[name]=criteria;
   fetch('/api/saved_searches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,criteria})});
   closeSave();document.getElementById('save-name').value='';loadSavedList();
@@ -3832,7 +3841,7 @@ function loadSaved(){
   const name=document.getElementById('saved-sel').value;if(!name)return;
   fetch('/api/saved_searches/'+encodeURIComponent(name)).then(r=>r.json()).then(c=>{
     setMode('advanced');
-    const fm={'adv-name':'name','adv-reg':'reg_number','adv-postcode':'postcode','adv-status':'reg_status','adv-type':'charity_type','adv-inc-min':'inc_min','adv-inc-max':'inc_max','adv-date-from':'reg_date_from','adv-date-to':'reg_date_to'};
+    const fm={'adv-name':'name','adv-reg':'reg_number','adv-postcode':'postcode','adv-location':'location','adv-status':'reg_status','adv-type':'charity_type','adv-inc-min':'inc_min','adv-inc-max':'inc_max','adv-exp-min':'exp_min','adv-exp-max':'exp_max','adv-date-from':'reg_date_from','adv-date-to':'reg_date_to'};
     Object.entries(fm).forEach(([id,key])=>{const el=document.getElementById(id);if(el&&c[key])el.value=c[key];});
     areaPickerInit('advsearch', Array.isArray(c.area_of_operation)?c.area_of_operation:[]);
     areaPickerInit('advsearch_what', Array.isArray(c.what_class)?c.what_class:[]);
@@ -5479,9 +5488,12 @@ const GEN_ADV_FIELDS=[
   {id:'genf-name',key:'name',label:'Charity Name',ph:'e.g. Age UK'},
   {id:'genf-reg',key:'reg_number',label:'Registration Number',ph:'e.g. 1128267'},
   {id:'genf-postcode',key:'postcode',label:'Postcode (prefix)',ph:'e.g. SW1A'},
+  {id:'genf-location',key:'location',label:'Location',ph:'e.g. London, Manchester'},
   {id:'genf-type',key:'charity_type',label:'Charity Type',ph:'e.g. CIO'},
   {id:'genf-inc-min',key:'inc_min',label:'Min Income £',ph:'e.g. 100000',type:'number'},
   {id:'genf-inc-max',key:'inc_max',label:'Max Income £',ph:'e.g. 5000000',type:'number'},
+  {id:'genf-exp-min',key:'exp_min',label:'Min Expenditure £',ph:'e.g. 100000',type:'number'},
+  {id:'genf-exp-max',key:'exp_max',label:'Max Expenditure £',ph:'e.g. 5000000',type:'number'},
   {id:'genf-date-from',key:'reg_date_from',label:'Registered From',type:'date'},
   {id:'genf-date-to',key:'reg_date_to',label:'Registered To',type:'date'},
 ];
