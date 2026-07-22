@@ -1160,64 +1160,75 @@ select:focus{outline:none;border-color:var(--green)}
   </div>
   <div style="padding:0 24px 24px">
 
-    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:#f7f5fb;border:1px solid #e2dcf0;border-radius:8px;padding:12px 16px;margin-bottom:16px">
-      <label style="font-size:12px;font-weight:700;color:#3d2d5a">From <input type="date" id="cr-date-from" style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px"></label>
-      <label style="font-size:12px;font-weight:700;color:#3d2d5a">To <input type="date" id="cr-date-to" style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px"></label>
-      <label style="font-size:12px;font-weight:700;color:#3d2d5a">Caller(s)
-        <select id="cr-callers" multiple style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px;min-width:140px;height:34px"></select>
-      </label>
-      <span style="font-size:11px;color:var(--t3)">(none selected = everyone)</span>
+    <!-- GALLERY VIEW: what you land on from Home — shows saved report tiles, or a blank/empty state -->
+    <div id="cr-view-gallery">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <span style="font-size:13px;font-weight:700;color:#3d2d5a">💾 Your Saved Reports</span>
+        <button class="btn btn-green btn-sm" onclick="crOpenBuilder()">✨ + Create New Report</button>
+      </div>
+      <div id="cr-tiles-gallery" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px"></div>
     </div>
 
-    <div style="display:grid;grid-template-columns:220px 1fr;gap:16px;margin-bottom:16px">
-      <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px">
-        <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">📏 Measures</div>
-        <div id="cr-palette-measures" style="margin-bottom:14px"></div>
-        <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">🔀 Fields</div>
-        <div id="cr-palette-dims"></div>
-        <p style="font-size:10.5px;color:var(--t3);margin-top:10px;line-height:1.4">Drag a measure into Values, and a field into Rows (Columns is optional) — or tap a chip then tap a well.</p>
+    <!-- BUILDER VIEW: the drag-and-drop canvas, opened via "+ Create New Report" or editing a tile -->
+    <div id="cr-view-builder" style="display:none">
+      <button class="btn btn-outline btn-sm" onclick="crBackToGallery()" style="margin-bottom:14px">← Back to Reports</button>
+
+      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:#f7f5fb;border:1px solid #e2dcf0;border-radius:8px;padding:12px 16px;margin-bottom:16px">
+        <label style="font-size:12px;font-weight:700;color:#3d2d5a">From <input type="date" id="cr-date-from" style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px"></label>
+        <label style="font-size:12px;font-weight:700;color:#3d2d5a">To <input type="date" id="cr-date-to" style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px"></label>
+        <label style="font-size:12px;font-weight:700;color:#3d2d5a">Caller(s)
+          <select id="cr-callers" multiple style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px;min-width:140px;height:34px"></select>
+        </label>
+        <span style="font-size:11px;color:var(--t3)">(none selected = everyone)</span>
       </div>
 
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <div id="cr-well-values" data-well="values" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:44px;border:2px dashed #d8c9ee;border-radius:8px;padding:8px 12px;background:#faf8fd;display:flex;align-items:center;gap:8px">
-          <span style="font-size:11px;font-weight:700;color:#6a4d99;text-transform:uppercase;width:80px;flex-shrink:0">Values</span>
-          <span id="cr-well-values-content" style="color:var(--t3);font-size:12px">Drag a measure here</span>
-        </div>
-        <div id="cr-well-rows" data-well="rows" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:44px;border:2px dashed #c9dcee;border-radius:8px;padding:8px 12px;background:#f8fafd;display:flex;align-items:center;gap:8px">
-          <span style="font-size:11px;font-weight:700;color:#2d5a8f;text-transform:uppercase;width:80px;flex-shrink:0">Rows</span>
-          <span id="cr-well-rows-content" style="color:var(--t3);font-size:12px">Drag a field here</span>
-        </div>
-        <div id="cr-well-columns" data-well="columns" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:44px;border:2px dashed #eee0c9;border-radius:8px;padding:8px 12px;background:#fdfbf8;display:flex;align-items:center;gap:8px">
-          <span style="font-size:11px;font-weight:700;color:#8a6d1a;text-transform:uppercase;width:80px;flex-shrink:0">Columns</span>
-          <span id="cr-well-columns-content" style="color:var(--t3);font-size:12px">Optional — drag a field here</span>
+      <div style="display:grid;grid-template-columns:220px 1fr;gap:16px;margin-bottom:16px">
+        <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px">
+          <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">📏 Measures</div>
+          <div id="cr-palette-measures" style="margin-bottom:14px"></div>
+          <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">🔀 Fields</div>
+          <div id="cr-palette-dims"></div>
+          <p style="font-size:10.5px;color:var(--t3);margin-top:10px;line-height:1.4">Drag a measure into Values, and a field into Rows (Columns is optional) — or tap a chip then tap a well.</p>
         </div>
 
-        <div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap">
-          <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Chart</span>
-          <select id="cr-chart-type" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12.5px">
-            <option value="bar">Bar</option>
-            <option value="line">Line</option>
-            <option value="doughnut">Pie / Doughnut</option>
-            <option value="table">Table</option>
-          </select>
-          <button class="btn btn-green btn-sm" onclick="runCustomReport()">▶ Run</button>
-          <button class="btn btn-outline btn-sm" onclick="clearCustomReportCanvas()">Clear</button>
-          <span style="flex:1"></span>
-          <input id="cr-tile-name" placeholder="Name this report…" maxlength="80" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12.5px;width:180px">
-          <button class="btn btn-outline btn-sm" onclick="saveCustomReportTile()">💾 Save as Tile</button>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div id="cr-well-values" data-well="values" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:44px;border:2px dashed #d8c9ee;border-radius:8px;padding:8px 12px;background:#faf8fd;display:flex;align-items:center;gap:8px">
+            <span style="font-size:11px;font-weight:700;color:#6a4d99;text-transform:uppercase;width:80px;flex-shrink:0">Values</span>
+            <span id="cr-well-values-content" style="color:var(--t3);font-size:12px">Drag a measure here</span>
+          </div>
+          <div id="cr-well-rows" data-well="rows" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:44px;border:2px dashed #c9dcee;border-radius:8px;padding:8px 12px;background:#f8fafd;display:flex;align-items:center;gap:8px">
+            <span style="font-size:11px;font-weight:700;color:#2d5a8f;text-transform:uppercase;width:80px;flex-shrink:0">Rows</span>
+            <span id="cr-well-rows-content" style="color:var(--t3);font-size:12px">Drag a field here</span>
+          </div>
+          <div id="cr-well-columns" data-well="columns" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:44px;border:2px dashed #eee0c9;border-radius:8px;padding:8px 12px;background:#fdfbf8;display:flex;align-items:center;gap:8px">
+            <span style="font-size:11px;font-weight:700;color:#8a6d1a;text-transform:uppercase;width:80px;flex-shrink:0">Columns</span>
+            <span id="cr-well-columns-content" style="color:var(--t3);font-size:12px">Optional — drag a field here</span>
+          </div>
+
+          <div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap">
+            <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Chart</span>
+            <select id="cr-chart-type" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12.5px">
+              <option value="bar">Bar</option>
+              <option value="line">Line</option>
+              <option value="doughnut">Pie / Doughnut</option>
+              <option value="table">Table</option>
+            </select>
+            <button class="btn btn-green btn-sm" onclick="runCustomReport()">▶ Run</button>
+            <button class="btn btn-outline btn-sm" onclick="clearCustomReportCanvas()">Clear</button>
+            <span style="flex:1"></span>
+            <input id="cr-tile-name" placeholder="Name this report…" maxlength="80" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12.5px;width:180px">
+            <button class="btn btn-outline btn-sm" onclick="saveCustomReportTile()">💾 Save as Tile</button>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div id="cr-result-status" style="font-size:12px;color:var(--t3);margin-bottom:8px"></div>
-    <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:16px;min-height:120px;margin-bottom:22px">
-      <div id="cr-result-chart-wrap" style="display:none;max-width:900px;margin:0 auto"><canvas id="cr-chart"></canvas></div>
-      <div id="cr-result-table-wrap" style="display:none;overflow-x:auto"></div>
-      <div id="cr-result-empty" style="color:var(--t3);font-size:13px;text-align:center;padding:30px 0">Drag a measure and a field above, then hit Run.</div>
+      <div id="cr-result-status" style="font-size:12px;color:var(--t3);margin-bottom:8px"></div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:16px;min-height:120px;margin-bottom:22px">
+        <div id="cr-result-chart-wrap" style="display:none;max-width:900px;margin:0 auto"><canvas id="cr-chart"></canvas></div>
+        <div id="cr-result-table-wrap" style="display:none;overflow-x:auto"></div>
+        <div id="cr-result-empty" style="color:var(--t3);font-size:13px;text-align:center;padding:30px 0">Drag a measure and a field above, then hit Run.</div>
+      </div>
     </div>
-
-    <div style="font-size:13px;font-weight:700;color:#3d2d5a;margin-bottom:8px">💾 Saved Tiles</div>
-    <div id="cr-tiles-gallery" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px"></div>
 
   </div>
 </section>
@@ -2336,6 +2347,12 @@ let _crChartInst=null;
 let _crFieldsLoaded=false;
 
 function initCustomReport(){
+  // Land on the gallery of saved reports, not the builder — matches how
+  // Calling Report itself works, and avoids dropping straight into an empty
+  // canvas every time.
+  const gal=document.getElementById('cr-view-gallery'), build=document.getElementById('cr-view-builder');
+  if(gal) gal.style.display='block';
+  if(build) build.style.display='none';
   const from=document.getElementById('cr-date-from'), to=document.getElementById('cr-date-to');
   if(from && !from.value){
     const now=new Date(); const day=now.getDay(); const diffToMon=day===0?-6:1-day;
@@ -2361,19 +2378,44 @@ function initCustomReport(){
   }
   loadCustomReportTiles();
 }
+function crOpenBuilder(){
+  const gal=document.getElementById('cr-view-gallery'), build=document.getElementById('cr-view-builder');
+  if(gal) gal.style.display='none';
+  if(build) build.style.display='block';
+  clearCustomReportCanvas();  // fresh start each time — crEditTileByIdx re-populates right after, for the edit case
+}
+function crBackToGallery(){
+  const gal=document.getElementById('cr-view-gallery'), build=document.getElementById('cr-view-builder');
+  if(build) build.style.display='none';
+  if(gal) gal.style.display='block';
+  loadCustomReportTiles();
+}
 function renderCrPalette(){
   const mEl=document.getElementById('cr-palette-measures');
   const dEl=document.getElementById('cr-palette-dims');
   if(!mEl || !dEl) return;
-  const chip=(f,kind)=>`<div draggable="true" ondragstart="crChipDragStart(event,'${kind}','${f.value}',${JSON.stringify(f.label)})" onclick="crChipTap('${kind}','${f.value}',${JSON.stringify(f.label)})"
+  // Uses data-* attributes (read in crChipDragStart/crChipTapEl below) rather
+  // than embedding values inline in onclick/ondragstart — putting a
+  // JSON.stringify()'d string directly inside a double-quoted HTML attribute
+  // breaks it the moment the value contains a quote character, which
+  // JSON.stringify always adds around strings. This is the same class of bug
+  // found and fixed for the Area/What/Who/How pickers earlier — data-*
+  // attributes only need normal HTML escaping, sidestepping it entirely.
+  const chip=(f,kind)=>`<div draggable="true" data-kind="${kind}" data-value="${esc(f.value)}" data-label="${esc(f.label)}"
+      ondragstart="crChipDragStart(event)" onclick="crChipTapEl(this)"
       style="background:${kind==='measure'?'#f0e9fb':'#e9f1fb'};border:1px solid ${kind==='measure'?'#d2bdf0':'#bdd7f0'};border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;cursor:grab;user-select:none">${esc(f.label)}</div>`;
   mEl.innerHTML=_crMeasures.map(f=>chip(f,'measure')).join('');
   dEl.innerHTML=_crDimensions.map(f=>chip(f,'dim')).join('');
 }
-function crChipDragStart(e, kind, value, label){
+function crChipDragStart(e){
+  const el=e.currentTarget;
+  const payload={kind:el.dataset.kind, value:el.dataset.value, label:el.dataset.label};
   e.dataTransfer.effectAllowed='copy';
-  try{ e.dataTransfer.setData('text/plain', JSON.stringify({kind,value,label})); }catch(err){}
+  try{ e.dataTransfer.setData('text/plain', JSON.stringify(payload)); }catch(err){}
   _crTapSelected=null;
+}
+function crChipTapEl(el){
+  crChipTap(el.dataset.kind, el.dataset.value, el.dataset.label);
 }
 function crChipTap(kind, value, label){
   _crTapSelected={kind,value,label};
@@ -2518,11 +2560,11 @@ function saveCustomReportTile(){
     body:JSON.stringify({name, config:cfg})})
     .then(r=>r.json()).then(d=>{
       if(!d.ok){ status.textContent='⚠ '+(d.error||'Save failed'); status.style.color='#c0392b'; return; }
-      status.textContent='✓ Saved "'+name+'"'; status.style.color='var(--green)';
       document.getElementById('cr-tile-name').value='';
-      loadCustomReportTiles();
+      crBackToGallery();  // saved reports live in the gallery — take her back to see it
     }).catch(e=>{ status.textContent='⚠ '+e.message; status.style.color='#c0392b'; });
 }
+let _crLoadedTiles=[];  // last-rendered tiles, so gallery buttons can reference by index rather than embedding JSON in onclick=""
 function loadCustomReportTiles(){
   fetch('/api/custom_report/tiles').then(r=>r.json()).then(d=>{
     if(!d.ok) return;
@@ -2530,9 +2572,10 @@ function loadCustomReportTiles(){
   }).catch(()=>{});
 }
 function renderCrTilesGallery(tiles){
+  _crLoadedTiles=tiles;
   const gal=document.getElementById('cr-tiles-gallery');
   if(!gal) return;
-  if(!tiles.length){ gal.innerHTML='<p style="color:var(--t3);font-size:12.5px;grid-column:1/-1">No saved reports yet — build one above and save it.</p>'; return; }
+  if(!tiles.length){ gal.innerHTML='<p style="color:var(--t3);font-size:12.5px;grid-column:1/-1">No saved reports yet — click "+ Create New Report" above to build your first one.</p>'; return; }
   gal.innerHTML=tiles.map((t,i)=>{
     const isTable=t.config.chart_type==='table';
     const chartId='cr-tile-chart-'+i;
@@ -2540,8 +2583,8 @@ function renderCrTilesGallery(tiles){
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <strong style="font-size:13px">${esc(t.name)}</strong>
         <span>
-          <button type="button" onclick='loadCustomReportTileConfig(${JSON.stringify(t.config)})' title="Load into canvas above" style="background:none;border:none;cursor:pointer;font-size:13px;margin-right:6px">✏️</button>
-          <button type="button" onclick="deleteCustomReportTile(${JSON.stringify(t.name)})" title="Delete" style="background:none;border:none;cursor:pointer;font-size:13px;color:#c0392b">🗑</button>
+          <button type="button" data-tile-idx="${i}" onclick="crEditTileByIdx(this)" title="Edit in canvas" style="background:none;border:none;cursor:pointer;font-size:13px;margin-right:6px">✏️</button>
+          <button type="button" data-tile-idx="${i}" onclick="crDeleteTileByIdx(this)" title="Delete" style="background:none;border:none;cursor:pointer;font-size:13px;color:#c0392b">🗑</button>
         </span>
       </div>
       <div id="${chartId}-wrap" style="display:${isTable?'none':'block'};max-height:220px"><canvas id="${chartId}"></canvas></div>
@@ -2551,6 +2594,16 @@ function renderCrTilesGallery(tiles){
   tiles.forEach((t,i)=>{
     runCustomReport('cr-tile-chart-'+i, 'cr-tile-chart-'+i+'-table', t.config);
   });
+}
+function crEditTileByIdx(el){
+  const t=_crLoadedTiles[parseInt(el.dataset.tileIdx,10)];
+  if(!t) return;
+  crOpenBuilder();
+  loadCustomReportTileConfig(t.config);
+}
+function crDeleteTileByIdx(el){
+  const t=_crLoadedTiles[parseInt(el.dataset.tileIdx,10)];
+  if(t) deleteCustomReportTile(t.name);
 }
 function loadCustomReportTileConfig(cfg){
   _crCanvas.values = cfg.measure ? {value:cfg.measure, label:(_crMeasures.find(m=>m.value===cfg.measure)||{}).label||cfg.measure} : null;
@@ -3335,10 +3388,15 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.77";
+const APP_VERSION = "1.78";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.78", date:"2026-07", title:"Fixed Custom Report drag-and-drop, and reworked its navigation",
+    changes:[
+      "Found the cause of drag-and-drop not working at all: the same class of HTML-quoting bug found and fixed earlier this session for the Area/What/Who/How pickers had crept back in here \u2014 embedding a value directly inside an onclick/ondragstart attribute silently broke the handler the moment the label contained anything JSON.stringify wraps in quotes, which is every label. Rebuilt using data-* attributes instead, which avoids the whole bug class rather than relying on careful escaping. Verified with an actual simulated drag end-to-end, plus a tile name containing an apostrophe as a specific stress test.",
+      "\u201C\ud83e\udde9 Custom Report\u201D from Home now opens a gallery of your saved reports (or a blank prompt to create your first one) instead of dropping straight into the builder. A new \u201C+ Create New Report\u201D button opens the canvas; \u201C\u2190 Back to Reports\u201D returns to the gallery, and saving a report now takes you back there too, so it appears as a tile immediately.",
+    ]},
   { v:"1.77", date:"2026-07", title:"New: Custom Report — build your own dashboard views",
     changes:[
       "New \u201C\ud83e\udde9 Custom Report\u201D card on Home, completely separate from Calling Report \u2014 nothing there is touched or affected.",
