@@ -1855,6 +1855,21 @@ def custom_report_tiles_list():
     for name, config in rows:
         try: cfg = json.loads(config)
         except Exception: cfg = {}
+        # Migrate old, pre-multi-visual single-chart configs (flat measure/rows
+        # at the top level) into the current {visuals:[...]} shape on the fly,
+        # so anything saved before this change still opens correctly instead
+        # of silently disappearing.
+        if isinstance(cfg, dict) and cfg.get("measure") and not cfg.get("visuals"):
+            m, rw, co = cfg.get("measure"), cfg.get("rows"), cfg.get("columns","")
+            cfg = {
+                "date_from": cfg.get("date_from",""), "date_to": cfg.get("date_to",""),
+                "callers": cfg.get("callers", []),
+                "visuals": [{"id":"v1","x":0,"y":0,"w":4,"h":4,
+                    "measure":m, "measureLabel":REPORT_MEASURES.get(m,{}).get("label",m),
+                    "rows":rw, "rowsLabel":REPORT_DIMENSIONS.get(rw,{}).get("label",rw),
+                    "columns":co, "columnsLabel":REPORT_DIMENSIONS.get(co,{}).get("label",co) if co else "",
+                    "chart_type":cfg.get("chart_type","bar")}],
+            }
         tiles.append({"name": name, "config": cfg})
     return jsonify({"ok": True, "tiles": tiles})
 
@@ -1865,8 +1880,11 @@ def custom_report_tiles_save():
     config = data.get("config") or {}
     if not name:
         return jsonify({"ok": False, "error": "Name is required"}), 400
-    if not isinstance(config, dict) or not config.get("measure") or not config.get("rows"):
-        return jsonify({"ok": False, "error": "Invalid report configuration"}), 400
+    visuals = config.get("visuals") if isinstance(config, dict) else None
+    if not isinstance(config, dict) or not isinstance(visuals, list) or not visuals:
+        return jsonify({"ok": False, "error": "Add at least one configured visual before saving"}), 400
+    if not all(isinstance(v, dict) and v.get("measure") and v.get("rows") for v in visuals):
+        return jsonify({"ok": False, "error": "Every visual needs a measure and a field"}), 400
     db_exec("DELETE FROM custom_report_tiles WHERE name=?", (name,))
     db_exec("INSERT INTO custom_report_tiles(name, config, created_at) VALUES(?,?,?)",
             (name, json.dumps(config), datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
