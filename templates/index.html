@@ -2542,9 +2542,6 @@ function crRenderColorPickerPanel(){
     panel.style.cssText='position:fixed;z-index:99999;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.25);padding:10px;width:250px';
     document.body.appendChild(panel);
   }
-  const rect=btn.getBoundingClientRect();
-  panel.style.left=Math.min(rect.left+window.scrollX, window.innerWidth-266)+'px';
-  panel.style.top=(rect.bottom+window.scrollY+4)+'px';
   const sw=(hex,label)=>`<button type="button" onclick="crPickColor('${esc(hex)}')" title="${esc(label||hex||'Automatic')}"
     style="width:18px;height:18px;border-radius:3px;border:1px solid rgba(0,0,0,.18);background:${hex?esc(hex):'#fff'};${hex?'':'background-image:linear-gradient(45deg,transparent 45%,#c00 45%,#c00 55%,transparent 55%)'};cursor:pointer;padding:0"></button>`;
   const themeRows=[0,1,2,3,4,5].map(row=>
@@ -2581,7 +2578,29 @@ function crRenderColorPickerPanel(){
     </label>
   </div>`;
   panel.innerHTML=html;
-  panel.style.display='block';
+  crPositionFixedPanel(panel, btn);
+}
+// Shared positioning for every position:fixed floating panel (this color
+// picker, and the slicer dropdown panel below). position:fixed coordinates
+// are relative to the VIEWPORT, not the document — adding window.scrollX/
+// scrollY (needed for position:absolute) was the actual bug behind colors
+// "not working": on a long page, once scrolled down, that extra offset
+// pushed the panel further and further below the visible screen, past the
+// taskbar, while still technically existing in the DOM (so clicks landed on
+// nothing). This also clamps to the viewport and flips the panel above the
+// button when there isn't room below, so it can never render off-screen in
+// any direction again.
+function crPositionFixedPanel(panel, btn){
+  panel.style.left='0px'; panel.style.top='0px'; panel.style.visibility='hidden'; panel.style.display='block';
+  const panelW=panel.offsetWidth, panelH=panel.offsetHeight;
+  const rect=btn.getBoundingClientRect();
+  const spaceBelow=window.innerHeight-rect.bottom, spaceAbove=rect.top;
+  let top = (spaceBelow>=panelH+8 || spaceBelow>=spaceAbove) ? rect.bottom+4 : rect.top-panelH-4;
+  top=Math.max(8, Math.min(top, window.innerHeight-panelH-8));
+  let left=Math.max(8, Math.min(rect.left, window.innerWidth-panelW-8));
+  panel.style.left=left+'px';
+  panel.style.top=top+'px';
+  panel.style.visibility='visible';
 }
 function crUpdateRgbPreview(){
   const r=Math.max(0,Math.min(255,parseInt(document.getElementById('cr-rgb-r').value,10)||0));
@@ -3375,8 +3394,6 @@ function crRenderSlicerDropdownPanel(id){
     document.body.appendChild(panel);
   }
   const rect=btn.getBoundingClientRect();
-  panel.style.left=(rect.left+window.scrollX)+'px';
-  panel.style.top=(rect.bottom+window.scrollY+4)+'px';
   panel.style.minWidth=Math.max(rect.width,180)+'px';
   const meta=crFilterFieldMeta(v.slicerField);
   const opts=(meta&&meta.options)||[];
@@ -3398,7 +3415,7 @@ function crRenderSlicerDropdownPanel(id){
         </label>`;
       }).join('')
       : '<div style="font-size:11px;color:var(--t3);padding:4px">No values available</div>');
-  panel.style.display='block';
+  crPositionFixedPanel(panel, btn);
 }
 function crSlicerDropdownOptionChanged(id, inputEl){
   const v=_crVisuals[id];
@@ -4921,6 +4938,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.92", date:"2026-07", title:"Fixed the actual color-picker bug: the panel was opening off-screen below the visible page",
+    changes:[
+      "Found the real cause of colors \"not working,\" thanks to the exact description of what was on screen: the color picker (and the Slicer dropdown panel) used position:fixed, which is anchored to the visible browser window \u2014 but the code was also adding the page's scroll offset on top of that, a correction that's only correct for a different kind of positioning. The further down the page you'd scrolled to reach Formatting, the further below the visible screen \u2014 past the taskbar \u2014 the panel opened. It was never a click-handling problem; the panel was simply rendering somewhere you couldn't see or reach it.",
+      "Both panels are now positioned purely from the button's on-screen location, with no scroll offset added, and are clamped to always stay fully inside the visible window \u2014 flipping to open above the button instead of below when there isn't room underneath (e.g. a swatch near the bottom of the screen).",
+      "This should fully resolve color changes appearing not to work \u2014 the picker was unreachable, not broken.",
+    ]},
   { v:"1.91", date:"2026-07", title:"Custom Report: richer color picker with RGB, and live formatting preview",
     changes:[
       "Theme Colors expanded from 8 columns \u00d7 5 shades to 10 columns \u00d7 6 shades \u2014 closer to the full Excel/Office picker in the reference screenshot.",
