@@ -1250,6 +1250,16 @@ select:focus{outline:none;border-color:var(--green)}
               </label>
             </div>
 
+            <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Filters <span style="font-weight:400;text-transform:none;color:var(--t3);letter-spacing:0">— this visual only, on top of the date/caller range above</span></div>
+            <div id="cr-filters-list" style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px"></div>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
+              <select id="cr-filter-field" onchange="crFilterFieldChanged()" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                <option value="">Filter by field…</option>
+              </select>
+              <select id="cr-filter-values" multiple style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px;min-width:170px;height:32px"></select>
+              <button type="button" class="btn btn-outline btn-sm" onclick="crAddFilter()">+ Add Filter</button>
+            </div>
+
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <button class="btn btn-green btn-sm" onclick="crApplyToSelectedVisual()">▶ Apply to This Visual</button>
               <button class="btn btn-outline btn-sm" onclick="crRemoveSelectedVisual()">🗑 Remove Visual</button>
@@ -2402,9 +2412,11 @@ let _crCanvas={values:null, rows:null, columns:null};  // wells UI state, for wh
 let _crTapSelected=null;
 let _crFieldsLoaded=false;
 let _crGrid=null;             // the GridStack instance for the canvas
-let _crVisuals={};            // {id: {measure,measureLabel,rows,rowsLabel,columns,columnsLabel,chart_type}}
+let _crVisuals={};            // {id: {measure,measureLabel,rows,rowsLabel,columns,columnsLabel,chart_type,filters}}
 let _crSelectedVisualId=null;
 let _crVisualSeq=0;
+let _crFilterFieldsMeta=[];   // [{value,label,options:[...]}] — caller entry is prepended client-side from userList
+let _crCanvasFilters=[];      // working filter list [{field,fieldLabel,values:[...]}] for whichever visual is selected
 
 function initCustomReport(){
   // Land on the gallery of saved reports, not the builder — matches how
@@ -2431,11 +2443,17 @@ function initCustomReport(){
     fetch('/api/custom_report/fields').then(r=>r.json()).then(d=>{
       if(!d.ok) return;
       _crMeasures=d.measures; _crDimensions=d.dimensions;
+      // Caller isn't a backend-supplied filter field — the team roster is
+      // already loaded client-side (same list as the report-level Caller
+      // filter), so it's prepended here rather than duplicating a DB query.
+      _crFilterFieldsMeta=[{value:'caller', label:'Caller', options:(userList||[]).slice()}].concat(d.filter_fields||[]);
       _crFieldsLoaded=true;
       renderCrPalette();
+      renderCrFilterFieldOptions();
     }).catch(()=>{});
   } else {
     renderCrPalette();
+    renderCrFilterFieldOptions();
   }
   loadCustomReportTiles();
 }
@@ -2568,7 +2586,7 @@ function crAddWidgetWithHtml(opts, html){
 function crAddVisual(){
   crInitGridIfNeeded();
   const id='v'+(++_crVisualSeq);
-  _crVisuals[id]={measure:'',measureLabel:'',rows:'',rowsLabel:'',columns:'',columnsLabel:'',chart_type:'col_clustered',format:{}};
+  _crVisuals[id]={measure:'',measureLabel:'',rows:'',rowsLabel:'',columns:'',columnsLabel:'',chart_type:'col_clustered',format:{},filters:[]};
   crAddWidgetWithHtml({w:4,h:4,id:id}, crVisualWidgetHtml(id));
   crSelectVisual(id);
 }
@@ -2587,6 +2605,10 @@ function crSelectVisual(id){
   document.getElementById('cr-fmt-legend').checked=fmt.legend!==false;
   document.getElementById('cr-fmt-legend-pos').value=fmt.legendPosition||'top';
   document.getElementById('cr-fmt-title').value=fmt.title||'';
+  _crCanvasFilters=(v.filters||[]).map(f=>({field:f.field, fieldLabel:f.fieldLabel, values:(f.values||[]).slice()}));
+  renderCrFiltersList();
+  const ffEl=document.getElementById('cr-filter-field'); if(ffEl) ffEl.value='';
+  const fvEl=document.getElementById('cr-filter-values'); if(fvEl) fvEl.innerHTML='';
   document.getElementById('cr-visual-config').style.display='block';
   document.getElementById('cr-selected-visual-label').textContent = v.measureLabel
     ? 'Editing: '+v.measureLabel+(v.rowsLabel?' by '+v.rowsLabel:'')
@@ -2599,6 +2621,8 @@ function crSelectVisual(id){
 function crDeselectVisual(){
   _crSelectedVisualId=null;
   _crCanvas={values:null, rows:null, columns:null};
+  _crCanvasFilters=[];
+  const filtersList=document.getElementById('cr-filters-list'); if(filtersList) filtersList.innerHTML='';
   const cfg=document.getElementById('cr-visual-config'); if(cfg) cfg.style.display='none';
   const lbl=document.getElementById('cr-selected-visual-label'); if(lbl) lbl.textContent='No visual selected — add one, or click an existing visual below';
   document.querySelectorAll('#cr-gridstack .grid-stack-item').forEach(el=>{ el.style.outline='none'; });
@@ -2631,6 +2655,55 @@ function crSetChartType(value){
     renderCrWells();
   }
 }
+function renderCrFilterFieldOptions(){
+  const sel=document.getElementById('cr-filter-field');
+  if(!sel) return;
+  sel.innerHTML='<option value="">Filter by field…</option>'+
+    _crFilterFieldsMeta.map(f=>`<option value="${esc(f.value)}">${esc(f.label)}</option>`).join('');
+}
+function crFilterFieldChanged(){
+  const field=document.getElementById('cr-filter-field').value;
+  const valSel=document.getElementById('cr-filter-values');
+  const meta=_crFilterFieldsMeta.find(f=>f.value===field);
+  const opts=(meta && meta.options) || [];
+  valSel.innerHTML=opts.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  valSel.size=Math.min(6, Math.max(3, opts.length||3));
+}
+function crAddFilter(){
+  const status=document.getElementById('cr-result-status');
+  const field=document.getElementById('cr-filter-field').value;
+  const meta=_crFilterFieldsMeta.find(f=>f.value===field);
+  const valSel=document.getElementById('cr-filter-values');
+  const values=Array.from(valSel.selectedOptions).map(o=>o.value);
+  if(!field || !meta){ status.textContent='⚠ Pick a field to filter by first.'; status.style.color='#c0392b'; return; }
+  if(!values.length){ status.textContent='⚠ Select at least one value for that field.'; status.style.color='#c0392b'; return; }
+  // Replace rather than stack a second condition on the same field — a
+  // visual filtering "Outcome is X" then "Outcome is Y" almost always means
+  // "actually I meant Y", not "match neither" (an AND of two IN-conditions
+  // on the same field would exclude every row).
+  _crCanvasFilters=_crCanvasFilters.filter(f=>f.field!==field);
+  _crCanvasFilters.push({field, fieldLabel:meta.label, values});
+  renderCrFiltersList();
+  status.textContent='';
+}
+function crRemoveFilter(idx){
+  _crCanvasFilters.splice(idx,1);
+  renderCrFiltersList();
+}
+function renderCrFiltersList(){
+  const el=document.getElementById('cr-filters-list');
+  if(!el) return;
+  if(!_crCanvasFilters.length){
+    el.innerHTML='<span style="font-size:11px;color:var(--t3)">No filters — this visual uses every row in the date/caller range above.</span>';
+    return;
+  }
+  el.innerHTML=_crCanvasFilters.map((f,i)=>
+    `<div style="display:flex;align-items:center;gap:6px;font-size:11.5px;background:#f5f5f7;border-radius:5px;padding:4px 8px">
+      <span><strong>${esc(f.fieldLabel)}</strong> is ${f.values.map(esc).join(' or ')}</span>
+      <span onclick="crRemoveFilter(${i})" style="cursor:pointer;font-weight:700;margin-left:auto;flex-shrink:0">✕</span>
+    </div>`
+  ).join('');
+}
 function crApplyToSelectedVisual(){
   const id=_crSelectedVisualId;
   const status=document.getElementById('cr-result-status');
@@ -2653,6 +2726,7 @@ function crApplyToSelectedVisual(){
       legendPosition:document.getElementById('cr-fmt-legend-pos').value,
       title:document.getElementById('cr-fmt-title').value.trim(),
     },
+    filters:_crCanvasFilters.map(f=>({field:f.field, fieldLabel:f.fieldLabel, values:f.values.slice()})),
   };
   const titleEl=document.getElementById('cr-visual-title-'+id);
   const titleText=_crVisuals[id].measureLabel+(_crVisuals[id].rowsLabel?' by '+_crVisuals[id].rowsLabel:'');
@@ -2679,8 +2753,9 @@ function crRenderVisual(id){
   const callers=Array.from(document.getElementById('cr-callers').selectedOptions).map(o=>o.value);
   const emptyEl=document.getElementById('cr-visual-empty-'+id);
   if(emptyEl) emptyEl.style.display='none';
+  const filters=(v.filters||[]).map(f=>({field:f.field, values:f.values}));
   return fetch('/api/custom_report/run',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({measure:v.measure, rows:v.rows||'', columns:v.columns||null, date_from:dateFrom, date_to:dateTo, callers})})
+    body:JSON.stringify({measure:v.measure, rows:v.rows||'', columns:v.columns||null, date_from:dateFrom, date_to:dateTo, callers, filters})})
     .then(r=>r.json()).then(d=>{
       if(!d.ok) return;
       renderCrResult(d, v.chart_type, 'cr-visual-chart-'+id, 'cr-visual-table-'+id, true, v.format, 'cr-visual-card-'+id);
@@ -2840,7 +2915,8 @@ function saveCustomReportCanvas(){
             rows:v.rows, rowsLabel:v.rowsLabel,
             columns:v.columns||'', columnsLabel:v.columnsLabel||'',
             chart_type:v.chart_type||'col_clustered',
-            format:v.format||{}};
+            format:v.format||{},
+            filters:v.filters||[]};
   }).filter(v=>v.measure && (v.rows || !crChartTypeNeedsRows(v.chart_type)));  // only persist visuals that are actually configured
   if(!visuals.length){ alert('Configure at least one visual (drag a measure + field, then "Apply to This Visual") before saving.'); return; }
   const config={
@@ -2898,7 +2974,7 @@ function crLoadReportIntoCanvas(cfg){
     if(numPart>_crVisualSeq) _crVisualSeq=numPart;
     _crVisuals[id]={measure:v.measure, measureLabel:v.measureLabel, rows:v.rows, rowsLabel:v.rowsLabel,
                     columns:v.columns||'', columnsLabel:v.columnsLabel||'', chart_type:v.chart_type||'col_clustered',
-                    format:v.format||{}};
+                    format:v.format||{}, filters:v.filters||[]};
     crAddWidgetWithHtml({w:v.w||4, h:v.h||4, x:v.x, y:v.y, id:id}, crVisualWidgetHtml(id));
     const titleEl=document.getElementById('cr-visual-title-'+id);
     if(titleEl) titleEl.textContent=(v.measureLabel||'')+(v.rowsLabel?' by '+v.rowsLabel:'');
@@ -3685,6 +3761,15 @@ const APP_VERSION = "1.82";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.83", date:"2026-07", title:"Custom Report: per-visual filters (Outcome, Stage, Source List, Caller)",
+    changes:[
+      "Each visual on the canvas can now be restricted further, on top of the report-level date/caller range \u2014 e.g. a chart showing only Outcome = Connected or Interested, or only Stage = Meeting secured, independently of every other visual on the same report.",
+      "New \"Filters\" section in the visual config panel: pick a field, tick one or more values, \u201C+ Add Filter\u201D. Multiple selected values on the same field are OR'd (\u201COutcome is Connected or Interested\u201D); multiple different filters on one visual are AND'd together. Setting a new filter on a field you'd already filtered on replaces it rather than stacking (a second \u201COutcome is\u201D almost always means \u201Cactually I meant this instead\u201D, and AND-ing two IN-conditions on the same field would just exclude everything).",
+      "Filter choices come from the same places the rest of the app already uses \u2014 Outcome/Stage from the admin-editable dropdown lists, Source List from the actual values present in your call data, Caller from the team roster \u2014 so nothing can drift out of sync.",
+      "Filters are saved and restored with the report, per visual, and apply to Card tiles too (filtering before the single total is computed, not after).",
+      "Built as a reusable filter predicate on the backend specifically so slicer tiles (the next piece) can share the same matching logic rather than duplicating it.",
+      "Still not built: interactive slicer tiles (dropdown/list/timeline widgets that live-filter every visual on the canvas at once by being clicked, Power BI-style). These filters are set once per visual in the config panel, not click-to-filter live widgets.",
+    ]},
   { v:"1.82", date:"2026-07", title:"Custom Report: Card tiles, with fields that adapt to the chart type",
     changes:[
       "New \"Card\" tile type \u2014 a single big number with a label underneath, the kind you'd put at the top of a dashboard (e.g. Total Calls Made, Meetings Secured this week).",

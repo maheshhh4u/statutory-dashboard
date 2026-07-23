@@ -1758,6 +1758,21 @@ def _cr_sort_keys(dim, keys):
         return sorted(keys)
     return keys  # caller sorts these by value after aggregation instead
 
+# Per-visual filter conditions (deferred from the Card-tile round, built now).
+# Deliberately a small, discrete-field-only set — date/hour filtering is
+# already covered by the report-level date range, so it doesn't need a
+# separate condition type. AND across filter entries, OR within one entry's
+# selected values (i.e. each entry is "field IN (values)"). This same
+# predicate is meant to be reused by slicer tiles later, per the plan noted
+# in the v1.82 handoff.
+_CR_FILTERABLE_DIMS = {"caller", "outcome", "stage", "source_list"}
+
+def _cr_row_matches_filters(row, filters):
+    for f in filters:
+        if (row.get(f["field"]) or "") not in f["values"]:
+            return False
+    return True
+
 @app.route("/api/custom_report/run", methods=["POST"])
 def custom_report_run():
     data = request.json or {}
@@ -1780,6 +1795,20 @@ def custom_report_run():
     if not date_from or not date_to:
         return jsonify({"ok": False, "error": "Missing date range"}), 400
 
+    filters_raw = data.get("filters") or []
+    filters = []
+    if isinstance(filters_raw, list):
+        for f in filters_raw:
+            if not isinstance(f, dict):
+                continue
+            field = str(f.get("field","")).strip()
+            values = [str(v).strip() for v in (f.get("values") or []) if str(v).strip()]
+            if not field or not values:
+                continue
+            if field not in _CR_FILTERABLE_DIMS:
+                return jsonify({"ok": False, "error": f"Unknown filter field '{field}'"}), 400
+            filters.append({"field": field, "values": set(values)})
+
     ts_from, ts_to = display_date_range_to_utc(date_from, date_to)
     cf, cp = "", ()
     if len(callers) == 1:
@@ -1796,25 +1825,32 @@ def custom_report_run():
               WHERE cl.timestamp>=? AND cl.timestamp<=? {cf}"""
     raw = db_query(sql, (ts_from, ts_to) + cp) or []
 
+    # Build the full row-dict list once, with source_list already resolved to
+    # its display label — both the card (no-grouping) path and the grouped
+    # path need the exact same shape below for filters to match consistently,
+    # since a filter on Source List is expressed in terms of the label the
+    # person actually picked, not the raw stored key.
+    rows_all = [{"reg_number": r[0], "page": r[1], "outcome": r[2], "duration_sec": r[3] or 0,
+                 "caller": r[4], "timestamp": r[5], "stage": r[6], "source_list": r[7]} for r in raw]
+    src_labels = {r["source_list"]: CALLING_CATEGORIES.get(r["source_list"], r["source_list"] or "Unknown") for r in rows_all}
+    for r in rows_all: r["source_list"] = src_labels.get(r["source_list"], r["source_list"])
+    if filters:
+        rows_all = [r for r in rows_all if _cr_row_matches_filters(r, filters)]
+
     if not rows_dim:
         # Card mode: one aggregate over everything matching the filters, no
         # grouping at all — used for single-number tiles.
-        rows_flat = [{"reg_number": r[0], "page": r[1], "outcome": r[2], "duration_sec": r[3] or 0,
-                      "caller": r[4], "timestamp": r[5], "stage": r[6]} for r in raw]
-        total = _cr_compute_measure(measure, rows_flat)
+        total = _cr_compute_measure(measure, rows_all)
         return jsonify({"ok": True, "single_value": total, "measure_label": REPORT_MEASURES[measure]["label"]})
 
-    if not raw:
+    if not rows_all:
         return jsonify({"ok": True, "row_labels": [], "column_labels": [], "data": [],
                         "measure_label": REPORT_MEASURES[measure]["label"],
                         "row_field_label": REPORT_DIMENSIONS[rows_dim]["label"],
                         "column_field_label": REPORT_DIMENSIONS[cols_dim]["label"] if cols_dim else None,
-                        "note": "No calls found for this date range/caller selection."})
+                        "note": "No calls found for this date range/caller/filter selection."})
 
-    rows = [{"reg_number": r[0], "page": r[1], "outcome": r[2], "duration_sec": r[3] or 0,
-             "caller": r[4], "timestamp": r[5], "stage": r[6], "source_list": r[7]} for r in raw]
-    src_labels = {r["source_list"]: CALLING_CATEGORIES.get(r["source_list"], r["source_list"] or "Unknown") for r in rows}
-    for r in rows: r["source_list"] = src_labels.get(r["source_list"], r["source_list"])
+    rows = rows_all
 
     # Bucket rows into groups by (row_key[, col_key])
     groups = {}  # row_key -> {col_key_or_None: [rows]}
@@ -1856,9 +1892,29 @@ def custom_report_run():
 
 @app.route("/api/custom_report/fields", methods=["GET"])
 def custom_report_fields():
+    # Outcome/Stage options come from the same admin-editable dropdown lists
+    # used everywhere else in the app, so a filter's choices always match
+    # what a caller could actually have logged. Source List options are
+    # queried as distinct values actually present in the app's own call data
+    # (mapped to their display labels) rather than assumed from
+    # CALLING_CATEGORIES, since a couple of source_list values (e.g. the
+    # "calling" fallback) aren't in that dict. Caller options are left to the
+    # frontend, which already has the team roster loaded for the report-level
+    # Caller filter.
+    outcome_opts = [o["value"] for o in get_dropdown_options("outcome")]
+    stage_opts = [o["value"] for o in get_dropdown_options("stage")]
+    src_rows = db_query("""SELECT DISTINCT CASE WHEN cl.page='calling' THEN COALESCE(cb.category,'calling') ELSE cl.page END
+                            FROM call_log cl
+                            LEFT JOIN calling_batch cb ON cb.reg_number=cl.reg_number AND cb.active=1""") or []
+    source_opts = sorted({CALLING_CATEGORIES.get(r[0], r[0]) for r in src_rows if r[0]})
     return jsonify({"ok": True,
         "measures": [{"value": k, "label": v["label"]} for k, v in REPORT_MEASURES.items()],
-        "dimensions": [{"value": k, "label": v["label"]} for k, v in REPORT_DIMENSIONS.items()]})
+        "dimensions": [{"value": k, "label": v["label"]} for k, v in REPORT_DIMENSIONS.items()],
+        "filter_fields": [
+            {"value": "outcome", "label": "Outcome", "options": outcome_opts},
+            {"value": "stage", "label": "Stage", "options": stage_opts},
+            {"value": "source_list", "label": "Source List", "options": source_opts},
+        ]})
 
 @app.route("/api/custom_report/tiles", methods=["GET"])
 def custom_report_tiles_list():
