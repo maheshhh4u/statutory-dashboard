@@ -1763,7 +1763,7 @@ def custom_report_run():
     data = request.json or {}
     measure = str(data.get("measure","")).strip()
     rows_dim = str(data.get("rows","")).strip()
-    cols_dim = str(data.get("columns","")).strip() or None
+    cols_dim = str(data.get("columns") or "").strip() or None
     date_from = str(data.get("date_from","")).strip()
     date_to = str(data.get("date_to","")).strip()
     callers = [c.strip() for c in (data.get("callers") or []) if c.strip()]
