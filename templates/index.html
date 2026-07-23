@@ -2373,6 +2373,7 @@ function initReportCallers(){
 
 // ── Custom Report (v1) ────────────────────────────────────────────────────────
 const CR_CHART_TYPES=[
+  {value:'card', label:'Card (Single Number)', icon:'🔲'},
   {value:'col_clustered', label:'Column - Clustered', icon:'📊'},
   {value:'col_stacked', label:'Column - Stacked', icon:'📊'},
   {value:'col_stacked100', label:'Column - 100% Stacked', icon:'📊'},
@@ -2387,6 +2388,9 @@ const CR_CHART_TYPES=[
   {value:'polarArea', label:'Polar Area', icon:'🎯'},
   {value:'table', label:'Table', icon:'🔢'},
 ];
+// Card is the one tile type that shows a single aggregated number with no
+// breakdown — it only ever needs a measure, not a Rows/Columns field.
+function crChartTypeNeedsRows(chartType){ return chartType!=='card'; }
 const CR_PALETTES={
   navy:  ['#1e3a5f','#e8b339','#1d7a3a','#a02c2c','#6a4d99','#2d8f8f','#c47a2c','#4d6a99'],
   vivid: ['#e63946','#f4a261','#2a9d8f','#264653','#e9c46a','#8338ec','#3a86ff','#fb5607'],
@@ -2545,6 +2549,7 @@ function crVisualWidgetHtml(id){
     <div onclick="crSelectVisual('${id}')" style="flex:1;padding:6px;overflow:auto;cursor:pointer;position:relative;min-height:0">
       <div id="cr-visual-chart-${id}-wrap" style="display:none;height:100%;position:relative"><canvas id="cr-visual-chart-${id}"></canvas></div>
       <div id="cr-visual-table-${id}" style="display:none;overflow:auto;height:100%;font-size:11px"></div>
+      <div id="cr-visual-card-${id}" style="display:none;height:100%;flex-direction:column;align-items:center;justify-content:center;text-align:center"></div>
       <div id="cr-visual-empty-${id}" style="color:var(--t3);font-size:11px;text-align:center;padding:20px 4px">Click me, then configure using the panel above</div>
     </div>
   </div>`;
@@ -2614,18 +2619,33 @@ function crSetChartType(value){
     b.style.background = active ? '#eaf1fa' : '#fff';
     b.style.boxShadow = active ? 'inset 0 0 0 1px #1e3a5f' : 'none';
   });
+  const needsRows=crChartTypeNeedsRows(value);
+  const rowsWell=document.getElementById('cr-well-rows');
+  const colsWell=document.getElementById('cr-well-columns');
+  if(rowsWell) rowsWell.style.display=needsRows?'flex':'none';
+  if(colsWell) colsWell.style.display=needsRows?'flex':'none';
+  if(!needsRows){
+    // Card tiles don't group by anything — clear any Rows/Columns already
+    // placed so a stale field from a previous chart type can't linger.
+    _crCanvas.rows=null; _crCanvas.columns=null;
+    renderCrWells();
+  }
 }
 function crApplyToSelectedVisual(){
   const id=_crSelectedVisualId;
   const status=document.getElementById('cr-result-status');
+  const chartType=document.getElementById('cr-chart-type').value;
+  const needsRows=crChartTypeNeedsRows(chartType);
   if(!id){ status.textContent='⚠ Add or select a visual first.'; status.style.color='#c0392b'; return; }
   if(!_crCanvas.values){ status.textContent='⚠ Drag a measure into Values first.'; status.style.color='#c0392b'; return; }
-  if(!_crCanvas.rows){ status.textContent='⚠ Drag a field into Rows first.'; status.style.color='#c0392b'; return; }
+  if(needsRows && !_crCanvas.rows){ status.textContent='⚠ Drag a field into Rows first.'; status.style.color='#c0392b'; return; }
   _crVisuals[id]={
     measure:_crCanvas.values.value, measureLabel:_crCanvas.values.label,
-    rows:_crCanvas.rows.value, rowsLabel:_crCanvas.rows.label,
-    columns:_crCanvas.columns?_crCanvas.columns.value:'', columnsLabel:_crCanvas.columns?_crCanvas.columns.label:'',
-    chart_type:document.getElementById('cr-chart-type').value,
+    rows: needsRows && _crCanvas.rows ? _crCanvas.rows.value : '',
+    rowsLabel: needsRows && _crCanvas.rows ? _crCanvas.rows.label : '',
+    columns: needsRows && _crCanvas.columns ? _crCanvas.columns.value : '',
+    columnsLabel: needsRows && _crCanvas.columns ? _crCanvas.columns.label : '',
+    chart_type:chartType,
     format:{
       palette:document.getElementById('cr-fmt-palette').value,
       dataLabels:document.getElementById('cr-fmt-datalabels').checked,
@@ -2635,8 +2655,9 @@ function crApplyToSelectedVisual(){
     },
   };
   const titleEl=document.getElementById('cr-visual-title-'+id);
-  if(titleEl) titleEl.textContent=_crVisuals[id].measureLabel+' by '+_crVisuals[id].rowsLabel;
-  document.getElementById('cr-selected-visual-label').textContent='Editing: '+_crVisuals[id].measureLabel+' by '+_crVisuals[id].rowsLabel;
+  const titleText=_crVisuals[id].measureLabel+(_crVisuals[id].rowsLabel?' by '+_crVisuals[id].rowsLabel:'');
+  if(titleEl) titleEl.textContent=titleText;
+  document.getElementById('cr-selected-visual-label').textContent='Editing: '+titleText;
   crRenderVisual(id);
   status.textContent='✓ Applied'; status.style.color='var(--green)';
 }
@@ -2651,17 +2672,18 @@ function crRemoveSelectedVisual(){
 }
 function crRenderVisual(id){
   const v=_crVisuals[id];
-  if(!v || !v.measure || !v.rows) return;
+  if(!v || !v.measure) return;
+  if(crChartTypeNeedsRows(v.chart_type) && !v.rows) return;
   const dateFrom=document.getElementById('cr-date-from').value;
   const dateTo=document.getElementById('cr-date-to').value;
   const callers=Array.from(document.getElementById('cr-callers').selectedOptions).map(o=>o.value);
   const emptyEl=document.getElementById('cr-visual-empty-'+id);
   if(emptyEl) emptyEl.style.display='none';
   return fetch('/api/custom_report/run',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({measure:v.measure, rows:v.rows, columns:v.columns||null, date_from:dateFrom, date_to:dateTo, callers})})
+    body:JSON.stringify({measure:v.measure, rows:v.rows||'', columns:v.columns||null, date_from:dateFrom, date_to:dateTo, callers})})
     .then(r=>r.json()).then(d=>{
       if(!d.ok) return;
-      renderCrResult(d, v.chart_type, 'cr-visual-chart-'+id, 'cr-visual-table-'+id, true, v.format);
+      renderCrResult(d, v.chart_type, 'cr-visual-chart-'+id, 'cr-visual-table-'+id, true, v.format, 'cr-visual-card-'+id);
     }).catch(()=>{});
 }
 function crNormalizeToPercent(data, hasColumns){
@@ -2750,9 +2772,25 @@ function crBuildChartConfig(d, chartType, format){
     _usesDataLabels: !!format.dataLabels,
   };
 }
-function renderCrResult(d, chartType, chartId, tableWrapId, isTile, format){
+function renderCrResult(d, chartType, chartId, tableWrapId, isTile, format, cardId){
   const chartWrap = document.getElementById(isTile ? chartId+'-wrap' : 'cr-result-chart-wrap');
   const tableWrap = document.getElementById(tableWrapId);
+  const cardWrap = cardId ? document.getElementById(cardId) : null;
+  if(chartType==='card'){
+    if(chartWrap) chartWrap.style.display='none';
+    if(tableWrap) tableWrap.style.display='none';
+    if(cardWrap){
+      cardWrap.style.display='flex';
+      const val = typeof d.single_value==='number' ? d.single_value : 0;
+      const displayVal = Number.isInteger(val) ? val.toLocaleString() : (Math.round(val*100)/100).toLocaleString();
+      const fmt=format||{};
+      const color = (CR_PALETTES[fmt.palette]||CR_PALETTES.navy)[0];
+      cardWrap.innerHTML = `<div style="font-size:32px;font-weight:800;color:${color};line-height:1.1">${esc(String(displayVal))}</div>
+        <div style="font-size:12px;color:var(--t3);margin-top:4px;font-weight:600">${esc(fmt.title || d.measure_label)}</div>`;
+    }
+    return;
+  }
+  if(cardWrap) cardWrap.style.display='none';
   if(chartType==='table'){
     if(chartWrap) chartWrap.style.display='none';
     if(tableWrap){
@@ -2803,7 +2841,7 @@ function saveCustomReportCanvas(){
             columns:v.columns||'', columnsLabel:v.columnsLabel||'',
             chart_type:v.chart_type||'col_clustered',
             format:v.format||{}};
-  }).filter(v=>v.measure && v.rows);  // only persist visuals that are actually configured
+  }).filter(v=>v.measure && (v.rows || !crChartTypeNeedsRows(v.chart_type)));  // only persist visuals that are actually configured
   if(!visuals.length){ alert('Configure at least one visual (drag a measure + field, then "Apply to This Visual") before saving.'); return; }
   const config={
     date_from:document.getElementById('cr-date-from').value,
@@ -3643,10 +3681,17 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.81";
+const APP_VERSION = "1.82";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.82", date:"2026-07", title:"Custom Report: Card tiles, with fields that adapt to the chart type",
+    changes:[
+      "New \"Card\" tile type \u2014 a single big number with a label underneath, the kind you'd put at the top of a dashboard (e.g. Total Calls Made, Meetings Secured this week).",
+      "The Values/Rows/Columns panel now adapts to what's actually selected: pick Card and only Values shows, since a card is one number with no breakdown \u2014 pick any other chart type and Rows/Columns reappear.",
+      "Backend change to support this: a Custom Report can now be requested with no grouping field at all, returning a single aggregated total rather than a breakdown \u2014 verified this doesn't affect any of the existing grouped/chart requests.",
+      "Note: per-visual filters and interactive slicer tiles (dropdown/list/timeline, Power BI-style cross-filtering) were also asked for this round but are a similarly large, separate piece of work \u2014 not included in this release, see the assistant's message for the plan.",
+    ]},
   { v:"1.81", date:"2026-07", title:"Custom Report: 13 chart types, plus Excel/Power BI-style formatting",
     changes:[
       "Chart type picker replaced with an icon gallery covering everything Chart.js supports natively: Column (Clustered/Stacked/100% Stacked), Bar (same three, horizontal), Line, Area, Pie, Donut, Radar, Polar Area, and Table \u2014 set independently per visual.",

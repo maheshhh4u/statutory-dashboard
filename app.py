@@ -1770,8 +1770,11 @@ def custom_report_run():
 
     if measure not in REPORT_MEASURES:
         return jsonify({"ok": False, "error": f"Unknown measure '{measure}'"}), 400
-    if rows_dim not in REPORT_DIMENSIONS:
-        return jsonify({"ok": False, "error": "Drag a field onto Rows first"}), 400
+    # rows is optional — an empty rows_dim means "no grouping, single total",
+    # used for Card-style single-number tiles. Only validate it against the
+    # known dimension list when something was actually provided.
+    if rows_dim and rows_dim not in REPORT_DIMENSIONS:
+        return jsonify({"ok": False, "error": f"Unknown field '{rows_dim}'"}), 400
     if cols_dim is not None and cols_dim not in REPORT_DIMENSIONS:
         return jsonify({"ok": False, "error": f"Unknown field '{cols_dim}'"}), 400
     if not date_from or not date_to:
@@ -1792,6 +1795,15 @@ def custom_report_run():
               LEFT JOIN calling_batch cb ON cb.reg_number=cl.reg_number AND cb.active=1
               WHERE cl.timestamp>=? AND cl.timestamp<=? {cf}"""
     raw = db_query(sql, (ts_from, ts_to) + cp) or []
+
+    if not rows_dim:
+        # Card mode: one aggregate over everything matching the filters, no
+        # grouping at all — used for single-number tiles.
+        rows_flat = [{"reg_number": r[0], "page": r[1], "outcome": r[2], "duration_sec": r[3] or 0,
+                      "caller": r[4], "timestamp": r[5], "stage": r[6]} for r in raw]
+        total = _cr_compute_measure(measure, rows_flat)
+        return jsonify({"ok": True, "single_value": total, "measure_label": REPORT_MEASURES[measure]["label"]})
+
     if not raw:
         return jsonify({"ok": True, "row_labels": [], "column_labels": [], "data": [],
                         "measure_label": REPORT_MEASURES[measure]["label"],
@@ -1883,8 +1895,8 @@ def custom_report_tiles_save():
     visuals = config.get("visuals") if isinstance(config, dict) else None
     if not isinstance(config, dict) or not isinstance(visuals, list) or not visuals:
         return jsonify({"ok": False, "error": "Add at least one configured visual before saving"}), 400
-    if not all(isinstance(v, dict) and v.get("measure") and v.get("rows") for v in visuals):
-        return jsonify({"ok": False, "error": "Every visual needs a measure and a field"}), 400
+    if not all(isinstance(v, dict) and v.get("measure") and (v.get("rows") or v.get("chart_type")=="card") for v in visuals):
+        return jsonify({"ok": False, "error": "Every visual needs at least a measure (and a field, unless it's a Card)"}), 400
     db_exec("DELETE FROM custom_report_tiles WHERE name=?", (name,))
     db_exec("INSERT INTO custom_report_tiles(name, config, created_at) VALUES(?,?,?)",
             (name, json.dumps(config), datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
