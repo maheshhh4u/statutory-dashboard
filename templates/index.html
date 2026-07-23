@@ -1225,6 +1225,32 @@ select:focus{outline:none;border-color:var(--green)}
           </div>
 
           <div id="cr-visual-config" style="display:none;background:#faf8fd;border:1px solid #e2dcf0;border-radius:8px;padding:10px 12px;margin-bottom:14px">
+            <div id="cr-measure-builder" style="background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
+              <label style="font-size:11.5px;font-weight:700;display:flex;align-items:center;gap:5px"><input type="checkbox" id="cr-cm-enable" onchange="crToggleCustomMeasureBuilder()"> 🧮 Use a Custom Measure (instead of dragging one into Values)</label>
+              <div id="cr-cm-body" style="display:none;margin-top:8px">
+                <div style="display:flex;gap:14px;margin-bottom:8px;font-size:11.5px">
+                  <label><input type="radio" name="cr-cm-mode" value="simple" checked onchange="crSetCustomMeasureMode('simple')"> Single Aggregation</label>
+                  <label><input type="radio" name="cr-cm-mode" value="composite" onchange="crSetCustomMeasureMode('composite')"> Combine Two Measures</label>
+                </div>
+                <div id="cr-cm-simple" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                  <select id="cr-cm-agg" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
+                  <span style="font-size:11.5px;color:var(--t3)">of</span>
+                  <select id="cr-cm-field" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px;flex:1;min-width:160px"></select>
+                </div>
+                <div id="cr-cm-composite" style="display:none;flex-direction:column;gap:8px;margin-bottom:8px">
+                  <div id="cr-cm-operand-a"></div>
+                  <div style="text-align:center">
+                    <select id="cr-cm-op" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
+                  </div>
+                  <div id="cr-cm-operand-b"></div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                  <button type="button" class="btn btn-outline btn-sm" onclick="crUseCustomMeasure()">Use This Measure</button>
+                  <span id="cr-cm-status" style="font-size:11px;color:var(--t3)"></span>
+                </div>
+                <p style="font-size:10.5px;color:var(--t3);margin:6px 0 0">A measure that uses a Follow-Up field can only be grouped by Caller, Day, Week, Month, or Hour of Day (or used as a Card) — Follow-ups aren't individual calls, so Outcome/Stage/Source List don't apply to them.</p>
+              </div>
+            </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
               <div id="cr-well-values" data-well="values" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="flex:1;min-width:160px;min-height:38px;border:2px dashed #d8c9ee;border-radius:6px;padding:6px 10px;background:#fff;display:flex;align-items:center;gap:6px">
                 <span style="font-size:10px;font-weight:700;color:#6a4d99;text-transform:uppercase;flex-shrink:0">Values</span>
@@ -1242,6 +1268,8 @@ select:focus{outline:none;border-color:var(--green)}
             <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Chart Type</div>
             <div id="cr-chart-type-gallery" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px"></div>
             <input type="hidden" id="cr-chart-type" value="col_clustered">
+
+            <label style="font-size:11.5px;display:flex;align-items:center;gap:5px;margin-bottom:10px"><input type="checkbox" id="cr-tile-titlebar" checked> Show tile title bar (name + drag handle)</label>
 
             <div id="cr-slicer-config" style="display:none;margin-bottom:10px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px">
               <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Slicer Field</div>
@@ -2464,6 +2492,7 @@ let _crVisuals={};            // {id: {measure,measureLabel,rows,rowsLabel,colum
 let _crSelectedVisualId=null;
 let _crVisualSeq=0;
 let _crFilterFieldsMeta=[];   // [{value,label,options:[...]}] — backend-supplied fields only; Caller/Date Range are resolved specially, see crFilterFieldMeta()
+let _crCMFields=[], _crCMAggs=[], _crCMOps=[];  // Custom Measure builder: aggregatable fields (tagged source:'call'|'followup'), aggregations, operators — from /api/custom_report/fields
 let _crCanvasFilters=[];      // working filter list [{field,fieldLabel,values:[...]}] for whichever visual is selected — a date_range entry has {from,to} instead of values
 let _crReportFilters=[];      // committed report-level filters, same shape, applied to every visual unless that visual sets its own filter on the same field
 let _crBuilderMode='edit';    // 'view' (opening a saved report — canvas only) or 'edit' (new report, or after clicking ✏️ Edit)
@@ -2487,15 +2516,18 @@ function initCustomReport(){
       // race. Caller options are resolved live instead, in
       // crFilterFieldChanged(), against whatever userList holds right now.
       _crFilterFieldsMeta=d.filter_fields||[];
+      _crCMFields=d.cr_fields||[]; _crCMAggs=d.cr_aggregations||[]; _crCMOps=d.cr_operators||[];
       _crFieldsLoaded=true;
       renderCrPalette();
       renderCrFilterFieldOptions();
       renderCrReportFilterFieldOptions();
+      renderCrMeasureBuilderOptions();
     }).catch(()=>{});
   } else {
     renderCrPalette();
     renderCrFilterFieldOptions();
     renderCrReportFilterFieldOptions();
+    renderCrMeasureBuilderOptions();
   }
   renderCrReportFiltersList();
   loadCustomReportTiles();
@@ -2655,6 +2687,12 @@ function crPlaceInWell(well, payload){
   if(!_crSelectedVisualId){
     document.getElementById('cr-result-status').textContent='⚠ Add or select a visual first.'; return;
   }
+  if((well==='rows'||well==='columns') && _crCanvas.values && _crCanvas.values.customDef && crMeasureDefUsesFollowups(_crCanvas.values.customDef)){
+    if(['outcome','stage','source_list'].includes(payload.value)){
+      document.getElementById('cr-result-status').textContent='⚠ This measure uses a Follow-Up field — '+well+' can only be Caller, Day, Week, Month, or Hour of Day.';
+      return;
+    }
+  }
   _crCanvas[well]={value:payload.value, label:payload.label};
   renderCrWells();
 }
@@ -2673,7 +2711,7 @@ function renderCrWells(){
 // ── Visual (widget) management on the multi-visual canvas ────────────────────
 function crVisualWidgetHtml(id){
   return `<div class="grid-stack-item-content" style="display:flex;flex-direction:column;height:100%;background:#fff;border:1px solid var(--border);border-radius:6px;overflow:hidden">
-    <div onclick="crSelectVisual('${id}')" style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:#f5f5f7;border-bottom:1px solid var(--border);cursor:pointer;flex-shrink:0">
+    <div id="cr-visual-titlebar-${id}" onclick="crSelectVisual('${id}')" style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:#f5f5f7;border-bottom:1px solid var(--border);cursor:pointer;flex-shrink:0">
       <span id="cr-visual-title-${id}" style="font-size:11px;font-weight:700;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">New Visual</span>
       <span style="font-size:9px;color:#bbb;flex-shrink:0;margin-left:6px">⇲</span>
     </div>
@@ -2681,7 +2719,7 @@ function crVisualWidgetHtml(id){
       <div id="cr-visual-chart-${id}-wrap" style="display:none;height:100%;position:relative"><canvas id="cr-visual-chart-${id}"></canvas></div>
       <div id="cr-visual-table-${id}" style="display:none;overflow:auto;height:100%;font-size:11px"></div>
       <div id="cr-visual-card-${id}" style="display:none;height:100%;flex-direction:column;align-items:center;justify-content:center;text-align:center"></div>
-      <div id="cr-visual-slicer-${id}" style="display:none;flex-direction:column;height:100%;overflow:auto;cursor:default" onclick="event.stopPropagation()"></div>
+      <div id="cr-visual-slicer-${id}" style="display:none;flex-direction:column;height:100%;overflow:auto;cursor:default" onclick="if(event.target.closest('button,select,input,label')) event.stopPropagation()"></div>
       <div id="cr-visual-empty-${id}" style="color:var(--t3);font-size:11px;text-align:center;padding:20px 4px">Click me, then configure using the panel above</div>
     </div>
   </div>`;
@@ -2700,7 +2738,7 @@ function crAddWidgetWithHtml(opts, html){
 function crAddVisual(){
   crInitGridIfNeeded();
   const id='v'+(++_crVisualSeq);
-  _crVisuals[id]={measure:'',measureLabel:'',rows:'',rowsLabel:'',columns:'',columnsLabel:'',chart_type:'col_clustered',format:{},filters:[]};
+  _crVisuals[id]={measure:'',measureLabel:'',rows:'',rowsLabel:'',columns:'',columnsLabel:'',chart_type:'col_clustered',format:{},filters:[],showTitleBar:true};
   crAddWidgetWithHtml({w:4,h:4,id:id}, crVisualWidgetHtml(id));
   crSelectVisual(id);
 }
@@ -2712,11 +2750,17 @@ function crSelectVisual(id){
   // panel open underneath a hidden sidebar/toolbar.
   if(_crBuilderMode!=='edit') return;
   _crSelectedVisualId=id;
-  _crCanvas.values = v.measure ? {value:v.measure, label:v.measureLabel} : null;
+  _crCanvas.values = v.measureDef ? {value:'custom', label:v.measureLabel, customDef:v.measureDef}
+                    : (v.measure ? {value:v.measure, label:v.measureLabel} : null);
   _crCanvas.rows = v.rows ? {value:v.rows, label:v.rowsLabel} : null;
   _crCanvas.columns = v.columns ? {value:v.columns, label:v.columnsLabel} : null;
   renderCrWells();
   crSetChartType(v.chart_type||'col_clustered');
+  if(!crChartTypeIsSlicer(v.chart_type)){
+    if(v.measureDef) crRestoreCustomMeasureBuilder(v.measureDef);
+    else crResetCustomMeasureBuilder();
+  }
+  const tbEl=document.getElementById('cr-tile-titlebar'); if(tbEl) tbEl.checked=v.showTitleBar!==false;
   if(crChartTypeIsSlicer(v.chart_type)){
     const sfEl=document.getElementById('cr-slicer-field'); if(sfEl) sfEl.value=v.slicerField||'';
     const smEl=document.getElementById('cr-slicer-multi'); if(smEl) smEl.checked=v.slicerMulti!==false;
@@ -2789,6 +2833,9 @@ function crSetChartType(value){
   }
   if(isSlicer) _crCanvas.values=null;  // Slicers don't take a measure either
   renderCrWells();
+  const measureBuilder=document.getElementById('cr-measure-builder');
+  if(measureBuilder) measureBuilder.style.display=isSlicer?'none':'block';
+  if(isSlicer) crResetCustomMeasureBuilder();
   const slicerCfg=document.getElementById('cr-slicer-config');
   if(slicerCfg) slicerCfg.style.display=isSlicer?'block':'none';
   const fmtLabel=document.getElementById('cr-fmt-section'), fmtBox=document.getElementById('cr-fmt-box');
@@ -3224,6 +3271,191 @@ function crPendingFilterSelection(){
     ? {field:entry.field, label:entry.fieldLabel, values:[entry.from+' to '+entry.to]}
     : {field:entry.field, label:entry.fieldLabel, values:entry.values};
 }
+// ── Custom Measure builder (Power BI "measure" style) ─────────────────────
+// A measure is either one of the fixed built-ins (dragged from the palette,
+// existing behaviour) or a Custom Measure: an aggregation (Sum/Average/
+// Count/Min/Max) over a raw field, or two measures combined with an
+// arithmetic operator. The definition shape is a direct mirror of the
+// backend's (_cr_validate_measure_def/_cr_resolve_measure in app.py) so it
+// can be validated/labelled instantly client-side and sent as-is.
+function renderCrMeasureBuilderOptions(){
+  const aggSel=document.getElementById('cr-cm-agg');
+  if(aggSel) aggSel.innerHTML=_crCMAggs.map(a=>`<option value="${esc(a.value)}">${esc(a.label)}</option>`).join('');
+  const fieldSel=document.getElementById('cr-cm-field');
+  if(fieldSel) fieldSel.innerHTML=crCMFieldOptionsHtml();
+  const opSel=document.getElementById('cr-cm-op');
+  if(opSel) opSel.innerHTML=_crCMOps.map(o=>`<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+  ['a','b'].forEach(w=>{
+    const el=document.getElementById('cr-cm-operand-'+w);
+    if(el) el.innerHTML=crOperandPickerHtml(w);
+    crFillOperandSelects(w);
+  });
+}
+function crCMFieldOptionsHtml(){
+  const call=_crCMFields.filter(f=>f.source==='call');
+  const fu=_crCMFields.filter(f=>f.source==='followup');
+  let html='';
+  if(call.length) html+='<optgroup label="Call Fields">'+call.map(f=>`<option value="${esc(f.value)}">${esc(f.label)}</option>`).join('')+'</optgroup>';
+  if(fu.length) html+='<optgroup label="Follow-Up Fields">'+fu.map(f=>`<option value="${esc(f.value)}">${esc(f.label)}</option>`).join('')+'</optgroup>';
+  return html;
+}
+function crOperandPickerHtml(which){
+  return `<div style="border:1px solid var(--border);border-radius:6px;padding:6px 8px">
+    <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Measure ${which.toUpperCase()}</div>
+    <div style="display:flex;gap:10px;margin-bottom:4px;font-size:11px">
+      <label><input type="radio" name="cr-cm-${which}-mode" value="builtin" checked onchange="crSetOperandMode('${which}','builtin')"> Built-in</label>
+      <label><input type="radio" name="cr-cm-${which}-mode" value="field" onchange="crSetOperandMode('${which}','field')"> Aggregation of Field</label>
+    </div>
+    <div id="cr-cm-${which}-builtin-wrap">
+      <select id="cr-cm-${which}-builtin" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
+    </div>
+    <div id="cr-cm-${which}-field-wrap" style="display:none;gap:6px;align-items:center">
+      <select id="cr-cm-${which}-agg" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
+      <span style="font-size:11px;color:var(--t3)">of</span>
+      <select id="cr-cm-${which}-field" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px;flex:1"></select>
+    </div>
+  </div>`;
+}
+function crFillOperandSelects(which){
+  const builtinSel=document.getElementById('cr-cm-'+which+'-builtin');
+  if(builtinSel) builtinSel.innerHTML=_crMeasures.map(m=>`<option value="${esc(m.value)}">${esc(m.label)}</option>`).join('');
+  const aggSel=document.getElementById('cr-cm-'+which+'-agg');
+  if(aggSel) aggSel.innerHTML=_crCMAggs.map(a=>`<option value="${esc(a.value)}">${esc(a.label)}</option>`).join('');
+  const fieldSel=document.getElementById('cr-cm-'+which+'-field');
+  if(fieldSel) fieldSel.innerHTML=crCMFieldOptionsHtml();
+}
+function crSetOperandMode(which, mode){
+  const bw=document.getElementById('cr-cm-'+which+'-builtin-wrap');
+  const fw=document.getElementById('cr-cm-'+which+'-field-wrap');
+  if(bw) bw.style.display=mode==='builtin'?'block':'none';
+  if(fw) fw.style.display=mode==='field'?'flex':'none';
+}
+function crSetCustomMeasureMode(mode){
+  const simple=document.getElementById('cr-cm-simple');
+  const composite=document.getElementById('cr-cm-composite');
+  if(simple) simple.style.display=mode==='simple'?'flex':'none';
+  if(composite) composite.style.display=mode==='composite'?'flex':'none';
+}
+// Toggling this checkbox is the mode switch between "drag a built-in
+// measure into Values" (existing workflow, unchanged) and "build a Custom
+// Measure" — the two are mutually exclusive for a given visual, so turning
+// the builder off clears any custom definition that was staged.
+function crToggleCustomMeasureBuilder(){
+  const enabled=document.getElementById('cr-cm-enable').checked;
+  const body=document.getElementById('cr-cm-body');
+  if(body) body.style.display=enabled?'block':'none';
+  const valuesWell=document.getElementById('cr-well-values');
+  if(valuesWell) valuesWell.style.display=enabled?'none':'flex';
+  if(!enabled){
+    if(_crCanvas.values && _crCanvas.values.customDef) _crCanvas.values=null;
+    renderCrWells();
+  }
+}
+function crReadOperandDef(which){
+  const modeEl=document.querySelector(`input[name="cr-cm-${which}-mode"]:checked`);
+  const mode=modeEl?modeEl.value:'builtin';
+  if(mode==='builtin') return document.getElementById('cr-cm-'+which+'-builtin').value;
+  const agg=document.getElementById('cr-cm-'+which+'-agg').value;
+  const field=document.getElementById('cr-cm-'+which+'-field').value;
+  if(!agg||!field) return null;
+  return {type:'simple', agg, field};
+}
+// Client-side mirrors of the backend's _cr_measure_label/_cr_measure_uses_followups
+// (app.py) — same logic, kept in sync by hand — for an instant preview label
+// and for restricting Rows/Columns to compatible dimensions without a round trip.
+function crMeasureDefLabel(def){
+  if(typeof def==='string'){
+    const m=_crMeasures.find(x=>x.value===def);
+    return m?m.label:def;
+  }
+  if(!def || typeof def!=='object') return 'Measure';
+  if(def.type==='simple'){
+    const agg=_crCMAggs.find(a=>a.value===def.agg);
+    const field=_crCMFields.find(f=>f.value===def.field);
+    return (agg?agg.label:def.agg)+' of '+(field?field.label:def.field);
+  }
+  if(def.type==='composite'){
+    const op=_crCMOps.find(o=>o.value===def.op);
+    return '('+crMeasureDefLabel(def.a)+' '+(op?op.label:def.op)+' '+crMeasureDefLabel(def.b)+')';
+  }
+  return 'Custom Measure';
+}
+function crMeasureDefUsesFollowups(def){
+  if(typeof def==='string') return false;
+  if(!def || typeof def!=='object') return false;
+  if(def.type==='simple'){
+    const f=_crCMFields.find(x=>x.value===def.field);
+    return !!(f && f.source==='followup');
+  }
+  if(def.type==='composite') return crMeasureDefUsesFollowups(def.a) || crMeasureDefUsesFollowups(def.b);
+  return false;
+}
+function crBuildCustomMeasureDef(){
+  const modeEl=document.querySelector('input[name="cr-cm-mode"]:checked');
+  const mode=modeEl?modeEl.value:'simple';
+  if(mode==='simple'){
+    const agg=document.getElementById('cr-cm-agg').value;
+    const field=document.getElementById('cr-cm-field').value;
+    if(!agg || !field) return {error:'Pick an aggregation and a field.'};
+    return {def:{type:'simple', agg, field}};
+  }
+  const a=crReadOperandDef('a');
+  const b=crReadOperandDef('b');
+  const op=document.getElementById('cr-cm-op').value;
+  if(!a || !b) return {error:'Pick both Measure A and Measure B (each needs an aggregation + field if set to "Aggregation of Field").'};
+  if(!op) return {error:'Pick an operator.'};
+  return {def:{type:'composite', op, a, b}};
+}
+function crUseCustomMeasure(){
+  const status=document.getElementById('cr-cm-status');
+  const result=crBuildCustomMeasureDef();
+  if(result.error){ status.textContent='⚠ '+result.error; status.style.color='#c0392b'; return; }
+  const def=result.def;
+  const label=crMeasureDefLabel(def);
+  _crCanvas.values={value:'custom', label, customDef:def};
+  renderCrWells();
+  status.textContent='✓ '+label; status.style.color='var(--green)';
+}
+// Reverse-engineers the builder's UI state from a saved definition, so
+// editing an existing Custom-Measure visual shows exactly what was set,
+// rather than opening blank. Only reconstructs the one level of nesting the
+// UI itself can build (composite of built-in-or-simple) — the backend
+// tolerates deeper nesting for forward-compatibility, but the builder never
+// produces it, so there's nothing deeper to restore here either.
+function crRestoreCustomMeasureBuilder(def){
+  const enableEl=document.getElementById('cr-cm-enable'); if(enableEl) enableEl.checked=true;
+  const bodyEl=document.getElementById('cr-cm-body'); if(bodyEl) bodyEl.style.display='block';
+  const valuesWell=document.getElementById('cr-well-values'); if(valuesWell) valuesWell.style.display='none';
+  if(def.type==='simple'){
+    const r=document.querySelector('input[name="cr-cm-mode"][value="simple"]'); if(r) r.checked=true;
+    crSetCustomMeasureMode('simple');
+    const aggEl=document.getElementById('cr-cm-agg'); if(aggEl) aggEl.value=def.agg;
+    const fieldEl=document.getElementById('cr-cm-field'); if(fieldEl) fieldEl.value=def.field;
+  } else if(def.type==='composite'){
+    const r=document.querySelector('input[name="cr-cm-mode"][value="composite"]'); if(r) r.checked=true;
+    crSetCustomMeasureMode('composite');
+    const opEl=document.getElementById('cr-cm-op'); if(opEl) opEl.value=def.op;
+    ['a','b'].forEach(w=>{
+      const operand=def[w];
+      if(typeof operand==='string'){
+        const rb=document.querySelector(`input[name="cr-cm-${w}-mode"][value="builtin"]`); if(rb) rb.checked=true;
+        crSetOperandMode(w,'builtin');
+        const sel=document.getElementById('cr-cm-'+w+'-builtin'); if(sel) sel.value=operand;
+      } else if(operand && typeof operand==='object'){
+        const rf=document.querySelector(`input[name="cr-cm-${w}-mode"][value="field"]`); if(rf) rf.checked=true;
+        crSetOperandMode(w,'field');
+        const aggEl=document.getElementById('cr-cm-'+w+'-agg'); if(aggEl) aggEl.value=operand.agg;
+        const fieldEl=document.getElementById('cr-cm-'+w+'-field'); if(fieldEl) fieldEl.value=operand.field;
+      }
+    });
+  }
+}
+function crResetCustomMeasureBuilder(){
+  const enableEl=document.getElementById('cr-cm-enable'); if(enableEl) enableEl.checked=false;
+  const bodyEl=document.getElementById('cr-cm-body'); if(bodyEl) bodyEl.style.display='none';
+  const valuesWell=document.getElementById('cr-well-values'); if(valuesWell) valuesWell.style.display='flex';
+  const statusEl=document.getElementById('cr-cm-status'); if(statusEl) statusEl.textContent='';
+}
 function crApplyToSelectedVisual(){
   const id=_crSelectedVisualId;
   const status=document.getElementById('cr-result-status');
@@ -3246,12 +3478,14 @@ function crApplyToSelectedVisual(){
       slicerMulti: chartType==='slicer_timeline' ? true : document.getElementById('cr-slicer-multi').checked,
       slicerTitle: document.getElementById('cr-slicer-title').value.trim(),
       slicerSelected: keepSelection ? prev.slicerSelected : (chartType==='slicer_timeline' ? null : []),
+      showTitleBar: document.getElementById('cr-tile-titlebar').checked,
       measure:'', measureLabel:'', rows:'', rowsLabel:'', columns:'', columnsLabel:'', format:{}, filters:[],
     };
     const titleEl=document.getElementById('cr-visual-title-'+id);
     const titleText=_crVisuals[id].slicerTitle||_crVisuals[id].slicerFieldLabel;
     if(titleEl) titleEl.textContent='🔧 '+titleText;
     document.getElementById('cr-selected-visual-label').textContent='Editing slicer: '+titleText;
+    crApplyTitleBarVisibility(id);
     crRenderSlicerVisual(id);
     status.textContent='✓ Applied'; status.style.color='var(--green)';
     return;
@@ -3260,6 +3494,15 @@ function crApplyToSelectedVisual(){
   const needsRows=crChartTypeNeedsRows(chartType);
   if(!_crCanvas.values){ status.textContent='⚠ Drag a measure into Values first.'; status.style.color='#c0392b'; return; }
   if(needsRows && !_crCanvas.rows){ status.textContent='⚠ Drag a field into Rows first.'; status.style.color='#c0392b'; return; }
+  const customDef=_crCanvas.values.customDef || null;
+  if(customDef && crMeasureDefUsesFollowups(customDef)){
+    const restricted=new Set(['outcome','stage','source_list']);
+    if((_crCanvas.rows && restricted.has(_crCanvas.rows.value)) || (_crCanvas.columns && restricted.has(_crCanvas.columns.value))){
+      status.textContent='⚠ This measure uses a Follow-Up field — Rows/Columns can only be Caller, Day, Week, Month, or Hour of Day.';
+      status.style.color='#c0392b';
+      return;
+    }
+  }
   const pending=crPendingFilterSelection();
   if(pending){
     if(pending.error){ status.textContent='⚠ '+pending.error; status.style.color='#c0392b'; return; }
@@ -3268,12 +3511,13 @@ function crApplyToSelectedVisual(){
     return;
   }
   _crVisuals[id]={
-    measure:_crCanvas.values.value, measureLabel:_crCanvas.values.label,
+    measure:_crCanvas.values.value, measureLabel:_crCanvas.values.label, measureDef:customDef,
     rows: needsRows && _crCanvas.rows ? _crCanvas.rows.value : '',
     rowsLabel: needsRows && _crCanvas.rows ? _crCanvas.rows.label : '',
     columns: needsRows && _crCanvas.columns ? _crCanvas.columns.value : '',
     columnsLabel: needsRows && _crCanvas.columns ? _crCanvas.columns.label : '',
     chart_type:chartType,
+    showTitleBar: document.getElementById('cr-tile-titlebar').checked,
     format:{
       palette:document.getElementById('cr-fmt-palette').value,
       dataLabels:document.getElementById('cr-fmt-datalabels').checked,
@@ -3289,8 +3533,18 @@ function crApplyToSelectedVisual(){
   const titleText=_crVisuals[id].measureLabel+(_crVisuals[id].rowsLabel?' by '+_crVisuals[id].rowsLabel:'');
   if(titleEl) titleEl.textContent=titleText;
   document.getElementById('cr-selected-visual-label').textContent='Editing: '+titleText;
+  crApplyTitleBarVisibility(id);
   crRenderVisual(id);
   status.textContent='✓ Applied'; status.style.color='var(--green)';
+}
+// Toggles a widget's own header row (name + drag handle) — a purely visual
+// layout choice, applicable to charts, cards, and slicers alike, so it lives
+// as its own control rather than inside Formatting (which slicers don't
+// have) or the Slicer Field panel (which charts don't have).
+function crApplyTitleBarVisibility(id){
+  const v=_crVisuals[id];
+  const bar=document.getElementById('cr-visual-titlebar-'+id);
+  if(bar) bar.style.display = (v && v.showTitleBar===false) ? 'none' : 'flex';
 }
 function crRemoveSelectedVisual(){
   const id=_crSelectedVisualId;
@@ -3325,6 +3579,7 @@ function crDuplicateSelectedVisual(){
   if(titleEl) titleEl.textContent=dup.isSlicer
     ? '🔧 '+(dup.slicerTitle||dup.slicerFieldLabel||'Slicer')
     : (dup.measureLabel||'')+(dup.rowsLabel?' by '+dup.rowsLabel:'');
+  crApplyTitleBarVisibility(newId);
   if(dup.isSlicer) crRenderSlicerVisual(newId); else crRenderVisual(newId);
   crSelectVisual(newId);
   if(status){ status.textContent='✓ Duplicated at the same size ('+w+'×'+h+').'; status.style.color='var(--green)'; }
@@ -3368,8 +3623,9 @@ function crRenderVisual(id){
   const emptyEl=document.getElementById('cr-visual-empty-'+id);
   if(emptyEl) emptyEl.style.display='none';
   const filters=crCombinedFilters(v);
+  const measurePayload = v.measureDef || v.measure;
   return fetch('/api/custom_report/run',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({measure:v.measure, rows:v.rows||'', columns:v.columns||null, date_from:'', date_to:'', callers:[], filters})})
+    body:JSON.stringify({measure:measurePayload, rows:v.rows||'', columns:v.columns||null, date_from:'', date_to:'', callers:[], filters})})
     .then(r=>r.json()).then(d=>{
       if(!d.ok) return;
       renderCrResult(d, v.chart_type, 'cr-visual-chart-'+id, 'cr-visual-table-'+id, true, v.format, 'cr-visual-card-'+id);
@@ -3525,7 +3781,7 @@ function saveCustomReportCanvas(){
   const visuals=positions.map(p=>{
     const v=_crVisuals[p.id]||{};
     return {id:p.id, x:p.x, y:p.y, w:p.w, h:p.h,
-            measure:v.measure, measureLabel:v.measureLabel,
+            measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null,
             rows:v.rows, rowsLabel:v.rowsLabel,
             columns:v.columns||'', columnsLabel:v.columnsLabel||'',
             chart_type:v.chart_type||'col_clustered',
@@ -3534,7 +3790,8 @@ function saveCustomReportCanvas(){
             isSlicer:!!v.isSlicer,
             slicerField:v.slicerField||'', slicerFieldLabel:v.slicerFieldLabel||'',
             slicerMulti:v.slicerMulti!==false, slicerTitle:v.slicerTitle||'',
-            slicerSelected:v.slicerSelected!==undefined ? v.slicerSelected : (v.chart_type==='slicer_timeline'?null:[])};
+            slicerSelected:v.slicerSelected!==undefined ? v.slicerSelected : (v.chart_type==='slicer_timeline'?null:[]),
+            showTitleBar:v.showTitleBar!==false};
   }).filter(v=> v.isSlicer ? !!v.slicerField : (v.measure && (v.rows || !crChartTypeNeedsRows(v.chart_type))));  // only persist visuals (chart or slicer) that are actually configured
   if(!visuals.length){ alert('Configure at least one visual or slicer before saving.'); return; }
   const config={
@@ -3603,18 +3860,20 @@ function crLoadReportIntoCanvas(cfg){
     v.id=id;  // write back so the second pass below can find it even if the saved config predates ids
     const numPart=parseInt((String(id).match(/\d+/)||['0'])[0],10);
     if(numPart>_crVisualSeq) _crVisualSeq=numPart;
-    _crVisuals[id]={measure:v.measure, measureLabel:v.measureLabel, rows:v.rows, rowsLabel:v.rowsLabel,
+    _crVisuals[id]={measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null, rows:v.rows, rowsLabel:v.rowsLabel,
                     columns:v.columns||'', columnsLabel:v.columnsLabel||'', chart_type:v.chart_type||'col_clustered',
                     format:v.format||{}, filters:v.filters||[],
                     isSlicer:!!v.isSlicer,
                     slicerField:v.slicerField||'', slicerFieldLabel:v.slicerFieldLabel||'',
                     slicerMulti:v.slicerMulti!==false, slicerTitle:v.slicerTitle||'',
-                    slicerSelected:v.slicerSelected!==undefined ? v.slicerSelected : (v.chart_type==='slicer_timeline'?null:[])};
+                    slicerSelected:v.slicerSelected!==undefined ? v.slicerSelected : (v.chart_type==='slicer_timeline'?null:[]),
+                    showTitleBar:v.showTitleBar!==false};
     crAddWidgetWithHtml({w:v.w||4, h:v.h||4, x:v.x, y:v.y, id:id}, crVisualWidgetHtml(id));
     const titleEl=document.getElementById('cr-visual-title-'+id);
     if(titleEl) titleEl.textContent=v.isSlicer
       ? '🔧 '+(v.slicerTitle||v.slicerFieldLabel||'Slicer')
       : (v.measureLabel||'')+(v.rowsLabel?' by '+v.rowsLabel:'');
+    crApplyTitleBarVisibility(id);
   });
   // Slicers are rendered in a second pass, after every visual exists — a
   // slicer's initial paint doesn't depend on others, but keeping the two
@@ -4402,10 +4661,19 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.82";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.89", date:"2026-07", title:"Fixed version display, tile title bars can be hidden, and Power BI-style Custom Measures",
+    changes:[
+      "Fixed the version badge on the app's About screen showing a stale \"1.82\" while \"What's new\" correctly showed the real latest version \u2014 it was a separate hardcoded constant that stopped getting updated a few releases back. It's now derived from the same changelog entry the \"What's new\" text already uses, so it can't drift out of sync again.",
+      "Every tile \u2014 chart, card, or slicer \u2014 now has a \"Show tile title bar\" checkbox in its config panel. Unchecking it hides the name + drag-handle header row for a cleaner look, e.g. a Caller slicer or a big number card sitting flush at the top of the canvas.",
+      "New: Custom Measures, Power BI-measure-style. Beyond the fixed built-in measures, a visual can now use \"\ud83e\uddee Use a Custom Measure\" to build its own \u2014 either a single aggregation (Sum/Average/Count/Min/Max) over a raw field, or two measures combined with +/\u2212/\u00d7/\u00f7 (e.g. Follow-ups Completed \u00f7 Calls Made as a conversion rate).",
+      "New aggregatable fields to build measures from: Call Duration (sec), and two new Follow-Up fields \u2014 Days Late and Completed (1/0) \u2014 pulled from the follow-up records the app already tracks (scheduled date/time, done flag).",
+      "Follow-ups aren't individual calls \u2014 they're a separate table of scheduled actions, not joined 1:1 to a call \u2014 so a measure using a Follow-Up field is built from a parallel query rather than a fragile join, and can only be grouped by Caller, Day, Week, Month, or Hour of Day (or used as a Card), not Outcome/Stage/Source List. The builder warns about this before you even hit Apply; the backend enforces it either way.",
+      "No eval() or arbitrary expressions anywhere \u2014 every aggregation, field, and operator in a Custom Measure is checked against an explicit allow-list on the server, the same as everything else in Custom Report.",
+      "Custom Measures are saved and restored with the report, including reopening one for editing with the builder pre-filled to match.",
+    ]},
   { v:"1.88", date:"2026-07", title:"Fixed: \"Slicer - Dropdown\" wasn't actually a dropdown",
     changes:[
       "Found the cause: it was built on a native HTML multi-select, which is a listbox that always shows every option at once \u2014 that's a different control from a dropdown, not a broken one, but not what was asked for.",
@@ -4951,6 +5219,11 @@ const CHANGELOG = [
       "Comprehensive branded end-user guide (Word & PDF).",
     ]},
 ];
+// Was previously a separately-hardcoded string that drifted out of sync with
+// CHANGELOG (stuck at "1.82" for several releases) — deriving it from the
+// newest entry instead means it can't drift again, as long as new releases
+// keep being prepended to the top of CHANGELOG (the existing convention).
+const APP_VERSION = CHANGELOG[0].v;
 
 function showAbout(){
   const latest = CHANGELOG[0];

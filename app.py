@@ -1712,6 +1712,24 @@ REPORT_MEASURES = {
     "meaningful_interactions": {"label": "Meaningful Interactions"},
     "meetings_secured":        {"label": "Meetings Secured"},
 }
+# Raw, per-row numeric fields a Custom Measure can aggregate (Sum/Average/
+# Count/Min/Max), Power BI-measure-builder style, rather than being limited
+# to the fixed REPORT_MEASURES list above. CR_FIELDS are per-call (from the
+# same call_log rows already fetched); CR_FOLLOWUP_FIELDS come from the
+# separate follow_ups table instead (a follow-up isn't a call — it's a
+# scheduled action created FROM a call, stored with its own timestamp/caller,
+# not a 1:1 join to a specific call_log row) — see _cr_measure_uses_followups
+# and the follow-up query path in custom_report_run for how the two are kept
+# correct without a fragile row-level join between the two tables.
+CR_FIELDS = {
+    "duration_sec": {"label": "Call Duration (sec)"},
+}
+CR_FOLLOWUP_FIELDS = {
+    "fu_days_late":  {"label": "Follow-Up: Days Late"},
+    "fu_completed":  {"label": "Follow-Up: Completed (1/0)"},
+}
+_CR_AGGS = {"sum": "Sum", "avg": "Average", "count": "Count", "min": "Min", "max": "Max"}
+_CR_OPS  = {"add": "+", "subtract": "\u2212", "multiply": "\u00d7", "divide": "\u00f7"}
 # Same rules as the main Calling Report, for consistency (see report_export/api_report).
 _CR_MEANINGFUL_OUTCOMES = {'Connected','Engaged','Interested','Meeting secured'}
 _CR_MEANINGFUL_STAGES   = {'Contacted','Call back','Interested','Meeting secured','Client'}
@@ -1753,6 +1771,101 @@ def _cr_compute_measure(measure, rows):
         return sum(1 for r in rows if r["outcome"] == "Meeting secured" or r["stage"] == "Meeting secured")
     return 0
 
+def _cr_field_value(field, row):
+    if field == "duration_sec": return row.get("duration_sec") or 0
+    if field == "fu_days_late": return row.get("days_late") or 0
+    if field == "fu_completed": return row.get("completed") or 0
+    return 0
+
+def _cr_compute_simple(agg, field, rows):
+    if agg == "count":
+        return len(rows)
+    vals = [_cr_field_value(field, r) for r in rows]
+    if agg == "sum": return round(sum(vals), 2)
+    if agg == "avg": return round(sum(vals) / len(vals), 2) if vals else 0
+    if agg == "min": return round(min(vals), 2) if vals else 0
+    if agg == "max": return round(max(vals), 2) if vals else 0
+    return 0
+
+def _cr_measure_uses_followups(mdef):
+    """Walks a (possibly composite/nested) measure definition and returns
+    True if any leaf references a follow-up field — used to decide whether
+    the extra follow_ups query is needed at all, and to restrict grouping to
+    dimensions that make sense for both tables (see custom_report_run)."""
+    if isinstance(mdef, str):
+        return False
+    if not isinstance(mdef, dict):
+        return False
+    if mdef.get("type") == "simple":
+        return mdef.get("field") in CR_FOLLOWUP_FIELDS
+    if mdef.get("type") == "composite":
+        return _cr_measure_uses_followups(mdef.get("a")) or _cr_measure_uses_followups(mdef.get("b"))
+    return False
+
+def _cr_resolve_measure(mdef, call_rows, followup_rows):
+    """Computes a measure's value for one group of rows. mdef is either a
+    built-in REPORT_MEASURES key (string) or a Custom Measure definition:
+    {"type":"simple","agg":...,"field":...} or
+    {"type":"composite","op":...,"a":<mdef>,"b":<mdef>} — composites can
+    nest arbitrarily (a's or b's own value can itself be a composite),
+    though the builder UI currently only exposes one level of nesting."""
+    if isinstance(mdef, str):
+        return _cr_compute_measure(mdef, call_rows)
+    if not isinstance(mdef, dict):
+        return 0
+    t = mdef.get("type")
+    if t == "simple":
+        field = mdef.get("field")
+        rows = followup_rows if field in CR_FOLLOWUP_FIELDS else call_rows
+        return _cr_compute_simple(mdef.get("agg"), field, rows)
+    if t == "composite":
+        a = _cr_resolve_measure(mdef.get("a"), call_rows, followup_rows)
+        b = _cr_resolve_measure(mdef.get("b"), call_rows, followup_rows)
+        op = mdef.get("op")
+        if op == "add": return round(a + b, 4)
+        if op == "subtract": return round(a - b, 4)
+        if op == "multiply": return round(a * b, 4)
+        if op == "divide": return round(a / b, 4) if b else 0
+    return 0
+
+def _cr_validate_measure_def(mdef, depth=0):
+    """Returns an error string, or None if valid. No eval() anywhere — every
+    field/aggregation/operator is checked against an explicit allow-list."""
+    if depth > 6:
+        return "Measure is nested too deeply"
+    if isinstance(mdef, str):
+        return None if mdef in REPORT_MEASURES else f"Unknown measure '{mdef}'"
+    if not isinstance(mdef, dict):
+        return "Invalid measure"
+    t = mdef.get("type")
+    if t == "simple":
+        if mdef.get("agg") not in _CR_AGGS:
+            return f"Unknown aggregation '{mdef.get('agg')}'"
+        if mdef.get("field") not in CR_FIELDS and mdef.get("field") not in CR_FOLLOWUP_FIELDS:
+            return f"Unknown field '{mdef.get('field')}'"
+        return None
+    if t == "composite":
+        if mdef.get("op") not in _CR_OPS:
+            return f"Unknown operator '{mdef.get('op')}'"
+        err = _cr_validate_measure_def(mdef.get("a"), depth + 1)
+        if err: return err
+        return _cr_validate_measure_def(mdef.get("b"), depth + 1)
+    return "Invalid measure type"
+
+def _cr_measure_label(mdef):
+    if isinstance(mdef, str):
+        return REPORT_MEASURES.get(mdef, {}).get("label", mdef)
+    if not isinstance(mdef, dict):
+        return "Measure"
+    if mdef.get("type") == "simple":
+        agg_label = _CR_AGGS.get(mdef.get("agg"), mdef.get("agg"))
+        field = mdef.get("field")
+        field_label = CR_FIELDS.get(field, CR_FOLLOWUP_FIELDS.get(field, {})).get("label", field)
+        return f"{agg_label} of {field_label}"
+    if mdef.get("type") == "composite":
+        return f"({_cr_measure_label(mdef.get('a'))} {_CR_OPS.get(mdef.get('op'), '?')} {_cr_measure_label(mdef.get('b'))})"
+    return "Custom Measure"
+
 def _cr_sort_keys(dim, keys):
     if dim in ("date_day","date_week","date_month","hour"):
         return sorted(keys)
@@ -1768,6 +1881,10 @@ def _cr_sort_keys(dim, keys):
 # range everything else depends on. This predicate is meant to be reused by
 # slicer tiles later, per the plan noted in the v1.82 handoff.
 _CR_FILTERABLE_DIMS = {"caller", "outcome", "stage", "source_list"}
+# Only Caller (and Date Range, handled separately below) apply to follow_ups
+# rows — Outcome/Stage/Source List are call_log-only columns that don't
+# exist on a follow-up record.
+_CR_FOLLOWUP_FILTERABLE_DIMS = {"caller"}
 
 def _cr_row_matches_filters(row, filters):
     for f in filters:
@@ -1784,18 +1901,43 @@ def _cr_row_matches_filters(row, filters):
             return False
     return True
 
+def _cr_followup_row_matches_filters(row, filters):
+    for f in filters:
+        if f["field"] == "date_range":
+            local_day = utc_to_display_str(row.get("timestamp"), "%Y-%m-%d")
+            if not local_day or not (f["from"] <= local_day <= f["to"]):
+                return False
+            continue
+        if f["field"] not in _CR_FOLLOWUP_FILTERABLE_DIMS:
+            continue  # not a follow-up column — ignore rather than wrongly excluding every row
+        if (row.get(f["field"]) or "") not in f["values"]:
+            return False
+    return True
+
 @app.route("/api/custom_report/run", methods=["POST"])
 def custom_report_run():
     data = request.json or {}
-    measure = str(data.get("measure","")).strip()
+    measure_raw = data.get("measure")
     rows_dim = str(data.get("rows","")).strip()
     cols_dim = str(data.get("columns") or "").strip() or None
     date_from = str(data.get("date_from","")).strip()
     date_to = str(data.get("date_to","")).strip()
     callers = [c.strip() for c in (data.get("callers") or []) if c.strip()]
 
-    if measure not in REPORT_MEASURES:
-        return jsonify({"ok": False, "error": f"Unknown measure '{measure}'"}), 400
+    # measure is either a built-in key (string, unchanged from before) or a
+    # Custom Measure definition (dict) — see _cr_validate_measure_def for the
+    # accepted shapes. No eval() involved anywhere.
+    if isinstance(measure_raw, str):
+        measure = measure_raw.strip()
+    elif isinstance(measure_raw, dict):
+        measure = measure_raw
+    else:
+        return jsonify({"ok": False, "error": "Missing measure"}), 400
+    err = _cr_validate_measure_def(measure)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    uses_followups = _cr_measure_uses_followups(measure)
+
     # rows is optional — an empty rows_dim means "no grouping, single total",
     # used for Card-style single-number tiles. Only validate it against the
     # known dimension list when something was actually provided.
@@ -1803,6 +1945,17 @@ def custom_report_run():
         return jsonify({"ok": False, "error": f"Unknown field '{rows_dim}'"}), 400
     if cols_dim is not None and cols_dim not in REPORT_DIMENSIONS:
         return jsonify({"ok": False, "error": f"Unknown field '{cols_dim}'"}), 400
+    # A measure that reads a Follow-Up field can only be grouped by
+    # dimensions that exist on BOTH call_log and follow_ups — Outcome/Stage/
+    # Source List are call-only columns, so grouping by one of those while
+    # asking for a follow-up value has no sensible per-group answer.
+    if uses_followups:
+        _cr_fu_ok_dims = {"", "caller", "date_day", "date_week", "date_month", "hour"}
+        if rows_dim not in _cr_fu_ok_dims:
+            return jsonify({"ok": False, "error": "A measure using a Follow-Up field can only be grouped by Caller, Day, Week, Month, Hour of Day, or used as a Card — not Outcome/Stage/Source List."}), 400
+        if cols_dim and cols_dim not in _cr_fu_ok_dims:
+            return jsonify({"ok": False, "error": "A measure using a Follow-Up field can only use Caller, Day, Week, Month, or Hour of Day as Columns — not Outcome/Stage/Source List."}), 400
+
     # The report-wide date range picker was removed from the builder — date
     # narrowing now happens exclusively through the "Date Range" filter
     # (report-level or visual-level), which is optional. When neither the
@@ -1862,56 +2015,92 @@ def custom_report_run():
     if filters:
         rows_all = [r for r in rows_all if _cr_row_matches_filters(r, filters)]
 
+    # Follow-up rows are fetched separately — follow_ups is a different
+    # table, not joined per-call — and shaped with "caller"/"timestamp" keys
+    # so the SAME _cr_dim_key()/_cr_sort_keys() grouping logic used for call
+    # rows works unchanged on them too. "timestamp" here is follow_up_at
+    # (the scheduled follow-up date/time), which is what a Day/Week/Month/
+    # Hour grouping on a follow-up measure means. Only fetched when actually
+    # needed, so measures that don't touch a Follow-Up field cost nothing extra.
+    followup_rows = []
+    if uses_followups:
+        fu_ts_from, fu_ts_to = ts_from, ts_to
+        fu_cf, fu_cp = "", ()
+        if len(callers) == 1:
+            fu_cf, fu_cp = "AND caller=?", (callers[0],)
+        elif len(callers) > 1:
+            ph = ",".join(["?"]*len(callers))
+            fu_cf, fu_cp = f"AND caller IN ({ph})", tuple(callers)
+        fu_raw = db_query(f"""SELECT caller, follow_up_at, done, days_late
+                               FROM follow_ups
+                               WHERE follow_up_at>=? AND follow_up_at<=? {fu_cf}""",
+                           (fu_ts_from, fu_ts_to) + fu_cp) or []
+        followup_rows = [{"caller": r[0], "timestamp": r[1], "completed": 1 if r[2] else 0, "days_late": r[3] or 0} for r in fu_raw]
+        if filters:
+            followup_rows = [r for r in followup_rows if _cr_followup_row_matches_filters(r, filters)]
+
+    measure_label = _cr_measure_label(measure)
+
     if not rows_dim:
         # Card mode: one aggregate over everything matching the filters, no
         # grouping at all — used for single-number tiles.
-        total = _cr_compute_measure(measure, rows_all)
-        return jsonify({"ok": True, "single_value": total, "measure_label": REPORT_MEASURES[measure]["label"]})
+        total = _cr_resolve_measure(measure, rows_all, followup_rows)
+        return jsonify({"ok": True, "single_value": total, "measure_label": measure_label})
 
-    if not rows_all:
+    if not rows_all and not followup_rows:
         return jsonify({"ok": True, "row_labels": [], "column_labels": [], "data": [],
-                        "measure_label": REPORT_MEASURES[measure]["label"],
+                        "measure_label": measure_label,
                         "row_field_label": REPORT_DIMENSIONS[rows_dim]["label"],
                         "column_field_label": REPORT_DIMENSIONS[cols_dim]["label"] if cols_dim else None,
                         "note": "No calls found for this date range/caller/filter selection."})
 
-    rows = rows_all
+    # Bucket rows into groups by (row_key[, col_key]) — call rows and (if
+    # needed) follow-up rows are bucketed independently, by the same key
+    # functions, so a composite measure can pull the matching subset of each.
+    def _bucket(rows):
+        g = {}
+        for r in rows:
+            rk = _cr_dim_key(rows_dim, r)
+            if rk is None: continue
+            ck = _cr_dim_key(cols_dim, r) if cols_dim else None
+            g.setdefault(rk, {}).setdefault(ck, []).append(r)
+        return g
+    groups = _bucket(rows_all)
+    fu_groups = _bucket(followup_rows) if uses_followups else {}
 
-    # Bucket rows into groups by (row_key[, col_key])
-    groups = {}  # row_key -> {col_key_or_None: [rows]}
-    for r in rows:
-        rk = _cr_dim_key(rows_dim, r)
-        if rk is None: continue
-        ck = _cr_dim_key(cols_dim, r) if cols_dim else None
-        groups.setdefault(rk, {}).setdefault(ck, []).append(r)
-
-    row_keys = _cr_sort_keys(rows_dim, list(groups.keys()))
+    row_keys = _cr_sort_keys(rows_dim, list(set(groups.keys()) | set(fu_groups.keys())))
     col_keys = None
     if cols_dim:
         all_cols = set()
         for sub in groups.values(): all_cols.update(sub.keys())
+        for sub in fu_groups.values(): all_cols.update(sub.keys())
         col_keys = _cr_sort_keys(cols_dim, list(all_cols))
 
+    def _resolve(rk, ck):
+        call_sub = groups.get(rk, {}).get(ck, [])
+        fu_sub = fu_groups.get(rk, {}).get(ck, [])
+        return _cr_resolve_measure(measure, call_sub, fu_sub)
+
     if col_keys is None:
-        computed = [(rk, _cr_compute_measure(measure, groups[rk].get(None, []))) for rk in row_keys]
+        computed = [(rk, _resolve(rk, None)) for rk in row_keys]
         if rows_dim not in ("date_day","date_week","date_month","hour"):
             computed.sort(key=lambda x: x[1], reverse=True)
         return jsonify({"ok": True,
             "row_labels": [c[0] for c in computed],
             "column_labels": None,
             "data": [c[1] for c in computed],
-            "measure_label": REPORT_MEASURES[measure]["label"],
+            "measure_label": measure_label,
             "row_field_label": REPORT_DIMENSIONS[rows_dim]["label"],
             "column_field_label": None})
     else:
         # Sort rows by their total across all columns (for non-chronological dims)
-        totals = {rk: sum(_cr_compute_measure(measure, groups[rk].get(ck, [])) for ck in col_keys) for rk in row_keys}
+        totals = {rk: sum(_resolve(rk, ck) for ck in col_keys) for rk in row_keys}
         if rows_dim not in ("date_day","date_week","date_month","hour"):
             row_keys = sorted(row_keys, key=lambda rk: totals[rk], reverse=True)
-        matrix = [[_cr_compute_measure(measure, groups[rk].get(ck, [])) for ck in col_keys] for rk in row_keys]
+        matrix = [[_resolve(rk, ck) for ck in col_keys] for rk in row_keys]
         return jsonify({"ok": True,
             "row_labels": row_keys, "column_labels": col_keys, "data": matrix,
-            "measure_label": REPORT_MEASURES[measure]["label"],
+            "measure_label": measure_label,
             "row_field_label": REPORT_DIMENSIONS[rows_dim]["label"],
             "column_field_label": REPORT_DIMENSIONS[cols_dim]["label"]})
 
@@ -1939,7 +2128,20 @@ def custom_report_fields():
             {"value": "outcome", "label": "Outcome", "options": outcome_opts},
             {"value": "stage", "label": "Stage", "options": stage_opts},
             {"value": "source_list", "label": "Source List", "options": source_opts},
-        ]})
+        ],
+        # For the Custom Measure builder (Power BI-measure-style): pick an
+        # aggregation + a raw field, or combine two measures with an
+        # arithmetic operator. Fields are tagged by source since a
+        # follow-up field restricts which dimensions the measure can be
+        # grouped by (see custom_report_run) — the builder UI surfaces that
+        # restriction before the request is even sent.
+        "cr_fields": (
+            [{"value": k, "label": v["label"], "source": "call"} for k, v in CR_FIELDS.items()] +
+            [{"value": k, "label": v["label"], "source": "followup"} for k, v in CR_FOLLOWUP_FIELDS.items()]
+        ),
+        "cr_aggregations": [{"value": k, "label": v} for k, v in _CR_AGGS.items()],
+        "cr_operators": [{"value": k, "label": v} for k, v in _CR_OPS.items()],
+    })
 
 @app.route("/api/custom_report/tiles", methods=["GET"])
 def custom_report_tiles_list():
@@ -1981,6 +2183,10 @@ def custom_report_tiles_save():
             return False
         if v.get("isSlicer"):
             return bool(v.get("slicerField"))
+        if v.get("measure") == "custom":
+            return v.get("measureDef") is not None \
+                and _cr_validate_measure_def(v.get("measureDef")) is None \
+                and (bool(v.get("rows")) or v.get("chart_type") == "card")
         return bool(v.get("measure")) and (bool(v.get("rows")) or v.get("chart_type") == "card")
     if not all(_visual_ok(v) for v in visuals):
         return jsonify({"ok": False, "error": "Every visual needs at least a measure (and a field, unless it's a Card or Slicer)"}), 400
