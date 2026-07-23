@@ -1295,15 +1295,15 @@ select:focus{outline:none;border-color:var(--green)}
                   </select>
                 </label>
                 <button type="button" class="btn btn-outline btn-sm" onclick="crTogglePaletteCustomize()">🎨 Customize Colors</button>
-                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-gridlines" checked> Gridlines</label>
+                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-gridlines" checked onchange="crPreviewFormatChanges()"> Gridlines</label>
               </div>
               <div id="cr-fmt-palette-swatches" style="display:none;flex-wrap:wrap;gap:6px;padding-top:6px;border-top:1px dashed var(--border)"></div>
               <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding-top:6px;border-top:1px dashed var(--border)">
-                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-datalabels"> Data labels</label>
+                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-datalabels" onchange="crPreviewFormatChanges()"> Data labels</label>
                 <span id="cr-fmt-datalabels-color-wrap"></span>
-                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-legend" checked> Legend</label>
+                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-legend" checked onchange="crPreviewFormatChanges()"> Legend</label>
                 <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Position
-                  <select id="cr-fmt-legend-pos" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                  <select id="cr-fmt-legend-pos" onchange="crPreviewFormatChanges()" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
                     <option value="top">Top</option>
                     <option value="bottom">Bottom</option>
                     <option value="left">Left</option>
@@ -1314,7 +1314,7 @@ select:focus{outline:none;border-color:var(--green)}
               </div>
               <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding-top:6px;border-top:1px dashed var(--border)">
                 <label style="font-size:11.5px;display:flex;align-items:center;gap:4px;flex:1;min-width:140px">Title
-                  <input id="cr-fmt-title" placeholder="optional chart title" style="flex:1;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                  <input id="cr-fmt-title" placeholder="optional chart title" oninput="crPreviewFormatChanges()" style="flex:1;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
                 </label>
                 <span id="cr-fmt-title-color-wrap"></span>
               </div>
@@ -2504,7 +2504,7 @@ const CR_PALETTES={
 // current color in data-color; Apply reads that attribute directly rather
 // than tracking a parallel JS state object, so there's exactly one source
 // of truth per swatch.
-const CR_THEME_COLOR_BASES = ['#1e3a5f','#e8b339','#333333','#6a4d99','#1d7a3a','#a02c2c','#2d8f8f','#c47a2c'];
+const CR_THEME_COLOR_BASES = ['#1e3a5f','#e8b339','#404040','#6a4d99','#1d7a3a','#a02c2c','#2d8f8f','#c47a2c','#0070c0','#c0398c'];
 const CR_STANDARD_COLORS = ['#c00000','#ff0000','#ffc000','#ffff00','#92d050','#00b050','#00b0f0','#0070c0','#002060','#7030a0'];
 let _crRecentColors=[];
 try{ _crRecentColors=JSON.parse(localStorage.getItem('cr_recent_colors')||'[]').slice(0,8); }catch(e){}
@@ -2524,7 +2524,7 @@ function crTint(hex, amt){
   return crRgbToHex(c.r+(mix[0]-c.r)*f, c.g+(mix[1]-c.g)*f, c.b+(mix[2]-c.b)*f);
 }
 function crThemeShade(base, row){
-  const amounts=[0.6, 0.3, 0, -0.3, -0.55];  // lightest..darkest, base color sits in the middle row
+  const amounts=[0.7, 0.4, 0.15, 0, -0.25, -0.5];  // lightest..darkest — row 3 is the pure base color, matching Excel's theme-column layout
   return crTint(base, amounts[row]);
 }
 let _crColorPickerTargetBtn=null;
@@ -2539,17 +2539,19 @@ function crRenderColorPickerPanel(){
   if(!panel){
     panel=document.createElement('div');
     panel.id='cr-color-picker-panel';
-    panel.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.2);padding:10px;width:216px';
+    panel.style.cssText='position:fixed;z-index:99999;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.25);padding:10px;width:250px';
     document.body.appendChild(panel);
   }
   const rect=btn.getBoundingClientRect();
-  panel.style.left=Math.min(rect.left+window.scrollX, window.innerWidth-232)+'px';
+  panel.style.left=Math.min(rect.left+window.scrollX, window.innerWidth-266)+'px';
   panel.style.top=(rect.bottom+window.scrollY+4)+'px';
   const sw=(hex,label)=>`<button type="button" onclick="crPickColor('${esc(hex)}')" title="${esc(label||hex||'Automatic')}"
     style="width:18px;height:18px;border-radius:3px;border:1px solid rgba(0,0,0,.18);background:${hex?esc(hex):'#fff'};${hex?'':'background-image:linear-gradient(45deg,transparent 45%,#c00 45%,#c00 55%,transparent 55%)'};cursor:pointer;padding:0"></button>`;
-  const themeRows=[0,1,2,3,4].map(row=>
+  const themeRows=[0,1,2,3,4,5].map(row=>
     `<div style="display:flex;gap:3px;margin-bottom:2px">${CR_THEME_COLOR_BASES.map(base=>sw(crThemeShade(base,row))).join('')}</div>`
   ).join('');
+  const startColor = btn.dataset.color || '#1e3a5f';
+  const startRgb = crHexToRgb(startColor);
   let html=`<div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Automatic</div>
     <div style="margin-bottom:8px">${sw('','Automatic (chart default)')}</div>
     <div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Theme Colors</div>
@@ -2561,13 +2563,50 @@ function crRenderColorPickerPanel(){
       <div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:8px">${_crRecentColors.map(c=>sw(c)).join('')}</div>`;
   }
   html+=`<div style="border-top:1px solid var(--border);padding-top:6px">
-    <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer">
-      <input type="color" onchange="crPickColor(this.value)" style="width:22px;height:22px;padding:0;border:none;cursor:pointer">
-      More Colors…
+    <div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Custom Color (RGB)</div>
+    <div style="display:flex;gap:5px;align-items:center;margin-bottom:6px">
+      <label style="font-size:10px;color:var(--t3);display:flex;align-items:center;gap:2px">R<input type="number" id="cr-rgb-r" min="0" max="255" value="${startRgb.r}" oninput="crUpdateRgbPreview()" style="width:42px;padding:2px 3px;border:1px solid var(--border);border-radius:3px;font-size:11px"></label>
+      <label style="font-size:10px;color:var(--t3);display:flex;align-items:center;gap:2px">G<input type="number" id="cr-rgb-g" min="0" max="255" value="${startRgb.g}" oninput="crUpdateRgbPreview()" style="width:42px;padding:2px 3px;border:1px solid var(--border);border-radius:3px;font-size:11px"></label>
+      <label style="font-size:10px;color:var(--t3);display:flex;align-items:center;gap:2px">B<input type="number" id="cr-rgb-b" min="0" max="255" value="${startRgb.b}" oninput="crUpdateRgbPreview()" style="width:42px;padding:2px 3px;border:1px solid var(--border);border-radius:3px;font-size:11px"></label>
+      <div id="cr-rgb-preview" style="width:22px;height:22px;border-radius:4px;border:1px solid var(--border);background:${esc(startColor)};flex-shrink:0"></div>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <input type="text" id="cr-rgb-hex" value="${esc(startColor)}" oninput="crUpdateRgbFromHex()"
+        style="flex:1;min-width:0;padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11px;font-family:monospace">
+      <button type="button" class="btn btn-green btn-sm" onclick="crApplyRgbColor()" style="padding:3px 10px;font-size:11px;flex-shrink:0">Apply</button>
+    </div>
+    <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer;margin-top:8px;padding-top:6px;border-top:1px solid var(--border)">
+      <input type="color" value="${esc(startColor)}" onchange="crPickColor(this.value)" style="width:22px;height:22px;padding:0;border:none;cursor:pointer">
+      Or pick visually…
     </label>
   </div>`;
   panel.innerHTML=html;
   panel.style.display='block';
+}
+function crUpdateRgbPreview(){
+  const r=Math.max(0,Math.min(255,parseInt(document.getElementById('cr-rgb-r').value,10)||0));
+  const g=Math.max(0,Math.min(255,parseInt(document.getElementById('cr-rgb-g').value,10)||0));
+  const b=Math.max(0,Math.min(255,parseInt(document.getElementById('cr-rgb-b').value,10)||0));
+  const hex=crRgbToHex(r,g,b);
+  const prev=document.getElementById('cr-rgb-preview'); if(prev) prev.style.background=hex;
+  const hexInput=document.getElementById('cr-rgb-hex'); if(hexInput) hexInput.value=hex;
+}
+function crUpdateRgbFromHex(){
+  const hexInput=document.getElementById('cr-rgb-hex');
+  let hex=(hexInput.value||'').trim();
+  if(!/^#?[0-9a-fA-F]{6}$/.test(hex)) return;  // ignore until it's a complete, valid hex code
+  if(hex[0]!=='#') hex='#'+hex;
+  const c=crHexToRgb(hex);
+  document.getElementById('cr-rgb-r').value=c.r;
+  document.getElementById('cr-rgb-g').value=c.g;
+  document.getElementById('cr-rgb-b').value=c.b;
+  const prev=document.getElementById('cr-rgb-preview'); if(prev) prev.style.background=hex;
+}
+function crApplyRgbColor(){
+  const r=Math.max(0,Math.min(255,parseInt(document.getElementById('cr-rgb-r').value,10)||0));
+  const g=Math.max(0,Math.min(255,parseInt(document.getElementById('cr-rgb-g').value,10)||0));
+  const b=Math.max(0,Math.min(255,parseInt(document.getElementById('cr-rgb-b').value,10)||0));
+  crPickColor(crRgbToHex(r,g,b));
 }
 function crPickColor(hex){
   const btn=_crColorPickerTargetBtn;
@@ -2581,6 +2620,12 @@ function crPickColor(hex){
     try{ localStorage.setItem('cr_recent_colors', JSON.stringify(_crRecentColors)); }catch(e){}
   }
   crCloseColorPicker();
+  // Re-render the visual immediately with whatever's currently in the
+  // Formatting panel (even if "Apply to This Visual" hasn't been clicked
+  // yet) — the same live-preview behaviour Excel/PowerPoint color pickers
+  // give you, and the most direct way to confirm a color choice actually
+  // took effect rather than waiting to find out after a separate Apply step.
+  crPreviewFormatChanges();
 }
 function crCloseColorPicker(){
   const panel=document.getElementById('cr-color-picker-panel');
@@ -2611,25 +2656,29 @@ function crReadSwatchColor(wrapId){
 }
 function crApplyPalettePreset(){
   const wrap=document.getElementById('cr-fmt-palette-swatches');
-  if(!wrap || wrap.style.display!=='flex') return;  // customize panel isn't open — nothing to refresh
-  const preset=document.getElementById('cr-fmt-palette').value;
-  const colors=(CR_PALETTES[preset]||CR_PALETTES.navy).slice();
-  wrap.innerHTML=colors.map((c,i)=>crSwatchButtonHtml('palette:'+i, c, 'Series '+(i+1))).join('');
-}
-function crTogglePaletteCustomize(){
-  const wrap=document.getElementById('cr-fmt-palette-swatches');
-  if(!wrap) return;
-  if(wrap.style.display==='flex'){ wrap.style.display='none'; return; }
-  if(!wrap.innerHTML.trim()){
+  if(wrap && wrap.dataset.active==='1'){
     const preset=document.getElementById('cr-fmt-palette').value;
     const colors=(CR_PALETTES[preset]||CR_PALETTES.navy).slice();
     wrap.innerHTML=colors.map((c,i)=>crSwatchButtonHtml('palette:'+i, c, 'Series '+(i+1))).join('');
   }
-  wrap.style.display='flex';
+  crPreviewFormatChanges();
+}
+function crTogglePaletteCustomize(){
+  const wrap=document.getElementById('cr-fmt-palette-swatches');
+  if(!wrap) return;
+  if(wrap.dataset.active==='1'){
+    wrap.dataset.active='0'; wrap.style.display='none';
+    crPreviewFormatChanges();
+    return;
+  }
+  const preset=document.getElementById('cr-fmt-palette').value;
+  const colors=(CR_PALETTES[preset]||CR_PALETTES.navy).slice();
+  wrap.innerHTML=colors.map((c,i)=>crSwatchButtonHtml('palette:'+i, c, 'Series '+(i+1))).join('');
+  wrap.dataset.active='1'; wrap.style.display='flex';
 }
 function crReadCustomPalette(){
   const wrap=document.getElementById('cr-fmt-palette-swatches');
-  if(!wrap || wrap.style.display!=='flex') return null;  // not customized — use the named preset instead
+  if(!wrap || wrap.dataset.active!=='1') return null;  // not customized — use the named preset instead
   const btns=wrap.querySelectorAll('.cr-color-swatch-btn');
   if(!btns.length) return null;
   return Array.from(btns).map(b=>b.dataset.color||'#1e3a5f');
@@ -2647,13 +2696,38 @@ function crRestoreFormatSwatches(fmt){
   if(wrap){
     if(fmt.customPalette && fmt.customPalette.length){
       wrap.innerHTML=fmt.customPalette.map((c,i)=>crSwatchButtonHtml('palette:'+i, c, 'Series '+(i+1))).join('');
-      wrap.style.display='flex';
+      wrap.dataset.active='1'; wrap.style.display='flex';
     } else {
       wrap.innerHTML='';
-      wrap.style.display='none';
+      wrap.dataset.active='0'; wrap.style.display='none';
     }
   }
   const glEl=document.getElementById('cr-fmt-gridlines'); if(glEl) glEl.checked=fmt.gridlines!==false;
+}
+// Re-renders the currently selected visual using whatever's presently in
+// the Formatting controls — even fields not yet committed via "▶ Apply to
+// This Visual" — so a color pick (or the gridlines checkbox, etc.) shows
+// its effect on the actual chart immediately. Only does anything if this
+// visual has already been configured at least once (has a measure to run);
+// a brand-new, never-applied visual has nothing to preview yet.
+function crPreviewFormatChanges(){
+  const id=_crSelectedVisualId;
+  if(!id) return;
+  const v=_crVisuals[id];
+  if(!v || v.isSlicer || !v.measure) return;
+  v.format={
+    palette:document.getElementById('cr-fmt-palette').value,
+    customPalette:crReadCustomPalette(),
+    dataLabels:document.getElementById('cr-fmt-datalabels').checked,
+    dataLabelsColor:crReadSwatchColor('cr-fmt-datalabels-color-wrap'),
+    legend:document.getElementById('cr-fmt-legend').checked,
+    legendPosition:document.getElementById('cr-fmt-legend-pos').value,
+    legendColor:crReadSwatchColor('cr-fmt-legend-color-wrap'),
+    title:document.getElementById('cr-fmt-title').value.trim(),
+    titleColor:crReadSwatchColor('cr-fmt-title-color-wrap'),
+    gridlines:document.getElementById('cr-fmt-gridlines').checked,
+  };
+  crRenderVisual(id);
 }
 let _crMeasures=[], _crDimensions=[];
 let _crCanvas={values:null, rows:null, columns:null};  // wells UI state, for whichever visual is currently selected
@@ -4847,6 +4921,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.91", date:"2026-07", title:"Custom Report: richer color picker with RGB, and live formatting preview",
+    changes:[
+      "Theme Colors expanded from 8 columns \u00d7 5 shades to 10 columns \u00d7 6 shades \u2014 closer to the full Excel/Office picker in the reference screenshot.",
+      "New \"Custom Color (RGB)\" section in the picker \u2014 type exact Red/Green/Blue values (0\u2013255 each), see a live preview swatch and hex code update as you type, then click Apply. A \"pick visually\u2026\" option (the browser's own color dialog) is still there too for eyedropper-style picking.",
+      "Every Formatting control \u2014 palette, custom colors, gridlines, data labels, legend and its position, and the title text \u2014 now previews on the actual chart immediately, before \"\u25b6 Apply to This Visual\" is clicked. This is the same live-preview behaviour Excel/PowerPoint's own color picker gives you, and it directly addresses color changes not visibly taking effect \u2014 you'll now see it happen the moment you pick, rather than only after a separate Apply step.",
+      "Hardened the \"Customize Colors\" panel's open/closed state to use an explicit flag instead of inferring it from a CSS display value, removing a fragile edge case in whether a customized palette was correctly detected and sent when applying.",
+      "If you tried this in v1.90 and it seemed like nothing was happening, this release should resolve it \u2014 please try again and let me know if colors still don't seem to stick.",
+    ]},
   { v:"1.90", date:"2026-07", title:"Custom Report: Excel-style color picker for chart colors, and a gridlines toggle",
     changes:[
       "New \"\ud83c\udfa8 Customize Colors\" button next to a visual's palette preset \u2014 opens 8 individual color swatches (one per data series/pie slice) so bars, columns, lines, and pie/donut slices can each be set to an exact color, not just one of the 4 fixed presets.",
