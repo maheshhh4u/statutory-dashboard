@@ -1181,17 +1181,11 @@ select:focus{outline:none;border-color:var(--green)}
       </div>
 
       <div style="display:flex;flex-direction:column;gap:10px;background:#f7f5fb;border:1px solid #e2dcf0;border-radius:8px;padding:10px 16px;margin-bottom:14px">
-        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-          <label style="font-size:12px;font-weight:700;color:#3d2d5a">From <input type="date" id="cr-date-from" style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px"></label>
-          <label style="font-size:12px;font-weight:700;color:#3d2d5a">To <input type="date" id="cr-date-to" style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px"></label>
-          <label style="font-size:12px;font-weight:700;color:#3d2d5a">Caller(s)
-            <select id="cr-callers" multiple style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px;min-width:140px;height:34px"></select>
-          </label>
-          <span style="font-size:11px;color:var(--t3)">(none selected = everyone — applies to every visual below)</span>
-          <button type="button" class="btn btn-outline btn-sm" onclick="crRefreshAllVisuals()" style="margin-left:auto">↺ Refresh All Visuals</button>
-        </div>
-        <div style="border-top:1px dashed #d8c9ee;padding-top:8px">
-          <div style="font-size:11px;font-weight:700;color:#3d2d5a;margin-bottom:4px">Report Filters <span style="font-weight:400;color:var(--t3)">— applies to every visual, unless a visual sets its own filter on the same field</span></div>
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <div style="font-size:11px;font-weight:700;color:#3d2d5a">Report Filters <span style="font-weight:400;color:var(--t3)">— applies to every visual, unless a visual sets its own filter on the same field. No date range set here means every visual uses all available data, unless it (or a Date Range filter) narrows it.</span></div>
+            <button type="button" class="btn btn-outline btn-sm" onclick="crRefreshAllVisuals()">↺ Refresh All Visuals</button>
+          </div>
           <div id="cr-report-filters-list" style="display:flex;flex-direction:column;gap:5px;margin-bottom:6px"></div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <select id="cr-rf-field" onchange="crReportFilterFieldChanged()" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
@@ -1287,6 +1281,11 @@ select:focus{outline:none;border-color:var(--green)}
 
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <button class="btn btn-green btn-sm" onclick="crApplyToSelectedVisual()">▶ Apply to This Visual</button>
+              <button class="btn btn-outline btn-sm" onclick="crDuplicateSelectedVisual()">⧉ Duplicate Visual</button>
+              <span style="display:flex;align-items:center;gap:4px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:3px 6px">
+                <select id="cr-match-size-target" style="padding:2px 4px;border:none;font-size:11.5px;max-width:160px"></select>
+                <button type="button" class="btn btn-outline btn-sm" onclick="crMatchSizeToSelected()">⇔ Match Size</button>
+              </span>
               <button class="btn btn-outline btn-sm" onclick="crRemoveSelectedVisual()">🗑 Remove Visual</button>
             </div>
             <div id="cr-result-status" style="font-size:11.5px;color:var(--t3);margin-top:6px"></div>
@@ -2451,19 +2450,6 @@ function initCustomReport(){
   const gal=document.getElementById('cr-view-gallery'), build=document.getElementById('cr-view-builder');
   if(gal) gal.style.display='block';
   if(build) build.style.display='none';
-  const from=document.getElementById('cr-date-from'), to=document.getElementById('cr-date-to');
-  if(from && !from.value){
-    const now=new Date(); const day=now.getDay(); const diffToMon=day===0?-6:1-day;
-    const mon=new Date(now); mon.setDate(now.getDate()+diffToMon);
-    const sun=new Date(mon); sun.setDate(mon.getDate()+6);
-    const fmt=d=>d.toISOString().slice(0,10);
-    from.value=fmt(mon); if(to) to.value=fmt(sun);
-  }
-  const sel=document.getElementById('cr-callers');
-  if(sel && !sel.dataset.filled){
-    sel.innerHTML=(userList||[]).map(u=>`<option value="${esc(u)}">${esc(u)}</option>`).join('');
-    sel.dataset.filled='1';
-  }
   renderCrChartTypeGallery();
   if(!_crFieldsLoaded){
     fetch('/api/custom_report/fields').then(r=>r.json()).then(d=>{
@@ -2491,13 +2477,51 @@ function initCustomReport(){
 }
 function crInitGridIfNeeded(){
   if(_crGrid) return;
-  _crGrid=GridStack.init({cellHeight:70, margin:8, minRow:2}, document.getElementById('cr-gridstack'));
+  // Deliberately NOT changing cellHeight/column count here — those are the
+  // literal units every already-saved report's x/y/w/h values are stored
+  // in. Changing them would silently rescale and distort every existing
+  // saved layout the next time it's opened. Resize handles on all 8
+  // edges/corners (not just the bottom-right corner, which was the actual
+  // cause of "resizing feels imprecise") and a live size readout during
+  // drag/resize are added instead, without touching the grid's units.
+  _crGrid=GridStack.init({cellHeight:70, margin:8, minRow:2,
+    resizable:{handles:'e, se, s, sw, w, n, ne, nw'}}, document.getElementById('cr-gridstack'));
   // Re-render a visual's chart after it's resized, so Chart.js redraws to fit
   // the new box instead of staying the old size.
   _crGrid.on('resizestop', function(event, el){
     const id=el.getAttribute('gs-id');
     if(id) crRenderVisual(id);
+    crHideSizeBadge();
   });
+  _crGrid.on('resize', function(event, el){ crShowSizeBadge(el); });
+  _crGrid.on('dragstop', function(event, el){ crHideSizeBadge(); });
+}
+// A small floating "W × H" (grid columns × rows) readout that follows a
+// visual while it's being resized, so two visuals can be matched to the
+// exact same size by eye without guesswork — e.g. resize the first one,
+// note it reads "8 × 8", then resize the second until it reads the same.
+// "⧉ Duplicate Visual" and "⇔ Match Size" (below) are the more reliable,
+// one-click ways to guarantee an exact match; this is the visual aid for
+// freehand resizing.
+function crShowSizeBadge(el){
+  let badge=document.getElementById('cr-size-badge');
+  if(!badge){
+    badge=document.createElement('div');
+    badge.id='cr-size-badge';
+    badge.style.cssText='position:absolute;z-index:9999;background:#1e3a5f;color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.25)';
+    document.body.appendChild(badge);
+  }
+  const w=parseInt(el.getAttribute('gs-w')||'0',10);
+  const h=parseInt(el.getAttribute('gs-h')||'0',10);
+  const rect=el.getBoundingClientRect();
+  badge.textContent=w+' × '+h;
+  badge.style.left=(rect.left+window.scrollX+6)+'px';
+  badge.style.top=(rect.top+window.scrollY+6)+'px';
+  badge.style.display='block';
+}
+function crHideSizeBadge(){
+  const badge=document.getElementById('cr-size-badge');
+  if(badge) badge.style.display='none';
 }
 function crOpenBuilder(){
   const gal=document.getElementById('cr-view-gallery'), build=document.getElementById('cr-view-builder');
@@ -2658,6 +2682,7 @@ function crSelectVisual(id){
     el.style.outline = el.getAttribute('gs-id')===id ? '2px solid #1e3a5f' : 'none';
   });
   document.getElementById('cr-result-status').textContent='';
+  renderCrMatchSizeOptions();
 }
 function crDeselectVisual(){
   _crSelectedVisualId=null;
@@ -2667,6 +2692,7 @@ function crDeselectVisual(){
   const cfg=document.getElementById('cr-visual-config'); if(cfg) cfg.style.display='none';
   const lbl=document.getElementById('cr-selected-visual-label'); if(lbl) lbl.textContent='No visual selected — add one, or click an existing visual below';
   document.querySelectorAll('#cr-gridstack .grid-stack-item').forEach(el=>{ el.style.outline='none'; });
+  renderCrMatchSizeOptions();
 }
 function renderCrChartTypeGallery(){
   const gal=document.getElementById('cr-chart-type-gallery');
@@ -2936,18 +2962,69 @@ function crRemoveSelectedVisual(){
   delete _crVisuals[id];
   crDeselectVisual();
 }
+// Copies the selected visual (measure, rows, columns, chart type,
+// formatting, filters) into a new visual at the exact same size, placed
+// immediately to its right — the reliable, one-click way to get two visuals
+// the same size, rather than eyeballing a manual resize.
+function crDuplicateSelectedVisual(){
+  const id=_crSelectedVisualId;
+  const status=document.getElementById('cr-result-status');
+  if(!id || !_crVisuals[id]){ if(status){ status.textContent='⚠ Select a visual first.'; status.style.color='#c0392b'; } return; }
+  const srcEl=document.querySelector(`#cr-gridstack [gs-id="${id}"]`);
+  const srcX=srcEl?parseInt(srcEl.getAttribute('gs-x')||'0',10):0;
+  const srcY=srcEl?parseInt(srcEl.getAttribute('gs-y')||'0',10):0;
+  const w=srcEl?parseInt(srcEl.getAttribute('gs-w')||'4',10):4;
+  const h=srcEl?parseInt(srcEl.getAttribute('gs-h')||'4',10):4;
+  const newId='v'+(++_crVisualSeq);
+  _crVisuals[newId]=JSON.parse(JSON.stringify(_crVisuals[id]));
+  // Requesting a position just to the right of the source is a hint, not a
+  // guarantee — GridStack moves it to the nearest free spot if that's
+  // already occupied, same as it does for any other placement conflict.
+  crAddWidgetWithHtml({w, h, x:srcX+w, y:srcY, id:newId}, crVisualWidgetHtml(newId));
+  const titleEl=document.getElementById('cr-visual-title-'+newId);
+  if(titleEl) titleEl.textContent=(_crVisuals[newId].measureLabel||'')+(_crVisuals[newId].rowsLabel?' by '+_crVisuals[newId].rowsLabel:'');
+  crRenderVisual(newId);
+  crSelectVisual(newId);
+  if(status){ status.textContent='✓ Duplicated at the same size ('+w+'×'+h+').'; status.style.color='var(--green)'; }
+}
+// Populates the "Match Size" dropdown with every OTHER visual currently on
+// the canvas, so its size (grid w×h) can be copied onto the one selected.
+function renderCrMatchSizeOptions(){
+  const sel=document.getElementById('cr-match-size-target');
+  if(!sel) return;
+  const others=Object.keys(_crVisuals).filter(id=>id!==_crSelectedVisualId);
+  if(!others.length){ sel.innerHTML='<option value="">No other visuals yet</option>'; sel.disabled=true; return; }
+  sel.disabled=false;
+  sel.innerHTML=others.map(id=>{
+    const v=_crVisuals[id];
+    const label=(v.measureLabel||'Untitled visual')+(v.rowsLabel?' by '+v.rowsLabel:'');
+    return `<option value="${esc(id)}">${esc(label)}</option>`;
+  }).join('');
+}
+function crMatchSizeToSelected(){
+  const id=_crSelectedVisualId;
+  const status=document.getElementById('cr-result-status');
+  const targetId=document.getElementById('cr-match-size-target').value;
+  if(!id){ status.textContent='⚠ Select a visual first.'; status.style.color='#c0392b'; return; }
+  if(!targetId){ status.textContent='⚠ There\u2019s no other visual on the canvas yet to match size from.'; status.style.color='#c0392b'; return; }
+  const targetEl=document.querySelector(`#cr-gridstack [gs-id="${targetId}"]`);
+  const curEl=document.querySelector(`#cr-gridstack [gs-id="${id}"]`);
+  if(!targetEl || !curEl) return;
+  const w=parseInt(targetEl.getAttribute('gs-w')||'4',10);
+  const h=parseInt(targetEl.getAttribute('gs-h')||'4',10);
+  _crGrid.update(curEl, {w, h});
+  crRenderVisual(id);  // Chart.js needs a redraw to fit the new box
+  status.textContent='✓ Matched size ('+w+'×'+h+').'; status.style.color='var(--green)';
+}
 function crRenderVisual(id){
   const v=_crVisuals[id];
   if(!v || !v.measure) return;
   if(crChartTypeNeedsRows(v.chart_type) && !v.rows) return;
-  const dateFrom=document.getElementById('cr-date-from').value;
-  const dateTo=document.getElementById('cr-date-to').value;
-  const callers=Array.from(document.getElementById('cr-callers').selectedOptions).map(o=>o.value);
   const emptyEl=document.getElementById('cr-visual-empty-'+id);
   if(emptyEl) emptyEl.style.display='none';
   const filters=crCombinedFilters(v);
   return fetch('/api/custom_report/run',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({measure:v.measure, rows:v.rows||'', columns:v.columns||null, date_from:dateFrom, date_to:dateTo, callers, filters})})
+    body:JSON.stringify({measure:v.measure, rows:v.rows||'', columns:v.columns||null, date_from:'', date_to:'', callers:[], filters})})
     .then(r=>r.json()).then(d=>{
       if(!d.ok) return;
       renderCrResult(d, v.chart_type, 'cr-visual-chart-'+id, 'cr-visual-table-'+id, true, v.format, 'cr-visual-card-'+id);
@@ -3112,9 +3189,6 @@ function saveCustomReportCanvas(){
   }).filter(v=>v.measure && (v.rows || !crChartTypeNeedsRows(v.chart_type)));  // only persist visuals that are actually configured
   if(!visuals.length){ alert('Configure at least one visual (drag a measure + field, then "Apply to This Visual") before saving.'); return; }
   const config={
-    date_from:document.getElementById('cr-date-from').value,
-    date_to:document.getElementById('cr-date-to').value,
-    callers:Array.from(document.getElementById('cr-callers').selectedOptions).map(o=>o.value),
     filters:_crReportFilters,
     visuals,
   };
@@ -3157,13 +3231,20 @@ function crEditTileByIdx(el){
   crLoadReportIntoCanvas(t.config);
 }
 function crLoadReportIntoCanvas(cfg){
-  if(cfg.date_from) document.getElementById('cr-date-from').value=cfg.date_from;
-  if(cfg.date_to) document.getElementById('cr-date-to').value=cfg.date_to;
-  const sel=document.getElementById('cr-callers');
-  if(sel && cfg.callers) Array.from(sel.options).forEach(o=>{ o.selected=cfg.callers.includes(o.value); });
   _crReportFilters=(cfg.filters||[]).map(f=> f.field==='date_range'
     ? {field:f.field, fieldLabel:f.fieldLabel, from:f.from, to:f.to}
     : {field:f.field, fieldLabel:f.fieldLabel, values:(f.values||[]).slice()});
+  // Backward compatibility: reports saved before the top-level date/caller
+  // controls were removed (in favour of Report Filters) had their range
+  // stored as cfg.date_from/date_to/callers instead. Migrate those into an
+  // equivalent Report Filter the first time such a report is opened, rather
+  // than silently dropping the narrowing it used to depend on.
+  if(cfg.date_from && cfg.date_to && !_crReportFilters.some(f=>f.field==='date_range')){
+    _crReportFilters.push({field:'date_range', fieldLabel:'Date Range', from:cfg.date_from, to:cfg.date_to});
+  }
+  if(Array.isArray(cfg.callers) && cfg.callers.length && !_crReportFilters.some(f=>f.field==='caller')){
+    _crReportFilters.push({field:'caller', fieldLabel:'Caller', values:cfg.callers.slice()});
+  }
   renderCrReportFiltersList();
   const rfField=document.getElementById('cr-rf-field'); if(rfField) rfField.value='';
   crReportFilterFieldChanged();
@@ -3960,6 +4041,15 @@ const APP_VERSION = "1.82";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.85", date:"2026-07", title:"Custom Report: removed the redundant top date/caller controls, Duplicate Visual, Match Size, easier resizing",
+    changes:[
+      "Removed the top-level From/To/Caller(s) row from the builder \u2014 it duplicated what the new Report Filters (Date Range + Caller, added in v1.84) already cover, and having both was confusing. With no date range set anywhere, a report now simply uses all available data by default; add a Date Range filter (report-level or visual-level) to narrow it.",
+      "Reports saved before this change, which relied on that old top-level range, aren't silently broken \u2014 opening one the first time automatically converts its saved date range/callers into an equivalent Report Filter.",
+      "New \"\u29c9 Duplicate Visual\" button \u2014 copies the selected visual (measure, rows/columns, chart type, formatting, filters) into a new one at the exact same size, placed right next to it. The reliable way to get two visuals the same size, rather than eyeballing a manual resize.",
+      "New \"\u21d4 Match Size\" control \u2014 pick any other visual already on the canvas and copy its exact size onto the one you're editing, in one click.",
+      "Resizing now works from all 8 edges/corners of a visual, not just the bottom-right corner \u2014 addresses the \"strict positions\" feel when only one corner was draggable. A small \"W \u00d7 H\" badge now follows a visual while you're resizing it, so two visuals can be matched to the same size by eye if you'd rather do it freehand.",
+      "Note on full PowerPoint-style red alignment guide lines: deliberately not built this round. The canvas is grid-based (GridStack), so every visual already snaps to whole grid cells rather than free pixel positions \u2014 there's no in-between position for a live snap-line to guide toward the way there is in PowerPoint's free-form canvas. Changing the grid to finer units to enable that would also rescale and distort every already-saved report's layout the next time it's opened, which felt like the wrong tradeoff to make silently. Duplicate Visual and Match Size solve the actual goal (matching sizes reliably) without that risk \u2014 flagged here in case a true free-form drag-guide canvas is still wanted as a separate, larger piece of work.",
+    ]},
   { v:"1.84", date:"2026-07", title:"Custom Report: Report-level filters, a Date Range filter type, and Refresh All Visuals",
     changes:[
       "New Report Filters, set once at the top of the builder (next to the date/caller range) and applied to every visual on the canvas automatically — a specific visual can still set its own filter on the same field, which wins for that visual only, rather than the two conditions stacking together.",

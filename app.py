@@ -1803,8 +1803,15 @@ def custom_report_run():
         return jsonify({"ok": False, "error": f"Unknown field '{rows_dim}'"}), 400
     if cols_dim is not None and cols_dim not in REPORT_DIMENSIONS:
         return jsonify({"ok": False, "error": f"Unknown field '{cols_dim}'"}), 400
+    # The report-wide date range picker was removed from the builder — date
+    # narrowing now happens exclusively through the "Date Range" filter
+    # (report-level or visual-level), which is optional. When neither the
+    # caller nor any filter supplies a date range, default to a wide static
+    # window covering effectively all app history rather than requiring one
+    # up front — this is a fixed constant, not a DB query, so it costs
+    # nothing extra per request.
     if not date_from or not date_to:
-        return jsonify({"ok": False, "error": "Missing date range"}), 400
+        date_from, date_to = "2000-01-01", (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d")
 
     filters_raw = data.get("filters") or []
     filters = []
