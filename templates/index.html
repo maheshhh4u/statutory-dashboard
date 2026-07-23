@@ -1258,6 +1258,7 @@ select:focus{outline:none;border-color:var(--green)}
               </select>
               <select id="cr-filter-values" multiple size="5" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px;min-width:170px"></select>
               <button type="button" class="btn btn-outline btn-sm" onclick="crAddFilter()">+ Add Filter</button>
+              <span style="font-size:10.5px;color:var(--t3);flex-basis:100%">Tip: "+ Add Filter" lets you set up more than one filter before applying — but picking a field/value and going straight to "▶ Apply to This Visual" works too.</span>
             </div>
 
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -2715,6 +2716,24 @@ function renderCrFiltersList(){
     </div>`
   ).join('');
 }
+// If a field and one or more values are picked in the filter builder but
+// "+ Add Filter" was never clicked, that selection would otherwise be
+// silently dropped the moment "Apply to This Visual" is pressed — it looks
+// applied (a value is highlighted) but isn't actually in _crCanvasFilters
+// yet. Apply now folds in whatever's currently selected first, so picking a
+// field/value and going straight to Apply behaves the same as adding it
+// explicitly.
+function crCommitPendingFilterSelection(){
+  const field=document.getElementById('cr-filter-field').value;
+  if(!field) return;
+  const meta=crFilterFieldMeta(field);
+  const valSel=document.getElementById('cr-filter-values');
+  const values=Array.from(valSel.selectedOptions).map(o=>o.value);
+  if(!meta || !values.length) return;
+  _crCanvasFilters=_crCanvasFilters.filter(f=>f.field!==field);
+  _crCanvasFilters.push({field, fieldLabel:meta.label, values});
+  renderCrFiltersList();
+}
 function crApplyToSelectedVisual(){
   const id=_crSelectedVisualId;
   const status=document.getElementById('cr-result-status');
@@ -2723,6 +2742,7 @@ function crApplyToSelectedVisual(){
   if(!id){ status.textContent='⚠ Add or select a visual first.'; status.style.color='#c0392b'; return; }
   if(!_crCanvas.values){ status.textContent='⚠ Drag a measure into Values first.'; status.style.color='#c0392b'; return; }
   if(needsRows && !_crCanvas.rows){ status.textContent='⚠ Drag a field into Rows first.'; status.style.color='#c0392b'; return; }
+  crCommitPendingFilterSelection();
   _crVisuals[id]={
     measure:_crCanvas.values.value, measureLabel:_crCanvas.values.label,
     rows: needsRows && _crCanvas.rows ? _crCanvas.rows.value : '',
@@ -3781,6 +3801,7 @@ const CHANGELOG = [
       "Built as a reusable filter predicate on the backend specifically so slicer tiles (the next piece) can share the same matching logic rather than duplicating it.",
       "Fixed a bug reported right after release: the Caller filter's value list came up empty while every other field worked. Cause \u2014 the team roster loads via its own separate background fetch, and Caller's filter options were cached from it at a single moment that could fire before that fetch had finished, freezing Caller empty for the rest of the session. Caller options are now looked up live each time the field is picked, instead of cached once.",
       "Fixed the filter value box only showing ~2 items before needing to scroll: a fixed pixel height was overriding the number of visible rows regardless of how many there were. It now sizes itself to the list (4\u20138 rows visible) and only scrolls beyond that.",
+      "Fixed a bug reported right after release: picking a field and value(s) in the filter builder and going straight to \u201C\u25b6 Apply to This Visual\u201D \u2014 without a separate click on \u201C+ Add Filter\u201D first \u2014 silently applied with no filter at all, even though a value looked selected. Apply now folds in whatever's currently selected in the filter builder automatically, so both orders of doing it work the same way. Added a short on-screen tip explaining both work.",
       "Still not built: interactive slicer tiles (dropdown/list/timeline widgets that live-filter every visual on the canvas at once by being clicked, Power BI-style). These filters are set once per visual in the config panel, not click-to-filter live widgets.",
     ]},
   { v:"1.82", date:"2026-07", title:"Custom Report: Card tiles, with fields that adapt to the chart type",
