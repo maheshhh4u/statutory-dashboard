@@ -2519,8 +2519,9 @@ function crInitGridIfNeeded(){
     if(v){ if(v.isSlicer) crRenderSlicerVisual(id); else crRenderVisual(id); }
     crHideSizeBadge();
   });
-  _crGrid.on('resize', function(event, el){ crShowSizeBadge(el); });
+  _crGrid.on('resize', function(event, el){ crShowSizeBadge(el); crCloseSlicerDropdown(); });
   _crGrid.on('dragstop', function(event, el){ crHideSizeBadge(); });
+  _crGrid.on('drag', function(event, el){ crCloseSlicerDropdown(); });
 }
 // A small floating "W × H" (grid columns × rows) readout that follows a
 // visual while it's being resized, so two visuals can be matched to the
@@ -3028,11 +3029,12 @@ function crRenderSlicerVisual(id){
   const opts=(meta&&meta.options)||[];
   const selected=v.slicerSelected||[];
   if(v.chart_type==='slicer_dropdown'){
+    const summary=!selected.length ? 'All' : (selected.length<=2 ? selected.join(', ') : selected.length+' selected');
     wrap.innerHTML=`<div style="font-size:11px;font-weight:700;color:#3d2d5a;margin-bottom:6px">🔽 ${esc(label)}</div>
-      <select id="cr-slicer-val-${id}" ${v.slicerMulti?'multiple':''} size="${v.slicerMulti?Math.min(6,Math.max(3,opts.length||3)):1}" onchange="crSlicerValueChanged('${id}')" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
-        ${!v.slicerMulti?'<option value="">(all — nothing selected)</option>':''}
-        ${opts.map(o=>`<option value="${esc(o)}" ${selected.includes(o)?'selected':''}>${esc(o)}</option>`).join('')}
-      </select>
+      <button type="button" id="cr-slicer-dd-btn-${id}" onclick="crToggleSlicerDropdown('${id}')"
+        style="width:100%;text-align:left;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;font-size:11.5px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:6px">
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(summary)}</span><span style="flex-shrink:0;color:var(--t3)">▾</span>
+      </button>
       <button type="button" onclick="crClearSlicer('${id}')" style="margin-top:6px;font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">Clear</button>`;
   } else {
     // slicer_list — a row of toggle chips, Power BI "list slicer" style
@@ -3047,17 +3049,116 @@ function crRenderSlicerVisual(id){
       <button type="button" onclick="crClearSlicer('${id}')" style="margin-top:6px;font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">Clear</button>`;
   }
 }
-function crSlicerValueChanged(id){
+// ── Dropdown slicer's popup panel ─────────────────────────────────────────
+// A native <select multiple> is a listbox (always shows every row at once),
+// not a dropdown — that was the actual bug. This is a real closed-by-default
+// control: a button showing a short summary, opening a checkbox (or radio,
+// for single-select) panel on click. The panel is appended to <body> with
+// position:fixed and positioned from the button's own bounding rect, rather
+// than nested inside the widget, specifically so it can't be clipped by the
+// widget's own overflow:auto — the same technique already used for the
+// resize-size badge above.
+let _crOpenSlicerDropdownId=null;
+function crToggleSlicerDropdown(id){
+  if(_crOpenSlicerDropdownId===id){ crCloseSlicerDropdown(); return; }
+  _crOpenSlicerDropdownId=id;
+  crRenderSlicerDropdownPanel(id);
+}
+function crCloseSlicerDropdown(){
+  const panel=document.getElementById('cr-slicer-dd-panel');
+  if(panel) panel.style.display='none';
+  _crOpenSlicerDropdownId=null;
+}
+function crRenderSlicerDropdownPanel(id){
+  const v=_crVisuals[id];
+  const btn=document.getElementById('cr-slicer-dd-btn-'+id);
+  if(!v || !btn) return;
+  let panel=document.getElementById('cr-slicer-dd-panel');
+  if(!panel){
+    panel=document.createElement('div');
+    panel.id='cr-slicer-dd-panel';
+    panel.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);max-height:240px;overflow:auto;padding:6px';
+    document.body.appendChild(panel);
+  }
+  const rect=btn.getBoundingClientRect();
+  panel.style.left=(rect.left+window.scrollX)+'px';
+  panel.style.top=(rect.bottom+window.scrollY+4)+'px';
+  panel.style.minWidth=Math.max(rect.width,180)+'px';
+  const meta=crFilterFieldMeta(v.slicerField);
+  const opts=(meta&&meta.options)||[];
+  const selected=v.slicerSelected||[];
+  const inputType=v.slicerMulti?'checkbox':'radio';
+  panel.innerHTML =
+    (v.slicerMulti ? `<div style="display:flex;gap:6px;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--border)">
+      <button type="button" onclick="crSlicerDropdownSelectAll('${id}')" style="font-size:10.5px;padding:2px 6px;border:1px solid var(--border);border-radius:3px;background:#fff;cursor:pointer">Select all</button>
+      <button type="button" onclick="crSlicerDropdownClearAll('${id}')" style="font-size:10.5px;padding:2px 6px;border:1px solid var(--border);border-radius:3px;background:#fff;cursor:pointer">Clear</button>
+    </div>` : '')
+    + (opts.length ? opts.map(o=>{
+        const checked=selected.includes(o);
+        // data-* attribute, not JSON.stringify() inside the attribute string —
+        // the latter breaks the moment a value contains a quote character
+        // (a bug class this project has hit and fixed twice before).
+        return `<label style="display:flex;align-items:center;gap:6px;font-size:11.5px;padding:4px;cursor:pointer;border-radius:3px">
+          <input type="${inputType}" name="cr-slicer-dd-${id}" data-val="${esc(o)}" ${checked?'checked':''} onchange="crSlicerDropdownOptionChanged('${id}', this)">
+          <span>${esc(o)}</span>
+        </label>`;
+      }).join('')
+      : '<div style="font-size:11px;color:var(--t3);padding:4px">No values available</div>');
+  panel.style.display='block';
+}
+function crSlicerDropdownOptionChanged(id, inputEl){
   const v=_crVisuals[id];
   if(!v) return;
-  if(v.chart_type==='slicer_timeline'){
-    const from=document.getElementById('cr-slicer-val-'+id+'-from').value;
-    const to=document.getElementById('cr-slicer-val-'+id+'-to').value;
-    v.slicerSelected=(from&&to)?{from,to}:null;
+  const val=inputEl.dataset.val;
+  v.slicerSelected=v.slicerSelected||[];
+  if(v.slicerMulti){
+    if(inputEl.checked){ if(!v.slicerSelected.includes(val)) v.slicerSelected.push(val); }
+    else { const idx=v.slicerSelected.indexOf(val); if(idx>=0) v.slicerSelected.splice(idx,1); }
   } else {
-    const sel=document.getElementById('cr-slicer-val-'+id);
-    v.slicerSelected=Array.from(sel.selectedOptions).map(o=>o.value).filter(Boolean);
+    v.slicerSelected=inputEl.checked?[val]:[];
   }
+  crRenderSlicerVisual(id);  // repaint the closed button's summary text
+  crRefreshDependentsOfSlicer(id);
+  if(v.slicerMulti) crRenderSlicerDropdownPanel(id);  // keep panel open, refresh checkbox order/state
+  else crCloseSlicerDropdown();  // single-select closes immediately, like a native dropdown
+}
+function crSlicerDropdownSelectAll(id){
+  const v=_crVisuals[id];
+  if(!v) return;
+  const meta=crFilterFieldMeta(v.slicerField);
+  v.slicerSelected=((meta&&meta.options)||[]).slice();
+  crRenderSlicerVisual(id);
+  crRefreshDependentsOfSlicer(id);
+  crRenderSlicerDropdownPanel(id);
+}
+function crSlicerDropdownClearAll(id){
+  const v=_crVisuals[id];
+  if(!v) return;
+  v.slicerSelected=[];
+  crRenderSlicerVisual(id);
+  crRefreshDependentsOfSlicer(id);
+  crRenderSlicerDropdownPanel(id);
+}
+// Close the panel on any click outside it (and outside its own trigger
+// button), and on Escape — a dropdown that never closes isn't a dropdown.
+document.addEventListener('click', function(e){
+  if(!_crOpenSlicerDropdownId) return;
+  const panel=document.getElementById('cr-slicer-dd-panel');
+  const btn=document.getElementById('cr-slicer-dd-btn-'+_crOpenSlicerDropdownId);
+  if(panel && (panel.contains(e.target) || (btn && btn.contains(e.target)))) return;
+  crCloseSlicerDropdown();
+});
+document.addEventListener('keydown', function(e){
+  if(e.key==='Escape' && _crOpenSlicerDropdownId) crCloseSlicerDropdown();
+});
+function crSlicerValueChanged(id){
+  // Only used by the Timeline slicer's two date inputs — Dropdown uses
+  // crSlicerDropdownOptionChanged() and List uses crToggleSlicerListValue().
+  const v=_crVisuals[id];
+  if(!v || v.chart_type!=='slicer_timeline') return;
+  const from=document.getElementById('cr-slicer-val-'+id+'-from').value;
+  const to=document.getElementById('cr-slicer-val-'+id+'-to').value;
+  v.slicerSelected=(from&&to)?{from,to}:null;
   crRefreshDependentsOfSlicer(id);
 }
 function crToggleSlicerListValue(id, btnEl){
@@ -4305,6 +4406,13 @@ const APP_VERSION = "1.82";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.88", date:"2026-07", title:"Fixed: \"Slicer - Dropdown\" wasn't actually a dropdown",
+    changes:[
+      "Found the cause: it was built on a native HTML multi-select, which is a listbox that always shows every option at once \u2014 that's a different control from a dropdown, not a broken one, but not what was asked for.",
+      "Rebuilt as an actual closed-by-default dropdown: a button showing a short summary (\"All\", a couple of picked values, or \"N selected\") that opens a checklist panel on click \u2014 a checkbox in front of each item for multi-select slicers, a radio button for single-select ones (closes automatically on pick, like a native dropdown). \"Select all\"/\"Clear\" shortcuts sit at the top of the panel for multi-select.",
+      "The panel closes on an outside click or Escape, and can't get clipped by the visual's own scrollable box \u2014 it's positioned independently of the tile it belongs to.",
+      "List and Timeline slicers are unchanged.",
+    ]},
   { v:"1.87", date:"2026-07", title:"Custom Report: Slicers — interactive filter tiles, Power BI/Excel-style",
     changes:[
       "Three new tile types, added the same way as any chart \u2014 click \"+ Add Visual\", then pick one of the three new icons under Chart Type instead of a chart: Dropdown (a select list, single- or multi-choice), List (a row of tap-to-toggle chips \u2014 the \"static column/row-based filter\" ask), and Timeline (a From/To date range).",
