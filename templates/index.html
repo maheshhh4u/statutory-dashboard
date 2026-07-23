@@ -1176,11 +1176,15 @@ select:focus{outline:none;border-color:var(--green)}
     <div id="cr-view-builder" style="display:none">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
         <button class="btn btn-outline btn-sm" onclick="crBackToGallery()">← Back to Reports</button>
+        <div id="cr-builder-title-view" style="display:none;font-size:15px;font-weight:700;color:#1e3a5f"></div>
         <input id="cr-report-name" placeholder="Name this report…" maxlength="80" style="padding:7px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px;font-weight:700;width:260px">
-        <button class="btn btn-green btn-sm" onclick="saveCustomReportCanvas()">💾 Save Report</button>
+        <div style="display:flex;gap:8px">
+          <button id="cr-edit-toggle-btn" type="button" class="btn btn-outline btn-sm" onclick="crEnterEditMode()" style="display:none" title="Edit this report">✏️ Edit</button>
+          <button id="cr-save-btn" class="btn btn-green btn-sm" onclick="saveCustomReportCanvas()">💾 Save Report</button>
+        </div>
       </div>
 
-      <div style="display:flex;flex-direction:column;gap:10px;background:#f7f5fb;border:1px solid #e2dcf0;border-radius:8px;padding:10px 16px;margin-bottom:14px">
+      <div id="cr-report-filters-panel" style="display:flex;flex-direction:column;gap:10px;background:#f7f5fb;border:1px solid #e2dcf0;border-radius:8px;padding:10px 16px;margin-bottom:14px">
         <div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
             <div style="font-size:11px;font-weight:700;color:#3d2d5a">Report Filters <span style="font-weight:400;color:var(--t3)">— applies to every visual, unless a visual sets its own filter on the same field. No date range set here means every visual uses all available data, unless it (or a Date Range filter) narrows it.</span></div>
@@ -1203,9 +1207,9 @@ select:focus{outline:none;border-color:var(--green)}
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:200px 1fr;gap:16px;align-items:start">
+      <div id="cr-builder-grid" style="display:grid;grid-template-columns:200px 1fr;gap:16px;align-items:start">
         <!-- LEFT: persistent Fields sidebar -->
-        <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px;position:sticky;top:12px">
+        <div id="cr-fields-sidebar" style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px;position:sticky;top:12px">
           <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">📏 Measures</div>
           <div id="cr-palette-measures" style="margin-bottom:14px"></div>
           <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">🔀 Fields</div>
@@ -1215,7 +1219,7 @@ select:focus{outline:none;border-color:var(--green)}
 
         <!-- RIGHT: toolbar (add visual + selected-visual config) + canvas -->
         <div>
-          <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+          <div id="cr-add-visual-toolbar" style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
             <button class="btn btn-green btn-sm" onclick="crAddVisual()">➕ Add Visual</button>
             <span id="cr-selected-visual-label" style="font-size:12px;color:var(--t3)">No visual selected — add one, or click an existing visual below</span>
           </div>
@@ -2442,6 +2446,7 @@ let _crVisualSeq=0;
 let _crFilterFieldsMeta=[];   // [{value,label,options:[...]}] — backend-supplied fields only; Caller/Date Range are resolved specially, see crFilterFieldMeta()
 let _crCanvasFilters=[];      // working filter list [{field,fieldLabel,values:[...]}] for whichever visual is selected — a date_range entry has {from,to} instead of values
 let _crReportFilters=[];      // committed report-level filters, same shape, applied to every visual unless that visual sets its own filter on the same field
+let _crBuilderMode='edit';    // 'view' (opening a saved report — canvas only) or 'edit' (new report, or after clicking ✏️ Edit)
 
 function initCustomReport(){
   // Land on the gallery of saved reports, not the builder — matches how
@@ -2523,6 +2528,31 @@ function crHideSizeBadge(){
   const badge=document.getElementById('cr-size-badge');
   if(badge) badge.style.display='none';
 }
+// Opening a saved report lands on a clean, canvas-only view (crEditTileByIdx
+// below sets view mode); building a brand new one goes straight to edit,
+// since there's nothing to "view" yet.
+function crSetBuilderMode(mode){
+  _crBuilderMode=mode;
+  const isEdit=mode==='edit';
+  const nameEl=document.getElementById('cr-report-name');
+  const titleEl=document.getElementById('cr-builder-title-view');
+  if(nameEl) nameEl.style.display=isEdit?'':'none';
+  if(titleEl){
+    titleEl.style.display=isEdit?'none':'block';
+    titleEl.textContent=(nameEl&&nameEl.value)||'';
+  }
+  const editBtn=document.getElementById('cr-edit-toggle-btn'); if(editBtn) editBtn.style.display=isEdit?'none':'';
+  const saveBtn=document.getElementById('cr-save-btn'); if(saveBtn) saveBtn.style.display=isEdit?'':'none';
+  const filtersPanel=document.getElementById('cr-report-filters-panel'); if(filtersPanel) filtersPanel.style.display=isEdit?'flex':'none';
+  const sidebar=document.getElementById('cr-fields-sidebar'); if(sidebar) sidebar.style.display=isEdit?'':'none';
+  const toolbar=document.getElementById('cr-add-visual-toolbar'); if(toolbar) toolbar.style.display=isEdit?'flex':'none';
+  const gridWrap=document.getElementById('cr-builder-grid'); if(gridWrap) gridWrap.style.gridTemplateColumns=isEdit?'200px 1fr':'1fr';
+  if(_crGrid) _crGrid.setStatic(!isEdit);  // view mode: canvas is display-only, no drag/resize
+  if(!isEdit) crDeselectVisual();  // closes the visual config panel too, if it was open
+}
+function crEnterEditMode(){
+  crSetBuilderMode('edit');
+}
 function crOpenBuilder(){
   const gal=document.getElementById('cr-view-gallery'), build=document.getElementById('cr-view-builder');
   if(gal) gal.style.display='none';
@@ -2537,6 +2567,7 @@ function crOpenBuilder(){
   crReportFilterFieldChanged();
   _crGrid.removeAll();
   crDeselectVisual();
+  crSetBuilderMode('edit');
 }
 function crBackToGallery(){
   const gal=document.getElementById('cr-view-gallery'), build=document.getElementById('cr-view-builder');
@@ -2653,6 +2684,10 @@ function crAddVisual(){
 function crSelectVisual(id){
   const v=_crVisuals[id];
   if(!v) return;
+  // In view mode (an opened saved report, before "✏️ Edit" is clicked) the
+  // canvas is display-only — clicking a visual shouldn't pop the config
+  // panel open underneath a hidden sidebar/toolbar.
+  if(_crBuilderMode!=='edit') return;
   _crSelectedVisualId=id;
   _crCanvas.values = v.measure ? {value:v.measure, label:v.measureLabel} : null;
   _crCanvas.rows = v.rows ? {value:v.rows, label:v.rowsLabel} : null;
@@ -3229,6 +3264,7 @@ function crEditTileByIdx(el){
   crOpenBuilder();
   document.getElementById('cr-report-name').value=t.name;
   crLoadReportIntoCanvas(t.config);
+  crSetBuilderMode('view');
 }
 function crLoadReportIntoCanvas(cfg){
   _crReportFilters=(cfg.filters||[]).map(f=> f.field==='date_range'
@@ -4041,6 +4077,12 @@ const APP_VERSION = "1.82";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.86", date:"2026-07", title:"Custom Report: opening a saved report now shows a clean, canvas-only view",
+    changes:[
+      "Opening a saved report from the gallery (\"📂 Open\") now lands on a display-only view of the canvas \u2014 no Fields sidebar, no Add Visual toolbar, no Report Filters editing controls, and the visuals themselves can't be dragged, resized, or clicked into their edit panel.",
+      "A small \"\u270f\ufe0f Edit\" button (next to the report name) switches into the full editing view \u2014 same builder as before, sidebar/toolbar/filters/drag-resize all back \u2014 to make any changes.",
+      "Creating a brand new report (\"+ Create New Report\") still goes straight into the full editing view, since there's nothing to look at yet.",
+    ]},
   { v:"1.85", date:"2026-07", title:"Custom Report: removed the redundant top date/caller controls, Duplicate Visual, Match Size, easier resizing",
     changes:[
       "Removed the top-level From/To/Caller(s) row from the builder \u2014 it duplicated what the new Report Filters (Date Range + Caller, added in v1.84) already cover, and having both was confusing. With no date range set anywhere, a report now simply uses all available data by default; add a Date Range filter (report-level or visual-level) to narrow it.",
