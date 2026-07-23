@@ -1180,13 +1180,33 @@ select:focus{outline:none;border-color:var(--green)}
         <button class="btn btn-green btn-sm" onclick="saveCustomReportCanvas()">💾 Save Report</button>
       </div>
 
-      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:#f7f5fb;border:1px solid #e2dcf0;border-radius:8px;padding:10px 16px;margin-bottom:14px">
-        <label style="font-size:12px;font-weight:700;color:#3d2d5a">From <input type="date" id="cr-date-from" style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px"></label>
-        <label style="font-size:12px;font-weight:700;color:#3d2d5a">To <input type="date" id="cr-date-to" style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px"></label>
-        <label style="font-size:12px;font-weight:700;color:#3d2d5a">Caller(s)
-          <select id="cr-callers" multiple style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px;min-width:140px;height:34px"></select>
-        </label>
-        <span style="font-size:11px;color:var(--t3)">(none selected = everyone — applies to every visual below)</span>
+      <div style="display:flex;flex-direction:column;gap:10px;background:#f7f5fb;border:1px solid #e2dcf0;border-radius:8px;padding:10px 16px;margin-bottom:14px">
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <label style="font-size:12px;font-weight:700;color:#3d2d5a">From <input type="date" id="cr-date-from" style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px"></label>
+          <label style="font-size:12px;font-weight:700;color:#3d2d5a">To <input type="date" id="cr-date-to" style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px"></label>
+          <label style="font-size:12px;font-weight:700;color:#3d2d5a">Caller(s)
+            <select id="cr-callers" multiple style="margin-left:4px;padding:5px 7px;border:1px solid var(--border);border-radius:4px;min-width:140px;height:34px"></select>
+          </label>
+          <span style="font-size:11px;color:var(--t3)">(none selected = everyone — applies to every visual below)</span>
+          <button type="button" class="btn btn-outline btn-sm" onclick="crRefreshAllVisuals()" style="margin-left:auto">↺ Refresh All Visuals</button>
+        </div>
+        <div style="border-top:1px dashed #d8c9ee;padding-top:8px">
+          <div style="font-size:11px;font-weight:700;color:#3d2d5a;margin-bottom:4px">Report Filters <span style="font-weight:400;color:var(--t3)">— applies to every visual, unless a visual sets its own filter on the same field</span></div>
+          <div id="cr-report-filters-list" style="display:flex;flex-direction:column;gap:5px;margin-bottom:6px"></div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <select id="cr-rf-field" onchange="crReportFilterFieldChanged()" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+              <option value="">Filter by field…</option>
+            </select>
+            <span id="cr-rf-values-wrap"><select id="cr-rf-values" multiple size="5" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px;min-width:170px"></select></span>
+            <span id="cr-rf-daterange-wrap" style="display:none;gap:6px;align-items:center">
+              <label style="font-size:11px">From <input type="date" id="cr-rf-date-from" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></label>
+              <label style="font-size:11px">To <input type="date" id="cr-rf-date-to" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></label>
+            </span>
+            <button type="button" class="btn btn-outline btn-sm" onclick="crAddReportFilter()">+ Add Filter</button>
+            <span style="font-size:10.5px;color:var(--t3);flex-basis:100%">Report Filters apply as soon as you click "+ Add Filter" or remove one — click "↺ Refresh All Visuals" above to re-run every visual on the canvas against the change.</span>
+            <div id="cr-rf-status" style="font-size:11.5px;color:var(--t3);flex-basis:100%"></div>
+          </div>
+        </div>
       </div>
 
       <div style="display:grid;grid-template-columns:200px 1fr;gap:16px;align-items:start">
@@ -1250,15 +1270,19 @@ select:focus{outline:none;border-color:var(--green)}
               </label>
             </div>
 
-            <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Filters <span style="font-weight:400;text-transform:none;color:var(--t3);letter-spacing:0">— this visual only, on top of the date/caller range above</span></div>
+            <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Filters <span style="font-weight:400;text-transform:none;color:var(--t3);letter-spacing:0">— this visual only, on top of the date/caller range and Report Filters above</span></div>
             <div id="cr-filters-list" style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px"></div>
             <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
               <select id="cr-filter-field" onchange="crFilterFieldChanged()" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
                 <option value="">Filter by field…</option>
               </select>
-              <select id="cr-filter-values" multiple size="5" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px;min-width:170px"></select>
+              <span id="cr-filter-values-wrap"><select id="cr-filter-values" multiple size="5" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px;min-width:170px"></select></span>
+              <span id="cr-filter-daterange-wrap" style="display:none;gap:6px;align-items:center">
+                <label style="font-size:11px">From <input type="date" id="cr-filter-date-from" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></label>
+                <label style="font-size:11px">To <input type="date" id="cr-filter-date-to" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></label>
+              </span>
               <button type="button" class="btn btn-outline btn-sm" onclick="crAddFilter()">+ Add Filter</button>
-              <span style="font-size:10.5px;color:var(--t3);flex-basis:100%">Pick a field, tick value(s), then click "+ Add Filter" — you'll see it appear as a tag above. "▶ Apply to This Visual" will warn you if you forget.</span>
+              <span style="font-size:10.5px;color:var(--t3);flex-basis:100%">Pick a field, tick value(s) (or set a date range), then click "+ Add Filter" — you'll see it appear as a tag above. "▶ Apply to This Visual" will warn you if you forget.</span>
             </div>
 
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -2416,8 +2440,9 @@ let _crGrid=null;             // the GridStack instance for the canvas
 let _crVisuals={};            // {id: {measure,measureLabel,rows,rowsLabel,columns,columnsLabel,chart_type,filters}}
 let _crSelectedVisualId=null;
 let _crVisualSeq=0;
-let _crFilterFieldsMeta=[];   // [{value,label,options:[...]}] — backend-supplied fields only; Caller is resolved live from userList, see crFilterFieldMeta()
-let _crCanvasFilters=[];      // working filter list [{field,fieldLabel,values:[...]}] for whichever visual is selected
+let _crFilterFieldsMeta=[];   // [{value,label,options:[...]}] — backend-supplied fields only; Caller/Date Range are resolved specially, see crFilterFieldMeta()
+let _crCanvasFilters=[];      // working filter list [{field,fieldLabel,values:[...]}] for whichever visual is selected — a date_range entry has {from,to} instead of values
+let _crReportFilters=[];      // committed report-level filters, same shape, applied to every visual unless that visual sets its own filter on the same field
 
 function initCustomReport(){
   // Land on the gallery of saved reports, not the builder — matches how
@@ -2454,11 +2479,14 @@ function initCustomReport(){
       _crFieldsLoaded=true;
       renderCrPalette();
       renderCrFilterFieldOptions();
+      renderCrReportFilterFieldOptions();
     }).catch(()=>{});
   } else {
     renderCrPalette();
     renderCrFilterFieldOptions();
+    renderCrReportFilterFieldOptions();
   }
+  renderCrReportFiltersList();
   loadCustomReportTiles();
 }
 function crInitGridIfNeeded(){
@@ -2479,6 +2507,10 @@ function crOpenBuilder(){
   document.getElementById('cr-report-name').value='';
   _crVisuals={};
   _crVisualSeq=0;
+  _crReportFilters=[];
+  renderCrReportFiltersList();
+  const rfField=document.getElementById('cr-rf-field'); if(rfField) rfField.value='';
+  crReportFilterFieldChanged();
   _crGrid.removeAll();
   crDeselectVisual();
 }
@@ -2609,10 +2641,15 @@ function crSelectVisual(id){
   document.getElementById('cr-fmt-legend').checked=fmt.legend!==false;
   document.getElementById('cr-fmt-legend-pos').value=fmt.legendPosition||'top';
   document.getElementById('cr-fmt-title').value=fmt.title||'';
-  _crCanvasFilters=(v.filters||[]).map(f=>({field:f.field, fieldLabel:f.fieldLabel, values:(f.values||[]).slice()}));
+  _crCanvasFilters=(v.filters||[]).map(f=> f.field==='date_range'
+    ? {field:f.field, fieldLabel:f.fieldLabel, from:f.from, to:f.to}
+    : {field:f.field, fieldLabel:f.fieldLabel, values:(f.values||[]).slice()});
   renderCrFiltersList();
   const ffEl=document.getElementById('cr-filter-field'); if(ffEl) ffEl.value='';
   const fvEl=document.getElementById('cr-filter-values'); if(fvEl) fvEl.innerHTML='';
+  const fdfEl=document.getElementById('cr-filter-date-from'); if(fdfEl) fdfEl.value='';
+  const fdtEl=document.getElementById('cr-filter-date-to'); if(fdtEl) fdtEl.value='';
+  crFilterFieldChanged();
   document.getElementById('cr-visual-config').style.display='block';
   document.getElementById('cr-selected-visual-label').textContent = v.measureLabel
     ? 'Editing: '+v.measureLabel+(v.rowsLabel?' by '+v.rowsLabel:'')
@@ -2662,39 +2699,84 @@ function crSetChartType(value){
 function renderCrFilterFieldOptions(){
   const sel=document.getElementById('cr-filter-field');
   if(!sel) return;
-  const allFields=[{value:'caller', label:'Caller'}].concat(_crFilterFieldsMeta.map(f=>({value:f.value,label:f.label})));
   sel.innerHTML='<option value="">Filter by field…</option>'+
-    allFields.map(f=>`<option value="${esc(f.value)}">${esc(f.label)}</option>`).join('');
+    crFilterFieldChoices().map(f=>`<option value="${esc(f.value)}">${esc(f.label)}</option>`).join('');
 }
-// Caller is resolved against the live userList every time rather than a
-// cached snapshot — userList loads via its own async fetch and isn't
-// guaranteed ready when the field list is first built (see initCustomReport).
+// The same field list is offered at both levels (visual and report). Caller
+// is resolved live against userList rather than cached (see crFilterFieldMeta
+// below); Date Range is a client-side-only field — it isn't a value list, so
+// it isn't backend-supplied like Outcome/Stage/Source List are.
+function crFilterFieldChoices(){
+  return [{value:'caller', label:'Caller'}, {value:'date_range', label:'Date Range'}]
+    .concat(_crFilterFieldsMeta.map(f=>({value:f.value,label:f.label})));
+}
 function crFilterFieldMeta(field){
   if(field==='caller') return {value:'caller', label:'Caller', options:(userList||[]).slice()};
+  if(field==='date_range') return {value:'date_range', label:'Date Range'};
   return _crFilterFieldsMeta.find(f=>f.value===field) || null;
 }
-function crFilterFieldChanged(){
-  const field=document.getElementById('cr-filter-field').value;
-  const valSel=document.getElementById('cr-filter-values');
+// Toggles the values-select vs. the two date inputs depending on which field
+// is picked, for the visual-level filter builder. idPrefix lets the same
+// logic drive the report-level builder too (ids 'cr-rf-*' there).
+function crFilterFieldChangedImpl(idPrefix){
+  const field=document.getElementById(idPrefix+'-field').value;
+  const valuesWrap=document.getElementById(idPrefix+'-values-wrap');
+  const dateWrap=document.getElementById(idPrefix+'-daterange-wrap');
+  if(field==='date_range'){
+    if(valuesWrap) valuesWrap.style.display='none';
+    if(dateWrap) dateWrap.style.display='flex';
+    return;
+  }
+  if(dateWrap) dateWrap.style.display='none';
+  if(valuesWrap) valuesWrap.style.display='';
+  const valSel=document.getElementById(idPrefix+'-values');
   const meta=crFilterFieldMeta(field);
   const opts=(meta && meta.options) || [];
   valSel.innerHTML=opts.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
   valSel.size=Math.min(8, Math.max(4, opts.length||4));
 }
+function crFilterFieldChanged(){ crFilterFieldChangedImpl('cr-filter'); }
+function crReportFilterFieldChanged(){ crFilterFieldChangedImpl('cr-rf'); }
+// Reads whatever's currently picked in a filter builder (values-select or
+// date inputs, whichever is active) and returns a filter entry, or null if
+// nothing usable is selected. idPrefix is 'cr-filter' (visual) or 'cr-rf'
+// (report).
+function crReadFilterBuilder(idPrefix){
+  const field=document.getElementById(idPrefix+'-field').value;
+  if(!field) return null;
+  const meta=crFilterFieldMeta(field);
+  if(!meta) return null;
+  if(field==='date_range'){
+    const from=document.getElementById(idPrefix+'-date-from').value;
+    const to=document.getElementById(idPrefix+'-date-to').value;
+    if(!from || !to) return null;
+    if(from>to) return {error:'"From" is after "To" — check the date range.'};
+    return {field, fieldLabel:meta.label, from, to};
+  }
+  const values=Array.from(document.getElementById(idPrefix+'-values').selectedOptions).map(o=>o.value);
+  if(!values.length) return null;
+  return {field, fieldLabel:meta.label, values};
+}
+function crFilterEntriesEqual(a,b){
+  if(a.field!==b.field) return false;
+  if(a.field==='date_range') return a.from===b.from && a.to===b.to;
+  return a.values.length===b.values.length && a.values.slice().sort().join('\u0001')===b.values.slice().sort().join('\u0001');
+}
+function crFilterChipText(f){
+  if(f.field==='date_range') return `<strong>Date Range</strong> is ${esc(f.from)} to ${esc(f.to)}`;
+  return `<strong>${esc(f.fieldLabel)}</strong> is ${f.values.map(esc).join(' or ')}`;
+}
 function crAddFilter(){
   const status=document.getElementById('cr-result-status');
-  const field=document.getElementById('cr-filter-field').value;
-  const meta=crFilterFieldMeta(field);
-  const valSel=document.getElementById('cr-filter-values');
-  const values=Array.from(valSel.selectedOptions).map(o=>o.value);
-  if(!field || !meta){ status.textContent='⚠ Pick a field to filter by first.'; status.style.color='#c0392b'; return; }
-  if(!values.length){ status.textContent='⚠ Select at least one value for that field.'; status.style.color='#c0392b'; return; }
+  const entry=crReadFilterBuilder('cr-filter');
+  if(!entry){ status.textContent='⚠ Pick a field and a value (or a full date range) first.'; status.style.color='#c0392b'; return; }
+  if(entry.error){ status.textContent='⚠ '+entry.error; status.style.color='#c0392b'; return; }
   // Replace rather than stack a second condition on the same field — a
   // visual filtering "Outcome is X" then "Outcome is Y" almost always means
   // "actually I meant Y", not "match neither" (an AND of two IN-conditions
   // on the same field would exclude every row).
-  _crCanvasFilters=_crCanvasFilters.filter(f=>f.field!==field);
-  _crCanvasFilters.push({field, fieldLabel:meta.label, values});
+  _crCanvasFilters=_crCanvasFilters.filter(f=>f.field!==entry.field);
+  _crCanvasFilters.push(entry);
   renderCrFiltersList();
   status.textContent='';
 }
@@ -2706,15 +2788,81 @@ function renderCrFiltersList(){
   const el=document.getElementById('cr-filters-list');
   if(!el) return;
   if(!_crCanvasFilters.length){
-    el.innerHTML='<span style="font-size:11px;color:var(--t3)">No filters — this visual uses every row in the date/caller range above.</span>';
+    el.innerHTML='<span style="font-size:11px;color:var(--t3)">No filters — this visual uses every row in the date/caller range and Report Filters above.</span>';
     return;
   }
   el.innerHTML=_crCanvasFilters.map((f,i)=>
     `<div style="display:flex;align-items:center;gap:6px;font-size:11.5px;background:#f5f5f7;border-radius:5px;padding:4px 8px">
-      <span><strong>${esc(f.fieldLabel)}</strong> is ${f.values.map(esc).join(' or ')}</span>
+      <span>${crFilterChipText(f)}</span>
       <span onclick="crRemoveFilter(${i})" style="cursor:pointer;font-weight:700;margin-left:auto;flex-shrink:0">✕</span>
     </div>`
   ).join('');
+}
+// ── Report-level filters — same shape and rules as visual-level, but stored
+// separately (_crReportFilters) and merged into every visual's request in
+// crRenderVisual(), unless that visual has its own filter on the same field.
+function crAddReportFilter(){
+  const status=document.getElementById('cr-rf-status');
+  const entry=crReadFilterBuilder('cr-rf');
+  if(!entry){ if(status){ status.textContent='⚠ Pick a field and a value (or a full date range) first.'; status.style.color='#c0392b'; } return; }
+  if(entry.error){ if(status){ status.textContent='⚠ '+entry.error; status.style.color='#c0392b'; } return; }
+  _crReportFilters=_crReportFilters.filter(f=>f.field!==entry.field);
+  _crReportFilters.push(entry);
+  renderCrReportFiltersList();
+  if(status) status.textContent='';
+}
+function crRemoveReportFilter(idx){
+  _crReportFilters.splice(idx,1);
+  renderCrReportFiltersList();
+}
+function renderCrReportFiltersList(){
+  const el=document.getElementById('cr-report-filters-list');
+  if(!el) return;
+  if(!_crReportFilters.length){
+    el.innerHTML='<span style="font-size:11px;color:var(--t3)">No report filters — every visual uses the full date/caller range above (unless it sets its own visual-level filter).</span>';
+    return;
+  }
+  el.innerHTML=_crReportFilters.map((f,i)=>
+    `<div style="display:flex;align-items:center;gap:6px;font-size:11.5px;background:#fff;border:1px solid #e2dcf0;border-radius:5px;padding:4px 8px">
+      <span>${crFilterChipText(f)}</span>
+      <span onclick="crRemoveReportFilter(${i})" style="cursor:pointer;font-weight:700;margin-left:auto;flex-shrink:0">✕</span>
+    </div>`
+  ).join('');
+}
+function renderCrReportFilterFieldOptions(){
+  const sel=document.getElementById('cr-rf-field');
+  if(!sel) return;
+  sel.innerHTML='<option value="">Filter by field…</option>'+
+    crFilterFieldChoices().map(f=>`<option value="${esc(f.value)}">${esc(f.label)}</option>`).join('');
+}
+// Merges report-level filters into one visual's filter list — a filter set
+// on the visual itself for a given field wins over the report-level one for
+// that same field, rather than AND-ing two conditions on the same field
+// together (which would just be more restrictive than either alone and
+// confusing to reason about).
+function crCombinedFilters(v){
+  const visualFilters=v.filters||[];
+  const overriddenFields=new Set(visualFilters.map(f=>f.field));
+  const reportPart=_crReportFilters.filter(f=>!overriddenFields.has(f.field));
+  return reportPart.concat(visualFilters).map(f=> f.field==='date_range'
+    ? {field:'date_range', from:f.from, to:f.to}
+    : {field:f.field, values:f.values});
+}
+function crRefreshAllVisuals(){
+  const pending=crReadFilterBuilder('cr-rf');
+  const rfStatus=document.getElementById('cr-rf-status');
+  if(pending && !pending.error){
+    const existing=_crReportFilters.find(f=>f.field===pending.field);
+    if(!existing || !crFilterEntriesEqual(existing, pending)){
+      if(rfStatus){
+        rfStatus.textContent='⚠ You picked a Report Filter field/value but haven\u2019t added it — click "+ Add Filter" first, or clear the selection, then Refresh All Visuals.';
+        rfStatus.style.color='#c0392b';
+      }
+      return;
+    }
+  }
+  Object.keys(_crVisuals).forEach(id=>crRenderVisual(id));
+  if(rfStatus){ rfStatus.textContent='✓ Refreshed all visuals against the current date/caller range and Report Filters.'; rfStatus.style.color='var(--green)'; }
 }
 // The filter picker (field + values dropdowns) is a staging area for ONE
 // filter at a time — it does not represent "the" filter for the visual, it's
@@ -2730,17 +2878,14 @@ function renderCrFiltersList(){
 // yet — so nothing about the filter list ever changes without an explicit
 // "+ Add Filter" click.
 function crPendingFilterSelection(){
-  const field=document.getElementById('cr-filter-field').value;
-  if(!field) return null;
-  const valSel=document.getElementById('cr-filter-values');
-  const values=Array.from(valSel.selectedOptions).map(o=>o.value);
-  if(!values.length) return null;
-  const meta=crFilterFieldMeta(field);
-  if(!meta) return null;
-  const existing=_crCanvasFilters.find(f=>f.field===field);
-  const sortedEq=(a,b)=> a.length===b.length && a.slice().sort().join('\u0001')===b.slice().sort().join('\u0001');
-  if(existing && sortedEq(existing.values, values)) return null;  // already committed as-is, nothing pending
-  return {field, label:meta.label, values};
+  const entry=crReadFilterBuilder('cr-filter');
+  if(!entry) return null;
+  if(entry.error) return {field:'', label:'', values:[], error:entry.error};
+  const existing=_crCanvasFilters.find(f=>f.field===entry.field);
+  if(existing && crFilterEntriesEqual(existing, entry)) return null;  // already committed as-is, nothing pending
+  return entry.field==='date_range'
+    ? {field:entry.field, label:entry.fieldLabel, values:[entry.from+' to '+entry.to]}
+    : {field:entry.field, label:entry.fieldLabel, values:entry.values};
 }
 function crApplyToSelectedVisual(){
   const id=_crSelectedVisualId;
@@ -2752,6 +2897,7 @@ function crApplyToSelectedVisual(){
   if(needsRows && !_crCanvas.rows){ status.textContent='⚠ Drag a field into Rows first.'; status.style.color='#c0392b'; return; }
   const pending=crPendingFilterSelection();
   if(pending){
+    if(pending.error){ status.textContent='⚠ '+pending.error; status.style.color='#c0392b'; return; }
     status.textContent='⚠ You picked "'+pending.label+' is '+pending.values.join(' or ')+'" but haven\u2019t added it — click "+ Add Filter" to include it (replacing any existing filter on '+pending.label+'), or clear that selection to Apply without it.';
     status.style.color='#c0392b';
     return;
@@ -2770,7 +2916,9 @@ function crApplyToSelectedVisual(){
       legendPosition:document.getElementById('cr-fmt-legend-pos').value,
       title:document.getElementById('cr-fmt-title').value.trim(),
     },
-    filters:_crCanvasFilters.map(f=>({field:f.field, fieldLabel:f.fieldLabel, values:f.values.slice()})),
+    filters:_crCanvasFilters.map(f=> f.field==='date_range'
+      ? {field:f.field, fieldLabel:f.fieldLabel, from:f.from, to:f.to}
+      : {field:f.field, fieldLabel:f.fieldLabel, values:f.values.slice()}),
   };
   const titleEl=document.getElementById('cr-visual-title-'+id);
   const titleText=_crVisuals[id].measureLabel+(_crVisuals[id].rowsLabel?' by '+_crVisuals[id].rowsLabel:'');
@@ -2797,7 +2945,7 @@ function crRenderVisual(id){
   const callers=Array.from(document.getElementById('cr-callers').selectedOptions).map(o=>o.value);
   const emptyEl=document.getElementById('cr-visual-empty-'+id);
   if(emptyEl) emptyEl.style.display='none';
-  const filters=(v.filters||[]).map(f=>({field:f.field, values:f.values}));
+  const filters=crCombinedFilters(v);
   return fetch('/api/custom_report/run',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({measure:v.measure, rows:v.rows||'', columns:v.columns||null, date_from:dateFrom, date_to:dateTo, callers, filters})})
     .then(r=>r.json()).then(d=>{
@@ -2967,6 +3115,7 @@ function saveCustomReportCanvas(){
     date_from:document.getElementById('cr-date-from').value,
     date_to:document.getElementById('cr-date-to').value,
     callers:Array.from(document.getElementById('cr-callers').selectedOptions).map(o=>o.value),
+    filters:_crReportFilters,
     visuals,
   };
   fetch('/api/custom_report/tiles',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -3012,6 +3161,12 @@ function crLoadReportIntoCanvas(cfg){
   if(cfg.date_to) document.getElementById('cr-date-to').value=cfg.date_to;
   const sel=document.getElementById('cr-callers');
   if(sel && cfg.callers) Array.from(sel.options).forEach(o=>{ o.selected=cfg.callers.includes(o.value); });
+  _crReportFilters=(cfg.filters||[]).map(f=> f.field==='date_range'
+    ? {field:f.field, fieldLabel:f.fieldLabel, from:f.from, to:f.to}
+    : {field:f.field, fieldLabel:f.fieldLabel, values:(f.values||[]).slice()});
+  renderCrReportFiltersList();
+  const rfField=document.getElementById('cr-rf-field'); if(rfField) rfField.value='';
+  crReportFilterFieldChanged();
   (cfg.visuals||[]).forEach(v=>{
     const id=v.id || ('v'+(++_crVisualSeq));
     const numPart=parseInt((String(id).match(/\d+/)||['0'])[0],10);
@@ -3805,6 +3960,15 @@ const APP_VERSION = "1.82";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.84", date:"2026-07", title:"Custom Report: Report-level filters, a Date Range filter type, and Refresh All Visuals",
+    changes:[
+      "New Report Filters, set once at the top of the builder (next to the date/caller range) and applied to every visual on the canvas automatically — a specific visual can still set its own filter on the same field, which wins for that visual only, rather than the two conditions stacking together.",
+      "New \"Date Range\" filter field, alongside Outcome/Stage/Source List/Caller, at both the report level and the visual level. It's a separate, tighter window than the report-wide From/To range at the top — e.g. the whole report set to This Year, with one visual (or the whole report) additionally narrowed to just Q1 — and correctly respects the configurable display timezone, the same way the existing Day/Week/Month/Hour of Day grouping already does.",
+      "New \"↺ Refresh All Visuals\" button next to the date/caller range — needed because changing the report-level date range, callers, or Report Filters was not previously re-running any already-rendered visual; each one only picked up the change the next time it was individually re-applied. This re-runs every visual on the canvas in one click.",
+      "Report Filters warn you the same way visual filters do if you've picked a field/value but haven't clicked \"+ Add Filter\" yet, rather than silently doing nothing (or, worse, silently combining with an old selection) when you click Refresh All Visuals.",
+      "Filter chip display, the field dropdown, and the pending-selection safety check were unified into shared functions so the report-level and visual-level filter builders can't drift out of sync with each other going forward.",
+      "Report Filters are saved and restored with the report, alongside the existing per-visual filters.",
+    ]},
   { v:"1.83", date:"2026-07", title:"Custom Report: per-visual filters (Outcome, Stage, Source List, Caller)",
     changes:[
       "Each visual on the canvas can now be restricted further, on top of the report-level date/caller range \u2014 e.g. a chart showing only Outcome = Connected or Interested, or only Stage = Meeting secured, independently of every other visual on the same report.",

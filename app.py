@@ -1758,17 +1758,28 @@ def _cr_sort_keys(dim, keys):
         return sorted(keys)
     return keys  # caller sorts these by value after aggregation instead
 
-# Per-visual filter conditions (deferred from the Card-tile round, built now).
-# Deliberately a small, discrete-field-only set — date/hour filtering is
-# already covered by the report-level date range, so it doesn't need a
-# separate condition type. AND across filter entries, OR within one entry's
-# selected values (i.e. each entry is "field IN (values)"). This same
-# predicate is meant to be reused by slicer tiles later, per the plan noted
-# in the v1.82 handoff.
+# Per-visual (and now report-level) filter conditions. AND across filter
+# entries, OR within one entry's selected values (i.e. each entry is "field
+# IN (values)"). One special entry type, "date_range", carries from/to dates
+# instead of a values set — added because the report-level date range at the
+# top of the builder is a single range shared by the whole report, and a
+# person may want one particular visual (or the whole report on top of that)
+# narrowed to a different, tighter window without touching the report-wide
+# range everything else depends on. This predicate is meant to be reused by
+# slicer tiles later, per the plan noted in the v1.82 handoff.
 _CR_FILTERABLE_DIMS = {"caller", "outcome", "stage", "source_list"}
 
 def _cr_row_matches_filters(row, filters):
     for f in filters:
+        if f["field"] == "date_range":
+            # Same display-timezone-aware conversion used for date/hour
+            # grouping (_cr_dim_key) — SQLite-style raw UTC comparison would
+            # put a call in the wrong local day near a DST boundary or when
+            # display timezone isn't UTC.
+            local_day = utc_to_display_str(row.get("timestamp"), "%Y-%m-%d")
+            if not local_day or not (f["from"] <= local_day <= f["to"]):
+                return False
+            continue
         if (row.get(f["field"]) or "") not in f["values"]:
             return False
     return True
@@ -1802,6 +1813,13 @@ def custom_report_run():
             if not isinstance(f, dict):
                 continue
             field = str(f.get("field","")).strip()
+            if field == "date_range":
+                dfrom = str(f.get("from","")).strip()
+                dto = str(f.get("to","")).strip()
+                if not dfrom or not dto:
+                    continue  # incomplete — ignore rather than error, so an in-progress edit can't break the whole request
+                filters.append({"field": "date_range", "from": dfrom, "to": dto})
+                continue
             values = [str(v).strip() for v in (f.get("values") or []) if str(v).strip()]
             if not field or not values:
                 continue
