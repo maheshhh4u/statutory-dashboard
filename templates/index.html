@@ -1258,7 +1258,7 @@ select:focus{outline:none;border-color:var(--green)}
               </select>
               <select id="cr-filter-values" multiple size="5" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px;min-width:170px"></select>
               <button type="button" class="btn btn-outline btn-sm" onclick="crAddFilter()">+ Add Filter</button>
-              <span style="font-size:10.5px;color:var(--t3);flex-basis:100%">Tip: "+ Add Filter" lets you set up more than one filter before applying — but picking a field/value and going straight to "▶ Apply to This Visual" works too.</span>
+              <span style="font-size:10.5px;color:var(--t3);flex-basis:100%">Pick a field, tick value(s), then click "+ Add Filter" — you'll see it appear as a tag above. "▶ Apply to This Visual" will warn you if you forget.</span>
             </div>
 
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -2716,23 +2716,31 @@ function renderCrFiltersList(){
     </div>`
   ).join('');
 }
-// If a field and one or more values are picked in the filter builder but
-// "+ Add Filter" was never clicked, that selection would otherwise be
-// silently dropped the moment "Apply to This Visual" is pressed — it looks
-// applied (a value is highlighted) but isn't actually in _crCanvasFilters
-// yet. Apply now folds in whatever's currently selected first, so picking a
-// field/value and going straight to Apply behaves the same as adding it
-// explicitly.
-function crCommitPendingFilterSelection(){
+// The filter picker (field + values dropdowns) is a staging area for ONE
+// filter at a time — it does not represent "the" filter for the visual, it's
+// how you add or replace an entry in the chip list below it. Apply must
+// never silently act on whatever happens to be sitting in that staging area:
+// silently adding it caused a worse bug than the one it fixed — switching
+// the field to build a second, different filter and hitting Apply directly
+// (without "+ Add Filter") added it ON TOP OF the previous chip instead of
+// replacing it, AND-ing two conditions the person never meant to combine and
+// producing unexpectedly small/"wrong" numbers. Apply now only ever acts on
+// the committed chip list (_crCanvasFilters), and blocks with a clear
+// message if there's a staged field+value selection that hasn't been added
+// yet — so nothing about the filter list ever changes without an explicit
+// "+ Add Filter" click.
+function crPendingFilterSelection(){
   const field=document.getElementById('cr-filter-field').value;
-  if(!field) return;
-  const meta=crFilterFieldMeta(field);
+  if(!field) return null;
   const valSel=document.getElementById('cr-filter-values');
   const values=Array.from(valSel.selectedOptions).map(o=>o.value);
-  if(!meta || !values.length) return;
-  _crCanvasFilters=_crCanvasFilters.filter(f=>f.field!==field);
-  _crCanvasFilters.push({field, fieldLabel:meta.label, values});
-  renderCrFiltersList();
+  if(!values.length) return null;
+  const meta=crFilterFieldMeta(field);
+  if(!meta) return null;
+  const existing=_crCanvasFilters.find(f=>f.field===field);
+  const sortedEq=(a,b)=> a.length===b.length && a.slice().sort().join('\u0001')===b.slice().sort().join('\u0001');
+  if(existing && sortedEq(existing.values, values)) return null;  // already committed as-is, nothing pending
+  return {field, label:meta.label, values};
 }
 function crApplyToSelectedVisual(){
   const id=_crSelectedVisualId;
@@ -2742,7 +2750,12 @@ function crApplyToSelectedVisual(){
   if(!id){ status.textContent='⚠ Add or select a visual first.'; status.style.color='#c0392b'; return; }
   if(!_crCanvas.values){ status.textContent='⚠ Drag a measure into Values first.'; status.style.color='#c0392b'; return; }
   if(needsRows && !_crCanvas.rows){ status.textContent='⚠ Drag a field into Rows first.'; status.style.color='#c0392b'; return; }
-  crCommitPendingFilterSelection();
+  const pending=crPendingFilterSelection();
+  if(pending){
+    status.textContent='⚠ You picked "'+pending.label+' is '+pending.values.join(' or ')+'" but haven\u2019t added it — click "+ Add Filter" to include it (replacing any existing filter on '+pending.label+'), or clear that selection to Apply without it.';
+    status.style.color='#c0392b';
+    return;
+  }
   _crVisuals[id]={
     measure:_crCanvas.values.value, measureLabel:_crCanvas.values.label,
     rows: needsRows && _crCanvas.rows ? _crCanvas.rows.value : '',
@@ -3802,6 +3815,7 @@ const CHANGELOG = [
       "Fixed a bug reported right after release: the Caller filter's value list came up empty while every other field worked. Cause \u2014 the team roster loads via its own separate background fetch, and Caller's filter options were cached from it at a single moment that could fire before that fetch had finished, freezing Caller empty for the rest of the session. Caller options are now looked up live each time the field is picked, instead of cached once.",
       "Fixed the filter value box only showing ~2 items before needing to scroll: a fixed pixel height was overriding the number of visible rows regardless of how many there were. It now sizes itself to the list (4\u20138 rows visible) and only scrolls beyond that.",
       "Fixed a bug reported right after release: picking a field and value(s) in the filter builder and going straight to \u201C\u25b6 Apply to This Visual\u201D \u2014 without a separate click on \u201C+ Add Filter\u201D first \u2014 silently applied with no filter at all, even though a value looked selected. Apply now folds in whatever's currently selected in the filter builder automatically, so both orders of doing it work the same way. Added a short on-screen tip explaining both work.",
+      "Fixed a second bug caused by the previous fix: switching the filter field (e.g. from Outcome to Stage) and clicking Apply directly — without \u201C+ Add Filter\u201D — silently ADDED the new field's filter on top of the old one instead of replacing it, AND-ing two conditions together and producing unexpectedly small/wrong numbers. Apply no longer silently commits anything on its own; it now only acts on filters you've explicitly added as tags, and warns you clearly if there's a picked field/value sitting in the builder that hasn't been added yet, telling you to click \u201C+ Add Filter\u201D (which replaces any existing filter on that same field) before applying.",
       "Still not built: interactive slicer tiles (dropdown/list/timeline widgets that live-filter every visual on the canvas at once by being clicked, Power BI-style). These filters are set once per visual in the config panel, not click-to-filter live widgets.",
     ]},
   { v:"1.82", date:"2026-07", title:"Custom Report: Card tiles, with fields that adapt to the chart type",
