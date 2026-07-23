@@ -1284,28 +1284,40 @@ select:focus{outline:none;border-color:var(--green)}
             </div>
 
             <div id="cr-fmt-section" style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Formatting</div>
-            <div id="cr-fmt-box" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
-              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Colors
-                <select id="cr-fmt-palette" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
-                  <option value="navy">Navy/Gold (default)</option>
-                  <option value="vivid">Vivid</option>
-                  <option value="pastel">Pastel</option>
-                  <option value="mono">Monochrome Blue</option>
-                </select>
-              </label>
-              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-datalabels"> Data labels</label>
-              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-legend" checked> Legend</label>
-              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Position
-                <select id="cr-fmt-legend-pos" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
-                  <option value="top">Top</option>
-                  <option value="bottom">Bottom</option>
-                  <option value="left">Left</option>
-                  <option value="right">Right</option>
-                </select>
-              </label>
-              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px;flex:1;min-width:140px">Title
-                <input id="cr-fmt-title" placeholder="optional chart title" style="flex:1;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
-              </label>
+            <div id="cr-fmt-box" style="display:flex;flex-direction:column;gap:8px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
+              <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Palette
+                  <select id="cr-fmt-palette" onchange="crApplyPalettePreset()" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                    <option value="navy">Navy/Gold (default)</option>
+                    <option value="vivid">Vivid</option>
+                    <option value="pastel">Pastel</option>
+                    <option value="mono">Monochrome Blue</option>
+                  </select>
+                </label>
+                <button type="button" class="btn btn-outline btn-sm" onclick="crTogglePaletteCustomize()">🎨 Customize Colors</button>
+                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-gridlines" checked> Gridlines</label>
+              </div>
+              <div id="cr-fmt-palette-swatches" style="display:none;flex-wrap:wrap;gap:6px;padding-top:6px;border-top:1px dashed var(--border)"></div>
+              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding-top:6px;border-top:1px dashed var(--border)">
+                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-datalabels"> Data labels</label>
+                <span id="cr-fmt-datalabels-color-wrap"></span>
+                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-legend" checked> Legend</label>
+                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Position
+                  <select id="cr-fmt-legend-pos" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                    <option value="top">Top</option>
+                    <option value="bottom">Bottom</option>
+                    <option value="left">Left</option>
+                    <option value="right">Right</option>
+                  </select>
+                </label>
+                <span id="cr-fmt-legend-color-wrap"></span>
+              </div>
+              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding-top:6px;border-top:1px dashed var(--border)">
+                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px;flex:1;min-width:140px">Title
+                  <input id="cr-fmt-title" placeholder="optional chart title" style="flex:1;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                </label>
+                <span id="cr-fmt-title-color-wrap"></span>
+              </div>
             </div>
 
             <div id="cr-filters-section">
@@ -2483,6 +2495,166 @@ const CR_PALETTES={
   pastel:['#a8dadc','#f1faee','#ffb4a2','#cdb4db','#bde0fe','#ffc8dd','#b9fbc0','#fde4cf'],
   mono:  ['#0b3d66','#1d5c94','#3178b5','#4f9bd6','#7ab8e8','#a3d0f0','#c9e4f7','#e4f3fc'],
 };
+// ── Excel-style color picker (Theme Colors / Standard Colors / Recent
+// Colors / More Colors…) — a single reusable floating panel, same technique
+// as the slicer dropdown panel: position:fixed, appended once to <body>,
+// positioned from whichever swatch button opened it, closed on outside
+// click/Escape. Every color-pickable control on a visual (palette slots,
+// title, legend text, data labels) is a small swatch button carrying its
+// current color in data-color; Apply reads that attribute directly rather
+// than tracking a parallel JS state object, so there's exactly one source
+// of truth per swatch.
+const CR_THEME_COLOR_BASES = ['#1e3a5f','#e8b339','#333333','#6a4d99','#1d7a3a','#a02c2c','#2d8f8f','#c47a2c'];
+const CR_STANDARD_COLORS = ['#c00000','#ff0000','#ffc000','#ffff00','#92d050','#00b050','#00b0f0','#0070c0','#002060','#7030a0'];
+let _crRecentColors=[];
+try{ _crRecentColors=JSON.parse(localStorage.getItem('cr_recent_colors')||'[]').slice(0,8); }catch(e){}
+function crHexToRgb(hex){
+  hex=(hex||'#000000').replace('#','');
+  if(hex.length===3) hex=hex.split('').map(c=>c+c).join('');
+  return {r:parseInt(hex.substr(0,2),16)||0, g:parseInt(hex.substr(2,2),16)||0, b:parseInt(hex.substr(4,2),16)||0};
+}
+function crRgbToHex(r,g,b){
+  return '#'+[r,g,b].map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('');
+}
+function crTint(hex, amt){
+  // amt in [-1,1]: positive mixes toward white (lighter), negative toward black (darker)
+  const c=crHexToRgb(hex);
+  const mix=amt>=0 ? [255,255,255] : [0,0,0];
+  const f=Math.abs(amt);
+  return crRgbToHex(c.r+(mix[0]-c.r)*f, c.g+(mix[1]-c.g)*f, c.b+(mix[2]-c.b)*f);
+}
+function crThemeShade(base, row){
+  const amounts=[0.6, 0.3, 0, -0.3, -0.55];  // lightest..darkest, base color sits in the middle row
+  return crTint(base, amounts[row]);
+}
+let _crColorPickerTargetBtn=null;
+function crOpenColorPickerFromButton(btn){
+  _crColorPickerTargetBtn=btn;
+  crRenderColorPickerPanel();
+}
+function crRenderColorPickerPanel(){
+  const btn=_crColorPickerTargetBtn;
+  if(!btn) return;
+  let panel=document.getElementById('cr-color-picker-panel');
+  if(!panel){
+    panel=document.createElement('div');
+    panel.id='cr-color-picker-panel';
+    panel.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.2);padding:10px;width:216px';
+    document.body.appendChild(panel);
+  }
+  const rect=btn.getBoundingClientRect();
+  panel.style.left=Math.min(rect.left+window.scrollX, window.innerWidth-232)+'px';
+  panel.style.top=(rect.bottom+window.scrollY+4)+'px';
+  const sw=(hex,label)=>`<button type="button" onclick="crPickColor('${esc(hex)}')" title="${esc(label||hex||'Automatic')}"
+    style="width:18px;height:18px;border-radius:3px;border:1px solid rgba(0,0,0,.18);background:${hex?esc(hex):'#fff'};${hex?'':'background-image:linear-gradient(45deg,transparent 45%,#c00 45%,#c00 55%,transparent 55%)'};cursor:pointer;padding:0"></button>`;
+  const themeRows=[0,1,2,3,4].map(row=>
+    `<div style="display:flex;gap:3px;margin-bottom:2px">${CR_THEME_COLOR_BASES.map(base=>sw(crThemeShade(base,row))).join('')}</div>`
+  ).join('');
+  let html=`<div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Automatic</div>
+    <div style="margin-bottom:8px">${sw('','Automatic (chart default)')}</div>
+    <div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Theme Colors</div>
+    <div style="margin-bottom:8px">${themeRows}</div>
+    <div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Standard Colors</div>
+    <div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:8px">${CR_STANDARD_COLORS.map(c=>sw(c)).join('')}</div>`;
+  if(_crRecentColors.length){
+    html+=`<div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Recent Colors</div>
+      <div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:8px">${_crRecentColors.map(c=>sw(c)).join('')}</div>`;
+  }
+  html+=`<div style="border-top:1px solid var(--border);padding-top:6px">
+    <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="color" onchange="crPickColor(this.value)" style="width:22px;height:22px;padding:0;border:none;cursor:pointer">
+      More Colors…
+    </label>
+  </div>`;
+  panel.innerHTML=html;
+  panel.style.display='block';
+}
+function crPickColor(hex){
+  const btn=_crColorPickerTargetBtn;
+  if(btn){
+    btn.dataset.color=hex||'';
+    btn.style.background=hex||'#fff';
+    btn.style.backgroundImage=hex?'none':'linear-gradient(45deg,transparent 45%,#c00 45%,#c00 55%,transparent 55%)';
+  }
+  if(hex){
+    _crRecentColors=[hex].concat(_crRecentColors.filter(c=>c!==hex)).slice(0,8);
+    try{ localStorage.setItem('cr_recent_colors', JSON.stringify(_crRecentColors)); }catch(e){}
+  }
+  crCloseColorPicker();
+}
+function crCloseColorPicker(){
+  const panel=document.getElementById('cr-color-picker-panel');
+  if(panel) panel.style.display='none';
+  _crColorPickerTargetBtn=null;
+}
+document.addEventListener('click', function(e){
+  if(!_crColorPickerTargetBtn) return;
+  const panel=document.getElementById('cr-color-picker-panel');
+  if(panel && (panel.contains(e.target) || e.target===_crColorPickerTargetBtn)) return;
+  crCloseColorPicker();
+});
+document.addEventListener('keydown', function(e){
+  if(e.key==='Escape' && _crColorPickerTargetBtn) crCloseColorPicker();
+});
+function crSwatchButtonHtml(target, color, title){
+  const c=color||'';
+  return `<button type="button" class="cr-color-swatch-btn" data-target="${esc(target)}" data-color="${esc(c)}" onclick="crOpenColorPickerFromButton(this)"
+    style="width:22px;height:22px;border-radius:4px;border:1px solid var(--border);background:${c?esc(c):'#fff'};${c?'':'background-image:linear-gradient(45deg,transparent 45%,#c00 45%,#c00 55%,transparent 55%)'};cursor:pointer;padding:0" title="${esc(title||'Pick a color (default: Automatic)')}"></button>`;
+}
+function crSetSwatch(wrapId, target, color, title){
+  const el=document.getElementById(wrapId);
+  if(el) el.innerHTML=crSwatchButtonHtml(target, color, title);
+}
+function crReadSwatchColor(wrapId){
+  const btn=document.querySelector('#'+wrapId+' .cr-color-swatch-btn');
+  return btn ? (btn.dataset.color||'') : '';
+}
+function crApplyPalettePreset(){
+  const wrap=document.getElementById('cr-fmt-palette-swatches');
+  if(!wrap || wrap.style.display!=='flex') return;  // customize panel isn't open — nothing to refresh
+  const preset=document.getElementById('cr-fmt-palette').value;
+  const colors=(CR_PALETTES[preset]||CR_PALETTES.navy).slice();
+  wrap.innerHTML=colors.map((c,i)=>crSwatchButtonHtml('palette:'+i, c, 'Series '+(i+1))).join('');
+}
+function crTogglePaletteCustomize(){
+  const wrap=document.getElementById('cr-fmt-palette-swatches');
+  if(!wrap) return;
+  if(wrap.style.display==='flex'){ wrap.style.display='none'; return; }
+  if(!wrap.innerHTML.trim()){
+    const preset=document.getElementById('cr-fmt-palette').value;
+    const colors=(CR_PALETTES[preset]||CR_PALETTES.navy).slice();
+    wrap.innerHTML=colors.map((c,i)=>crSwatchButtonHtml('palette:'+i, c, 'Series '+(i+1))).join('');
+  }
+  wrap.style.display='flex';
+}
+function crReadCustomPalette(){
+  const wrap=document.getElementById('cr-fmt-palette-swatches');
+  if(!wrap || wrap.style.display!=='flex') return null;  // not customized — use the named preset instead
+  const btns=wrap.querySelectorAll('.cr-color-swatch-btn');
+  if(!btns.length) return null;
+  return Array.from(btns).map(b=>b.dataset.color||'#1e3a5f');
+}
+// Restores every color swatch (and the palette customize panel, if this
+// visual has one) to match a saved format object — called whenever a
+// visual is selected for editing, including a brand-new blank one (in
+// which case fmt is {} and everything resets to Automatic/off).
+function crRestoreFormatSwatches(fmt){
+  fmt=fmt||{};
+  crSetSwatch('cr-fmt-title-color-wrap', 'title', fmt.titleColor||'', 'Title color');
+  crSetSwatch('cr-fmt-legend-color-wrap', 'legend', fmt.legendColor||'', 'Legend text color');
+  crSetSwatch('cr-fmt-datalabels-color-wrap', 'datalabels', fmt.dataLabelsColor||'', 'Data label text color');
+  const wrap=document.getElementById('cr-fmt-palette-swatches');
+  if(wrap){
+    if(fmt.customPalette && fmt.customPalette.length){
+      wrap.innerHTML=fmt.customPalette.map((c,i)=>crSwatchButtonHtml('palette:'+i, c, 'Series '+(i+1))).join('');
+      wrap.style.display='flex';
+    } else {
+      wrap.innerHTML='';
+      wrap.style.display='none';
+    }
+  }
+  const glEl=document.getElementById('cr-fmt-gridlines'); if(glEl) glEl.checked=fmt.gridlines!==false;
+}
 let _crMeasures=[], _crDimensions=[];
 let _crCanvas={values:null, rows:null, columns:null};  // wells UI state, for whichever visual is currently selected
 let _crTapSelected=null;
@@ -2772,6 +2944,7 @@ function crSelectVisual(id){
   document.getElementById('cr-fmt-legend').checked=fmt.legend!==false;
   document.getElementById('cr-fmt-legend-pos').value=fmt.legendPosition||'top';
   document.getElementById('cr-fmt-title').value=fmt.title||'';
+  crRestoreFormatSwatches(fmt);
   _crCanvasFilters=(v.filters||[]).map(f=> f.field==='date_range'
     ? {field:f.field, fieldLabel:f.fieldLabel, from:f.from, to:f.to}
     : {field:f.field, fieldLabel:f.fieldLabel, values:(f.values||[]).slice()});
@@ -3520,10 +3693,15 @@ function crApplyToSelectedVisual(){
     showTitleBar: document.getElementById('cr-tile-titlebar').checked,
     format:{
       palette:document.getElementById('cr-fmt-palette').value,
+      customPalette:crReadCustomPalette(),
       dataLabels:document.getElementById('cr-fmt-datalabels').checked,
+      dataLabelsColor:crReadSwatchColor('cr-fmt-datalabels-color-wrap'),
       legend:document.getElementById('cr-fmt-legend').checked,
       legendPosition:document.getElementById('cr-fmt-legend-pos').value,
+      legendColor:crReadSwatchColor('cr-fmt-legend-color-wrap'),
       title:document.getElementById('cr-fmt-title').value.trim(),
+      titleColor:crReadSwatchColor('cr-fmt-title-color-wrap'),
+      gridlines:document.getElementById('cr-fmt-gridlines').checked,
     },
     filters:_crCanvasFilters.map(f=> f.field==='date_range'
       ? {field:f.field, fieldLabel:f.fieldLabel, from:f.from, to:f.to}
@@ -3647,7 +3825,9 @@ function crNormalizeToPercent(data, hasColumns){
 // be tested directly without needing a real canvas to render into.
 function crBuildChartConfig(d, chartType, format){
   format=format||{};
-  const paletteColors=CR_PALETTES[format.palette]||CR_PALETTES.navy;
+  // A custom-edited palette (via "🎨 Customize Colors") always wins over the
+  // named preset it started from — the preset is just a starting point.
+  const paletteColors = (format.customPalette && format.customPalette.length) ? format.customPalette : (CR_PALETTES[format.palette]||CR_PALETTES.navy);
   const isStacked100 = chartType==='col_stacked100' || chartType==='bar_stacked100';
   const isStacked = chartType==='col_stacked' || chartType==='bar_stacked' || isStacked100;
   const isHorizontal = chartType.startsWith('bar_');
@@ -3658,6 +3838,7 @@ function crBuildChartConfig(d, chartType, format){
   const isRadar = chartType==='radar';
   const isPolar = chartType==='polarArea';
   const isPieLike = isPie || isDoughnut || isPolar;
+  const showGrid = format.gridlines!==false;
 
   let baseType='bar';
   if(isLine) baseType='line';
@@ -3692,12 +3873,14 @@ function crBuildChartConfig(d, chartType, format){
   }
 
   const showLegend = format.legend!==false && (hasColumns || isPieLike);
-  const scalesOpt = (isPieLike || isRadar) ? {} : {
-    x:{stacked:isStacked, title:{display:isHorizontal, text:isHorizontal?d.measure_label:''}},
-    y:{stacked:isStacked, beginAtZero:true, title:{display:!isHorizontal, text:!isHorizontal?d.measure_label:''}, max: isStacked100?100:undefined},
+  const scalesOpt = isRadar ? {
+    r:{grid:{display:showGrid}, angleLines:{display:showGrid}},
+  } : isPieLike ? {} : {
+    x:{stacked:isStacked, grid:{display:showGrid}, title:{display:isHorizontal, text:isHorizontal?d.measure_label:''}},
+    y:{stacked:isStacked, grid:{display:showGrid}, beginAtZero:true, title:{display:!isHorizontal, text:!isHorizontal?d.measure_label:''}, max: isStacked100?100:undefined},
   };
   const dataLabelsOpt = format.dataLabels ? {
-    color:isPieLike?'#fff':'#333', font:{size:10, weight:'600'},
+    color: format.dataLabelsColor || (isPieLike?'#fff':'#333'), font:{size:10, weight:'600'},
     formatter: isStacked100 ? (v)=>Math.round(v)+'%' : (v)=>(typeof v==='number'?Math.round(v*100)/100:v),
   } : false;
 
@@ -3708,8 +3891,8 @@ function crBuildChartConfig(d, chartType, format){
       indexAxis: isHorizontal?'y':'x',
       responsive:true, maintainAspectRatio:false,
       plugins:{
-        legend:{display:showLegend, position:format.legendPosition||'top'},
-        title:{display:!!format.title, text:format.title||''},
+        legend:{display:showLegend, position:format.legendPosition||'top', labels:{color:format.legendColor||undefined}},
+        title:{display:!!format.title, text:format.title||'', color:format.titleColor||undefined},
         datalabels:dataLabelsOpt,
       },
       scales: scalesOpt,
@@ -3729,7 +3912,7 @@ function renderCrResult(d, chartType, chartId, tableWrapId, isTile, format, card
       const val = typeof d.single_value==='number' ? d.single_value : 0;
       const displayVal = Number.isInteger(val) ? val.toLocaleString() : (Math.round(val*100)/100).toLocaleString();
       const fmt=format||{};
-      const color = (CR_PALETTES[fmt.palette]||CR_PALETTES.navy)[0];
+      const color = fmt.titleColor || ((fmt.customPalette && fmt.customPalette.length) ? fmt.customPalette[0] : (CR_PALETTES[fmt.palette]||CR_PALETTES.navy)[0]);
       cardWrap.innerHTML = `<div style="font-size:32px;font-weight:800;color:${color};line-height:1.1">${esc(String(displayVal))}</div>
         <div style="font-size:12px;color:var(--t3);margin-top:4px;font-weight:600">${esc(fmt.title || d.measure_label)}</div>`;
     }
@@ -4664,6 +4847,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.90", date:"2026-07", title:"Custom Report: Excel-style color picker for chart colors, and a gridlines toggle",
+    changes:[
+      "New \"\ud83c\udfa8 Customize Colors\" button next to a visual's palette preset \u2014 opens 8 individual color swatches (one per data series/pie slice) so bars, columns, lines, and pie/donut slices can each be set to an exact color, not just one of the 4 fixed presets.",
+      "New color swatches for Chart Title, Legend text, and Data Labels \u2014 each opens the same picker.",
+      "The picker itself matches the Excel/Office one in the reference screenshot: an Automatic (reset) swatch, a Theme Colors grid (tints/shades of the app's brand colors), a Standard Colors row, a Recent Colors row that remembers your last 8 picks across sessions, and a \"More Colors\u2026\" option backed by the browser's full custom color picker.",
+      "New \"Gridlines\" checkbox in Formatting \u2014 toggles the chart's axis gridlines on or off (and the radial gridlines on a Radar chart); on by default, matching how every chart already looked.",
+      "All of this is saved and restored with the report, including reopening a visual for editing with its exact colors and gridline setting shown.",
+    ]},
   { v:"1.89", date:"2026-07", title:"Fixed version display, tile title bars can be hidden, and Power BI-style Custom Measures",
     changes:[
       "Fixed the version badge on the app's About screen showing a stale \"1.82\" while \"What's new\" correctly showed the real latest version \u2014 it was a separate hardcoded constant that stopped getting updated a few releases back. It's now derived from the same changelog entry the \"What's new\" text already uses, so it can't drift out of sync again.",
