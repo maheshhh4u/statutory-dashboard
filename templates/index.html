@@ -7,6 +7,7 @@
 <!-- RingCentral Embeddable — src set dynamically once client_id is loaded -->
 <script id="rc-adapter-script"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@13/dist/gridstack.min.css">
 <script src="https://cdn.jsdelivr.net/npm/gridstack@13/dist/gridstack-all.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1220,14 +1221,36 @@ select:focus{outline:none;border-color:var(--green)}
                 <span id="cr-well-columns-content" style="color:var(--t3);font-size:11.5px">Optional</span>
               </div>
             </div>
+            <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Chart Type</div>
+            <div id="cr-chart-type-gallery" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px"></div>
+            <input type="hidden" id="cr-chart-type" value="col_clustered">
+
+            <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Formatting</div>
+            <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
+              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Colors
+                <select id="cr-fmt-palette" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                  <option value="navy">Navy/Gold (default)</option>
+                  <option value="vivid">Vivid</option>
+                  <option value="pastel">Pastel</option>
+                  <option value="mono">Monochrome Blue</option>
+                </select>
+              </label>
+              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-datalabels"> Data labels</label>
+              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-legend" checked> Legend</label>
+              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Position
+                <select id="cr-fmt-legend-pos" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                  <option value="top">Top</option>
+                  <option value="bottom">Bottom</option>
+                  <option value="left">Left</option>
+                  <option value="right">Right</option>
+                </select>
+              </label>
+              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px;flex:1;min-width:140px">Title
+                <input id="cr-fmt-title" placeholder="optional chart title" style="flex:1;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+              </label>
+            </div>
+
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-              <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Chart</span>
-              <select id="cr-chart-type" style="padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-size:12px">
-                <option value="bar">Bar</option>
-                <option value="line">Line</option>
-                <option value="doughnut">Pie / Doughnut</option>
-                <option value="table">Table</option>
-              </select>
               <button class="btn btn-green btn-sm" onclick="crApplyToSelectedVisual()">▶ Apply to This Visual</button>
               <button class="btn btn-outline btn-sm" onclick="crRemoveSelectedVisual()">🗑 Remove Visual</button>
             </div>
@@ -2349,6 +2372,27 @@ function initReportCallers(){
 }
 
 // ── Custom Report (v1) ────────────────────────────────────────────────────────
+const CR_CHART_TYPES=[
+  {value:'col_clustered', label:'Column - Clustered', icon:'📊'},
+  {value:'col_stacked', label:'Column - Stacked', icon:'📊'},
+  {value:'col_stacked100', label:'Column - 100% Stacked', icon:'📊'},
+  {value:'bar_clustered', label:'Bar - Clustered', icon:'📶'},
+  {value:'bar_stacked', label:'Bar - Stacked', icon:'📶'},
+  {value:'bar_stacked100', label:'Bar - 100% Stacked', icon:'📶'},
+  {value:'line', label:'Line', icon:'📈'},
+  {value:'area', label:'Area', icon:'⛰️'},
+  {value:'pie', label:'Pie', icon:'🥧'},
+  {value:'doughnut', label:'Donut', icon:'🍩'},
+  {value:'radar', label:'Radar', icon:'🕸️'},
+  {value:'polarArea', label:'Polar Area', icon:'🎯'},
+  {value:'table', label:'Table', icon:'🔢'},
+];
+const CR_PALETTES={
+  navy:  ['#1e3a5f','#e8b339','#1d7a3a','#a02c2c','#6a4d99','#2d8f8f','#c47a2c','#4d6a99'],
+  vivid: ['#e63946','#f4a261','#2a9d8f','#264653','#e9c46a','#8338ec','#3a86ff','#fb5607'],
+  pastel:['#a8dadc','#f1faee','#ffb4a2','#cdb4db','#bde0fe','#ffc8dd','#b9fbc0','#fde4cf'],
+  mono:  ['#0b3d66','#1d5c94','#3178b5','#4f9bd6','#7ab8e8','#a3d0f0','#c9e4f7','#e4f3fc'],
+};
 let _crMeasures=[], _crDimensions=[];
 let _crCanvas={values:null, rows:null, columns:null};  // wells UI state, for whichever visual is currently selected
 let _crTapSelected=null;
@@ -2378,6 +2422,7 @@ function initCustomReport(){
     sel.innerHTML=(userList||[]).map(u=>`<option value="${esc(u)}">${esc(u)}</option>`).join('');
     sel.dataset.filled='1';
   }
+  renderCrChartTypeGallery();
   if(!_crFieldsLoaded){
     fetch('/api/custom_report/fields').then(r=>r.json()).then(d=>{
       if(!d.ok) return;
@@ -2518,7 +2563,7 @@ function crAddWidgetWithHtml(opts, html){
 function crAddVisual(){
   crInitGridIfNeeded();
   const id='v'+(++_crVisualSeq);
-  _crVisuals[id]={measure:'',measureLabel:'',rows:'',rowsLabel:'',columns:'',columnsLabel:'',chart_type:'bar'};
+  _crVisuals[id]={measure:'',measureLabel:'',rows:'',rowsLabel:'',columns:'',columnsLabel:'',chart_type:'col_clustered',format:{}};
   crAddWidgetWithHtml({w:4,h:4,id:id}, crVisualWidgetHtml(id));
   crSelectVisual(id);
 }
@@ -2530,7 +2575,13 @@ function crSelectVisual(id){
   _crCanvas.rows = v.rows ? {value:v.rows, label:v.rowsLabel} : null;
   _crCanvas.columns = v.columns ? {value:v.columns, label:v.columnsLabel} : null;
   renderCrWells();
-  document.getElementById('cr-chart-type').value=v.chart_type||'bar';
+  crSetChartType(v.chart_type||'col_clustered');
+  const fmt=v.format||{};
+  document.getElementById('cr-fmt-palette').value=fmt.palette||'navy';
+  document.getElementById('cr-fmt-datalabels').checked=!!fmt.dataLabels;
+  document.getElementById('cr-fmt-legend').checked=fmt.legend!==false;
+  document.getElementById('cr-fmt-legend-pos').value=fmt.legendPosition||'top';
+  document.getElementById('cr-fmt-title').value=fmt.title||'';
   document.getElementById('cr-visual-config').style.display='block';
   document.getElementById('cr-selected-visual-label').textContent = v.measureLabel
     ? 'Editing: '+v.measureLabel+(v.rowsLabel?' by '+v.rowsLabel:'')
@@ -2547,6 +2598,23 @@ function crDeselectVisual(){
   const lbl=document.getElementById('cr-selected-visual-label'); if(lbl) lbl.textContent='No visual selected — add one, or click an existing visual below';
   document.querySelectorAll('#cr-gridstack .grid-stack-item').forEach(el=>{ el.style.outline='none'; });
 }
+function renderCrChartTypeGallery(){
+  const gal=document.getElementById('cr-chart-type-gallery');
+  if(!gal) return;
+  gal.innerHTML=CR_CHART_TYPES.map(ct=>
+    `<button type="button" data-chart-type="${ct.value}" onclick="crSetChartType('${ct.value}')" title="${esc(ct.label)}"
+       style="width:40px;height:36px;font-size:16px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer" class="cr-chart-type-btn">${ct.icon}</button>`
+  ).join('');
+}
+function crSetChartType(value){
+  document.getElementById('cr-chart-type').value=value;
+  document.querySelectorAll('.cr-chart-type-btn').forEach(b=>{
+    const active=b.dataset.chartType===value;
+    b.style.borderColor = active ? '#1e3a5f' : 'var(--border)';
+    b.style.background = active ? '#eaf1fa' : '#fff';
+    b.style.boxShadow = active ? 'inset 0 0 0 1px #1e3a5f' : 'none';
+  });
+}
 function crApplyToSelectedVisual(){
   const id=_crSelectedVisualId;
   const status=document.getElementById('cr-result-status');
@@ -2558,6 +2626,13 @@ function crApplyToSelectedVisual(){
     rows:_crCanvas.rows.value, rowsLabel:_crCanvas.rows.label,
     columns:_crCanvas.columns?_crCanvas.columns.value:'', columnsLabel:_crCanvas.columns?_crCanvas.columns.label:'',
     chart_type:document.getElementById('cr-chart-type').value,
+    format:{
+      palette:document.getElementById('cr-fmt-palette').value,
+      dataLabels:document.getElementById('cr-fmt-datalabels').checked,
+      legend:document.getElementById('cr-fmt-legend').checked,
+      legendPosition:document.getElementById('cr-fmt-legend-pos').value,
+      title:document.getElementById('cr-fmt-title').value.trim(),
+    },
   };
   const titleEl=document.getElementById('cr-visual-title-'+id);
   if(titleEl) titleEl.textContent=_crVisuals[id].measureLabel+' by '+_crVisuals[id].rowsLabel;
@@ -2586,10 +2661,96 @@ function crRenderVisual(id){
     body:JSON.stringify({measure:v.measure, rows:v.rows, columns:v.columns||null, date_from:dateFrom, date_to:dateTo, callers})})
     .then(r=>r.json()).then(d=>{
       if(!d.ok) return;
-      renderCrResult(d, v.chart_type, 'cr-visual-chart-'+id, 'cr-visual-table-'+id, true);
+      renderCrResult(d, v.chart_type, 'cr-visual-chart-'+id, 'cr-visual-table-'+id, true, v.format);
     }).catch(()=>{});
 }
-function renderCrResult(d, chartType, chartId, tableWrapId, isTile){
+function crNormalizeToPercent(data, hasColumns){
+  // 100% stacked: each row's values across columns should sum to 100.
+  // Doesn't meaningfully apply to a single series, so leave those as-is.
+  if(!hasColumns) return data;
+  return data.map(row=>{
+    const total=row.reduce((s,v)=>s+(Number(v)||0),0);
+    if(!total) return row.map(()=>0);
+    return row.map(v=>(Number(v)||0)/total*100);
+  });
+}
+// Pure function: given the API result + chart type + formatting choices,
+// returns the exact Chart.js config object. Kept separate from any DOM/canvas
+// work so the chart-type logic itself (the part most likely to have bugs) can
+// be tested directly without needing a real canvas to render into.
+function crBuildChartConfig(d, chartType, format){
+  format=format||{};
+  const paletteColors=CR_PALETTES[format.palette]||CR_PALETTES.navy;
+  const isStacked100 = chartType==='col_stacked100' || chartType==='bar_stacked100';
+  const isStacked = chartType==='col_stacked' || chartType==='bar_stacked' || isStacked100;
+  const isHorizontal = chartType.startsWith('bar_');
+  const isArea = chartType==='area';
+  const isLine = chartType==='line' || isArea;
+  const isPie = chartType==='pie';
+  const isDoughnut = chartType==='doughnut';
+  const isRadar = chartType==='radar';
+  const isPolar = chartType==='polarArea';
+  const isPieLike = isPie || isDoughnut || isPolar;
+
+  let baseType='bar';
+  if(isLine) baseType='line';
+  else if(isPie) baseType='pie';
+  else if(isDoughnut) baseType='doughnut';
+  else if(isRadar) baseType='radar';
+  else if(isPolar) baseType='polarArea';
+
+  const hasColumns=!!d.column_labels;
+  let plotData = isStacked100 ? crNormalizeToPercent(d.data, hasColumns) : d.data;
+  const rowTotal=(i)=>hasColumns ? plotData[i].reduce((s,v)=>s+(Number(v)||0),0) : plotData[i];
+
+  let datasets;
+  if(hasColumns && !isPieLike && !isRadar){
+    datasets = d.column_labels.map((c,j)=>({
+      label:String(c),
+      data: d.row_labels.map((rk,i)=>plotData[i][j]),
+      backgroundColor: isArea ? paletteColors[j%paletteColors.length]+'55' : paletteColors[j%paletteColors.length],
+      borderColor: paletteColors[j%paletteColors.length],
+      fill: isArea,
+      stack: isStacked ? 'stack1' : undefined,
+    }));
+  } else if(isPieLike){
+    const rowData = d.row_labels.map((rk,i)=>rowTotal(i));
+    datasets=[{data:rowData, backgroundColor:d.row_labels.map((_,i)=>paletteColors[i%paletteColors.length])}];
+  } else if(isRadar){
+    const rowData = d.row_labels.map((rk,i)=>rowTotal(i));
+    datasets=[{label:d.measure_label, data:rowData, backgroundColor:paletteColors[0]+'55', borderColor:paletteColors[0]}];
+  } else {
+    const rowData = d.row_labels.map((rk,i)=>rowTotal(i));
+    datasets=[{label:d.measure_label, data:rowData, backgroundColor:paletteColors[0], borderColor:paletteColors[0], fill:isArea}];
+  }
+
+  const showLegend = format.legend!==false && (hasColumns || isPieLike);
+  const scalesOpt = (isPieLike || isRadar) ? {} : {
+    x:{stacked:isStacked, title:{display:isHorizontal, text:isHorizontal?d.measure_label:''}},
+    y:{stacked:isStacked, beginAtZero:true, title:{display:!isHorizontal, text:!isHorizontal?d.measure_label:''}, max: isStacked100?100:undefined},
+  };
+  const dataLabelsOpt = format.dataLabels ? {
+    color:isPieLike?'#fff':'#333', font:{size:10, weight:'600'},
+    formatter: isStacked100 ? (v)=>Math.round(v)+'%' : (v)=>(typeof v==='number'?Math.round(v*100)/100:v),
+  } : false;
+
+  return {
+    type: baseType,
+    data: {labels:d.row_labels, datasets},
+    options:{
+      indexAxis: isHorizontal?'y':'x',
+      responsive:true, maintainAspectRatio:false,
+      plugins:{
+        legend:{display:showLegend, position:format.legendPosition||'top'},
+        title:{display:!!format.title, text:format.title||''},
+        datalabels:dataLabelsOpt,
+      },
+      scales: scalesOpt,
+    },
+    _usesDataLabels: !!format.dataLabels,
+  };
+}
+function renderCrResult(d, chartType, chartId, tableWrapId, isTile, format){
   const chartWrap = document.getElementById(isTile ? chartId+'-wrap' : 'cr-result-chart-wrap');
   const tableWrap = document.getElementById(tableWrapId);
   if(chartType==='table'){
@@ -2618,26 +2779,13 @@ function renderCrResult(d, chartType, chartId, tableWrapId, isTile){
   const canvasEl=document.getElementById(chartId);
   if(!canvasEl || typeof Chart==='undefined') return;
   if(canvasEl._chartInst){ canvasEl._chartInst.destroy(); canvasEl._chartInst=null; }
-  const palette=['#1e3a5f','#e8b339','#1d7a3a','#a02c2c','#6a4d99','#2d8f8f','#c47a2c','#4d6a99'];
-  let datasets;
-  if(d.column_labels){
-    datasets = d.column_labels.map((c,j)=>({
-      label:String(c),
-      data: d.row_labels.map((rk,i)=>d.data[i][j]),
-      backgroundColor: palette[j%palette.length],
-      borderColor: palette[j%palette.length],
-      fill: chartType==='line'?false:true,
-    }));
-  } else if(chartType==='doughnut'){
-    datasets=[{data:d.data, backgroundColor:d.row_labels.map((_,i)=>palette[i%palette.length])}];
-  } else {
-    datasets=[{label:d.measure_label, data:d.data, backgroundColor:palette[0], borderColor:palette[0], fill:chartType==='line'?false:true}];
-  }
-  canvasEl._chartInst = new Chart(canvasEl, {
-    type: chartType, data: {labels: d.row_labels, datasets},
-    options: {responsive:true, maintainAspectRatio:false, plugins:{legend:{display: !!d.column_labels || chartType==='doughnut'}},
-      scales: chartType==='doughnut' ? {} : {y:{beginAtZero:true, title:{display:true, text:d.measure_label}}}}
-  });
+  const cfg=crBuildChartConfig(d, chartType, format);
+  // The datalabels plugin is deliberately NOT registered globally (Chart.register),
+  // so it can't affect the existing Calling Report charts elsewhere in the app —
+  // it's passed in per-chart, only when this specific visual has it turned on.
+  const chartOpts={type:cfg.type, data:cfg.data, options:cfg.options};
+  if(cfg._usesDataLabels && typeof ChartDataLabels!=='undefined') chartOpts.plugins=[ChartDataLabels];
+  canvasEl._chartInst = new Chart(canvasEl, chartOpts);
 }
 
 // ── Saved tiles ──────────────────────────────────────────────────────────────
@@ -2653,7 +2801,8 @@ function saveCustomReportCanvas(){
             measure:v.measure, measureLabel:v.measureLabel,
             rows:v.rows, rowsLabel:v.rowsLabel,
             columns:v.columns||'', columnsLabel:v.columnsLabel||'',
-            chart_type:v.chart_type||'bar'};
+            chart_type:v.chart_type||'col_clustered',
+            format:v.format||{}};
   }).filter(v=>v.measure && v.rows);  // only persist visuals that are actually configured
   if(!visuals.length){ alert('Configure at least one visual (drag a measure + field, then "Apply to This Visual") before saving.'); return; }
   const config={
@@ -2710,7 +2859,8 @@ function crLoadReportIntoCanvas(cfg){
     const numPart=parseInt((String(id).match(/\d+/)||['0'])[0],10);
     if(numPart>_crVisualSeq) _crVisualSeq=numPart;
     _crVisuals[id]={measure:v.measure, measureLabel:v.measureLabel, rows:v.rows, rowsLabel:v.rowsLabel,
-                    columns:v.columns||'', columnsLabel:v.columnsLabel||'', chart_type:v.chart_type||'bar'};
+                    columns:v.columns||'', columnsLabel:v.columnsLabel||'', chart_type:v.chart_type||'col_clustered',
+                    format:v.format||{}};
     crAddWidgetWithHtml({w:v.w||4, h:v.h||4, x:v.x, y:v.y, id:id}, crVisualWidgetHtml(id));
     const titleEl=document.getElementById('cr-visual-title-'+id);
     if(titleEl) titleEl.textContent=(v.measureLabel||'')+(v.rowsLabel?' by '+v.rowsLabel:'');
@@ -3493,10 +3643,20 @@ function restoreCallWindow(){
 })();
 // ── About / version history ────────────────────────────────────────────────
 const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
-const APP_VERSION = "1.80";
+const APP_VERSION = "1.81";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.81", date:"2026-07", title:"Custom Report: 13 chart types, plus Excel/Power BI-style formatting",
+    changes:[
+      "Chart type picker replaced with an icon gallery covering everything Chart.js supports natively: Column (Clustered/Stacked/100% Stacked), Bar (same three, horizontal), Line, Area, Pie, Donut, Radar, Polar Area, and Table \u2014 set independently per visual.",
+      "New formatting panel per visual: choose a color palette (4 presets), toggle data labels on/off, toggle the legend and its position, and set an optional custom chart title.",
+      "100% Stacked correctly normalizes each row to percentages (verified precisely, e.g. 5 and 15 \u2192 25%/75%) rather than just capping the axis.",
+      "Pie/Donut/Radar correctly sum across a Columns field when one is set, since those chart types can't do a genuine cross-tab the way Bar/Line can.",
+      "Data labels use the official chartjs-plugin-datalabels, deliberately not registered globally so it can never affect the existing Calling Report charts \u2014 it only activates on a chart when that specific visual has labels turned on.",
+      "The exact chart-configuration logic (stacking, orientation, normalization, aggregation, legend rules) was tested directly as a standalone function across all 13 types before being wired into rendering.",
+      "Note: this covers everything achievable with the charting library already in the app. Scatter/Bubble/Combo (need a different data shape), Waterfall/Funnel/Gauge/Ribbon/Treemap/Maps (need new libraries or real custom build), and Decomposition Tree/Key Influencers (genuine statistics/ML features) remain a separate, future phase.",
+    ]},
   { v:"1.80", date:"2026-07", title:"Custom Report: multiple resizable visuals on one canvas, Power BI-style layout",
     changes:[
       "A saved report is no longer a single chart \u2014 it's a canvas that can hold several visuals side by side, each independently configured, freely dragged and resized. \u201C\u2795 Add Visual\u201D adds one; click it to select, then drag a measure into Values and a field into Rows (Columns optional) in the panel above, and \u201C\u25b6 Apply to This Visual\u201D renders it. Resizing a visual automatically redraws its chart to fit.",
