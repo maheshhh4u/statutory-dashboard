@@ -1976,8 +1976,14 @@ def custom_report_tiles_save():
     visuals = config.get("visuals") if isinstance(config, dict) else None
     if not isinstance(config, dict) or not isinstance(visuals, list) or not visuals:
         return jsonify({"ok": False, "error": "Add at least one configured visual before saving"}), 400
-    if not all(isinstance(v, dict) and v.get("measure") and (v.get("rows") or v.get("chart_type")=="card") for v in visuals):
-        return jsonify({"ok": False, "error": "Every visual needs at least a measure (and a field, unless it's a Card)"}), 400
+    def _visual_ok(v):
+        if not isinstance(v, dict):
+            return False
+        if v.get("isSlicer"):
+            return bool(v.get("slicerField"))
+        return bool(v.get("measure")) and (bool(v.get("rows")) or v.get("chart_type") == "card")
+    if not all(_visual_ok(v) for v in visuals):
+        return jsonify({"ok": False, "error": "Every visual needs at least a measure (and a field, unless it's a Card or Slicer)"}), 400
     db_exec("DELETE FROM custom_report_tiles WHERE name=?", (name,))
     db_exec("INSERT INTO custom_report_tiles(name, config, created_at) VALUES(?,?,?)",
             (name, json.dumps(config), datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))

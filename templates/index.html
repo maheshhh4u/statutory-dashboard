@@ -1214,7 +1214,7 @@ select:focus{outline:none;border-color:var(--green)}
           <div id="cr-palette-measures" style="margin-bottom:14px"></div>
           <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">🔀 Fields</div>
           <div id="cr-palette-dims"></div>
-          <p style="font-size:10.5px;color:var(--t3);margin-top:10px;line-height:1.4">Click "+ Add Visual", select it, then drag a measure into Values and a field into Rows (Columns optional) — or tap a chip then tap a well.</p>
+          <p style="font-size:10.5px;color:var(--t3);margin-top:10px;line-height:1.4">Click "+ Add Visual", select it, then drag a measure into Values and a field into Rows (Columns optional) — or tap a chip then tap a well. For a Slicer (interactive filter tile), pick one of the three Slicer icons under Chart Type instead — no measure/field needed there, just a field to filter by.</p>
         </div>
 
         <!-- RIGHT: toolbar (add visual + selected-visual config) + canvas -->
@@ -1243,8 +1243,20 @@ select:focus{outline:none;border-color:var(--green)}
             <div id="cr-chart-type-gallery" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px"></div>
             <input type="hidden" id="cr-chart-type" value="col_clustered">
 
-            <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Formatting</div>
-            <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
+            <div id="cr-slicer-config" style="display:none;margin-bottom:10px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px">
+              <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Slicer Field</div>
+              <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                <select id="cr-slicer-field" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
+                <label id="cr-slicer-multi-wrap" style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-slicer-multi" checked> Allow multiple selections</label>
+                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px;flex:1;min-width:140px">Label
+                  <input id="cr-slicer-title" placeholder="optional, defaults to the field name" style="flex:1;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                </label>
+              </div>
+              <p style="font-size:10.5px;color:var(--t3);margin:6px 0 0">A slicer filters every other visual on the canvas live as it's used — including in the read-only view, not just while editing. It ignores Measures/Fields, Formatting, and its own Filters section below.</p>
+            </div>
+
+            <div id="cr-fmt-section" style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Formatting</div>
+            <div id="cr-fmt-box" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
               <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Colors
                 <select id="cr-fmt-palette" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
                   <option value="navy">Navy/Gold (default)</option>
@@ -1268,19 +1280,21 @@ select:focus{outline:none;border-color:var(--green)}
               </label>
             </div>
 
-            <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Filters <span style="font-weight:400;text-transform:none;color:var(--t3);letter-spacing:0">— this visual only, on top of the date/caller range and Report Filters above</span></div>
-            <div id="cr-filters-list" style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px"></div>
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
-              <select id="cr-filter-field" onchange="crFilterFieldChanged()" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
-                <option value="">Filter by field…</option>
-              </select>
-              <span id="cr-filter-values-wrap"><select id="cr-filter-values" multiple size="5" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px;min-width:170px"></select></span>
-              <span id="cr-filter-daterange-wrap" style="display:none;gap:6px;align-items:center">
-                <label style="font-size:11px">From <input type="date" id="cr-filter-date-from" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></label>
-                <label style="font-size:11px">To <input type="date" id="cr-filter-date-to" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></label>
-              </span>
-              <button type="button" class="btn btn-outline btn-sm" onclick="crAddFilter()">+ Add Filter</button>
-              <span style="font-size:10.5px;color:var(--t3);flex-basis:100%">Pick a field, tick value(s) (or set a date range), then click "+ Add Filter" — you'll see it appear as a tag above. "▶ Apply to This Visual" will warn you if you forget.</span>
+            <div id="cr-filters-section">
+              <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Filters <span style="font-weight:400;text-transform:none;color:var(--t3);letter-spacing:0">— this visual only, on top of the date/caller range, Report Filters, and any active slicers above</span></div>
+              <div id="cr-filters-list" style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px"></div>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
+                <select id="cr-filter-field" onchange="crFilterFieldChanged()" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                  <option value="">Filter by field…</option>
+                </select>
+                <span id="cr-filter-values-wrap"><select id="cr-filter-values" multiple size="5" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px;min-width:170px"></select></span>
+                <span id="cr-filter-daterange-wrap" style="display:none;gap:6px;align-items:center">
+                  <label style="font-size:11px">From <input type="date" id="cr-filter-date-from" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></label>
+                  <label style="font-size:11px">To <input type="date" id="cr-filter-date-to" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></label>
+                </span>
+                <button type="button" class="btn btn-outline btn-sm" onclick="crAddFilter()">+ Add Filter</button>
+                <span style="font-size:10.5px;color:var(--t3);flex-basis:100%">Pick a field, tick value(s) (or set a date range), then click "+ Add Filter" — you'll see it appear as a tag above. "▶ Apply to This Visual" will warn you if you forget.</span>
+              </div>
             </div>
 
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -2425,10 +2439,16 @@ const CR_CHART_TYPES=[
   {value:'radar', label:'Radar', icon:'🕸️'},
   {value:'polarArea', label:'Polar Area', icon:'🎯'},
   {value:'table', label:'Table', icon:'🔢'},
+  {value:'slicer_dropdown', label:'Slicer - Dropdown', icon:'🔽'},
+  {value:'slicer_list', label:'Slicer - List', icon:'☰'},
+  {value:'slicer_timeline', label:'Slicer - Timeline', icon:'📅'},
 ];
-// Card is the one tile type that shows a single aggregated number with no
-// breakdown — it only ever needs a measure, not a Rows/Columns field.
-function crChartTypeNeedsRows(chartType){ return chartType!=='card'; }
+// Card is the one chart-tile type that shows a single aggregated number with
+// no breakdown; Slicers aren't charts at all — none of the three need a
+// Rows/Columns field (or a Values measure, or the Filters/Formatting
+// sections — see crSetChartType).
+function crChartTypeIsSlicer(chartType){ return chartType==='slicer_dropdown' || chartType==='slicer_list' || chartType==='slicer_timeline'; }
+function crChartTypeNeedsRows(chartType){ return chartType!=='card' && !crChartTypeIsSlicer(chartType); }
 const CR_PALETTES={
   navy:  ['#1e3a5f','#e8b339','#1d7a3a','#a02c2c','#6a4d99','#2d8f8f','#c47a2c','#4d6a99'],
   vivid: ['#e63946','#f4a261','#2a9d8f','#264653','#e9c46a','#8338ec','#3a86ff','#fb5607'],
@@ -2495,7 +2515,8 @@ function crInitGridIfNeeded(){
   // the new box instead of staying the old size.
   _crGrid.on('resizestop', function(event, el){
     const id=el.getAttribute('gs-id');
-    if(id) crRenderVisual(id);
+    const v=id && _crVisuals[id];
+    if(v){ if(v.isSlicer) crRenderSlicerVisual(id); else crRenderVisual(id); }
     crHideSizeBadge();
   });
   _crGrid.on('resize', function(event, el){ crShowSizeBadge(el); });
@@ -2659,6 +2680,7 @@ function crVisualWidgetHtml(id){
       <div id="cr-visual-chart-${id}-wrap" style="display:none;height:100%;position:relative"><canvas id="cr-visual-chart-${id}"></canvas></div>
       <div id="cr-visual-table-${id}" style="display:none;overflow:auto;height:100%;font-size:11px"></div>
       <div id="cr-visual-card-${id}" style="display:none;height:100%;flex-direction:column;align-items:center;justify-content:center;text-align:center"></div>
+      <div id="cr-visual-slicer-${id}" style="display:none;flex-direction:column;height:100%;overflow:auto;cursor:default" onclick="event.stopPropagation()"></div>
       <div id="cr-visual-empty-${id}" style="color:var(--t3);font-size:11px;text-align:center;padding:20px 4px">Click me, then configure using the panel above</div>
     </div>
   </div>`;
@@ -2694,6 +2716,11 @@ function crSelectVisual(id){
   _crCanvas.columns = v.columns ? {value:v.columns, label:v.columnsLabel} : null;
   renderCrWells();
   crSetChartType(v.chart_type||'col_clustered');
+  if(crChartTypeIsSlicer(v.chart_type)){
+    const sfEl=document.getElementById('cr-slicer-field'); if(sfEl) sfEl.value=v.slicerField||'';
+    const smEl=document.getElementById('cr-slicer-multi'); if(smEl) smEl.checked=v.slicerMulti!==false;
+    const stEl=document.getElementById('cr-slicer-title'); if(stEl) stEl.value=v.slicerTitle||'';
+  }
   const fmt=v.format||{};
   document.getElementById('cr-fmt-palette').value=fmt.palette||'navy';
   document.getElementById('cr-fmt-datalabels').checked=!!fmt.dataLabels;
@@ -2710,9 +2737,9 @@ function crSelectVisual(id){
   const fdtEl=document.getElementById('cr-filter-date-to'); if(fdtEl) fdtEl.value='';
   crFilterFieldChanged();
   document.getElementById('cr-visual-config').style.display='block';
-  document.getElementById('cr-selected-visual-label').textContent = v.measureLabel
-    ? 'Editing: '+v.measureLabel+(v.rowsLabel?' by '+v.rowsLabel:'')
-    : 'Editing a new, unconfigured visual';
+  document.getElementById('cr-selected-visual-label').textContent = crChartTypeIsSlicer(v.chart_type)
+    ? (v.slicerField ? 'Editing slicer: '+(v.slicerTitle||v.slicerFieldLabel||v.slicerField) : 'Editing a new, unconfigured slicer')
+    : (v.measureLabel ? 'Editing: '+v.measureLabel+(v.rowsLabel?' by '+v.rowsLabel:'') : 'Editing a new, unconfigured visual');
   document.querySelectorAll('#cr-gridstack .grid-stack-item').forEach(el=>{
     el.style.outline = el.getAttribute('gs-id')===id ? '2px solid #1e3a5f' : 'none';
   });
@@ -2745,16 +2772,50 @@ function crSetChartType(value){
     b.style.background = active ? '#eaf1fa' : '#fff';
     b.style.boxShadow = active ? 'inset 0 0 0 1px #1e3a5f' : 'none';
   });
+  const isSlicer=crChartTypeIsSlicer(value);
   const needsRows=crChartTypeNeedsRows(value);
+  const valuesWell=document.getElementById('cr-well-values');
   const rowsWell=document.getElementById('cr-well-rows');
   const colsWell=document.getElementById('cr-well-columns');
+  if(valuesWell) valuesWell.style.display=isSlicer?'none':'flex';
   if(rowsWell) rowsWell.style.display=needsRows?'flex':'none';
   if(colsWell) colsWell.style.display=needsRows?'flex':'none';
   if(!needsRows){
-    // Card tiles don't group by anything — clear any Rows/Columns already
-    // placed so a stale field from a previous chart type can't linger.
+    // Card tiles and Slicers don't group by anything — clear any Rows/Columns
+    // already placed so a stale field from a previous chart type can't linger.
     _crCanvas.rows=null; _crCanvas.columns=null;
     renderCrWells();
+  }
+  if(isSlicer) _crCanvas.values=null;  // Slicers don't take a measure either
+  renderCrWells();
+  const slicerCfg=document.getElementById('cr-slicer-config');
+  if(slicerCfg) slicerCfg.style.display=isSlicer?'block':'none';
+  const fmtLabel=document.getElementById('cr-fmt-section'), fmtBox=document.getElementById('cr-fmt-box');
+  if(fmtLabel) fmtLabel.style.display=isSlicer?'none':'block';
+  if(fmtBox) fmtBox.style.display=isSlicer?'none':'flex';
+  const filtersSection=document.getElementById('cr-filters-section');
+  if(filtersSection) filtersSection.style.display=isSlicer?'none':'block';
+  if(isSlicer) renderCrSlicerFieldOptions(value);
+}
+// Only discrete-value fields make sense in a Dropdown/List slicer (a slicer
+// needs a bounded set of options to show as choices) — Date Range is handled
+// by the separate Timeline slicer type instead, which has its own from/to
+// inputs rather than a field dropdown at all.
+function crSlicerFieldChoices(){
+  return [{value:'caller', label:'Caller'}].concat(_crFilterFieldsMeta.map(f=>({value:f.value,label:f.label})));
+}
+function renderCrSlicerFieldOptions(chartType){
+  const sel=document.getElementById('cr-slicer-field');
+  const multiWrap=document.getElementById('cr-slicer-multi-wrap');
+  if(!sel) return;
+  if(chartType==='slicer_timeline'){
+    sel.innerHTML='<option value="date_range">Date Range</option>';
+    sel.disabled=true;
+    if(multiWrap) multiWrap.style.display='none';
+  } else {
+    sel.disabled=false;
+    sel.innerHTML=crSlicerFieldChoices().map(f=>`<option value="${esc(f.value)}">${esc(f.label)}</option>`).join('');
+    if(multiWrap) multiWrap.style.display='flex';
   }
 }
 function renderCrFilterFieldOptions(){
@@ -2896,18 +2957,129 @@ function renderCrReportFilterFieldOptions(){
   sel.innerHTML='<option value="">Filter by field…</option>'+
     crFilterFieldChoices().map(f=>`<option value="${esc(f.value)}">${esc(f.label)}</option>`).join('');
 }
-// Merges report-level filters into one visual's filter list — a filter set
-// on the visual itself for a given field wins over the report-level one for
-// that same field, rather than AND-ing two conditions on the same field
-// together (which would just be more restrictive than either alone and
-// confusing to reason about).
+// Collects the current live selection from every Slicer tile on the canvas
+// as filter entries — this is what makes a slicer actually filter anything.
+// Deduped by field (last slicer wins) so two slicers accidentally set to the
+// same field don't AND together into an always-empty result.
+function crActiveSlicerFilters(){
+  const byField={};
+  Object.keys(_crVisuals).forEach(id=>{
+    const v=_crVisuals[id];
+    if(!v || !v.isSlicer) return;
+    if(v.chart_type==='slicer_timeline'){
+      if(v.slicerSelected && v.slicerSelected.from && v.slicerSelected.to){
+        byField['date_range']={field:'date_range', from:v.slicerSelected.from, to:v.slicerSelected.to};
+      }
+    } else if(v.slicerSelected && v.slicerSelected.length){
+      byField[v.slicerField]={field:v.slicerField, values:v.slicerSelected.slice()};
+    }
+  });
+  return Object.values(byField);
+}
+// Merges report-level filters and active slicer selections into one visual's
+// filter list. Precedence (highest wins per field): the visual's own
+// explicit Filters section > an active slicer on that field > a Report
+// Filter on that field — a manual override on one visual should always beat
+// a global control, and a slicer (live, interactive) should beat a static
+// Report Filter someone set once and might have forgotten about.
 function crCombinedFilters(v){
   const visualFilters=v.filters||[];
   const overriddenFields=new Set(visualFilters.map(f=>f.field));
-  const reportPart=_crReportFilters.filter(f=>!overriddenFields.has(f.field));
-  return reportPart.concat(visualFilters).map(f=> f.field==='date_range'
+  const slicerFilters=crActiveSlicerFilters().filter(f=>!overriddenFields.has(f.field));
+  const slicerFields=new Set(slicerFilters.map(f=>f.field));
+  const reportPart=_crReportFilters.filter(f=>!overriddenFields.has(f.field) && !slicerFields.has(f.field));
+  return reportPart.concat(slicerFilters).concat(visualFilters).map(f=> f.field==='date_range'
     ? {field:'date_range', from:f.from, to:f.to}
     : {field:f.field, values:f.values});
+}
+// Re-renders every non-slicer visual on the canvas (charts, tables, cards)
+// so a slicer's new selection takes effect immediately — this is what makes
+// it "live" cross-filtering rather than a filter that needs a manual
+// refresh. Runs in view mode too, since a slicer is meant to be usable by
+// whoever's just looking at the report, not only while editing it.
+function crRefreshDependentsOfSlicer(exceptId){
+  Object.keys(_crVisuals).forEach(id=>{
+    if(id===exceptId) return;
+    const v=_crVisuals[id];
+    if(v && !v.isSlicer) crRenderVisual(id);
+  });
+}
+// ── Slicer rendering and interaction ──────────────────────────────────────
+function crRenderSlicerVisual(id){
+  const v=_crVisuals[id];
+  if(!v || !v.isSlicer) return;
+  const emptyEl=document.getElementById('cr-visual-empty-'+id); if(emptyEl) emptyEl.style.display='none';
+  const wrap=document.getElementById('cr-visual-slicer-'+id);
+  if(!wrap) return;
+  wrap.style.display='flex';
+  const label=v.slicerTitle||v.slicerFieldLabel||'Slicer';
+  if(v.chart_type==='slicer_timeline'){
+    const from=(v.slicerSelected&&v.slicerSelected.from)||'';
+    const to=(v.slicerSelected&&v.slicerSelected.to)||'';
+    wrap.innerHTML=`<div style="font-size:11px;font-weight:700;color:#3d2d5a;margin-bottom:6px">📅 ${esc(label)}</div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <label style="font-size:11px">From <input type="date" id="cr-slicer-val-${id}-from" value="${esc(from)}" onchange="crSlicerValueChanged('${id}')" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11px"></label>
+        <label style="font-size:11px">To <input type="date" id="cr-slicer-val-${id}-to" value="${esc(to)}" onchange="crSlicerValueChanged('${id}')" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11px"></label>
+        <button type="button" onclick="crClearSlicer('${id}')" style="font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">Clear</button>
+      </div>`;
+    return;
+  }
+  const meta=crFilterFieldMeta(v.slicerField);
+  const opts=(meta&&meta.options)||[];
+  const selected=v.slicerSelected||[];
+  if(v.chart_type==='slicer_dropdown'){
+    wrap.innerHTML=`<div style="font-size:11px;font-weight:700;color:#3d2d5a;margin-bottom:6px">🔽 ${esc(label)}</div>
+      <select id="cr-slicer-val-${id}" ${v.slicerMulti?'multiple':''} size="${v.slicerMulti?Math.min(6,Math.max(3,opts.length||3)):1}" onchange="crSlicerValueChanged('${id}')" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+        ${!v.slicerMulti?'<option value="">(all — nothing selected)</option>':''}
+        ${opts.map(o=>`<option value="${esc(o)}" ${selected.includes(o)?'selected':''}>${esc(o)}</option>`).join('')}
+      </select>
+      <button type="button" onclick="crClearSlicer('${id}')" style="margin-top:6px;font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">Clear</button>`;
+  } else {
+    // slicer_list — a row of toggle chips, Power BI "list slicer" style
+    wrap.innerHTML=`<div style="font-size:11px;font-weight:700;color:#3d2d5a;margin-bottom:6px">☰ ${esc(label)}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px;overflow:auto">
+        ${opts.map(o=>{
+          const active=selected.includes(o);
+          return `<button type="button" data-val="${esc(o)}" onclick="crToggleSlicerListValue('${id}', this)"
+            style="font-size:11px;padding:4px 9px;border-radius:14px;border:1px solid ${active?'#1e3a5f':'var(--border)'};background:${active?'#1e3a5f':'#fff'};color:${active?'#fff':'#333'};cursor:pointer">${esc(o)}</button>`;
+        }).join('')}
+      </div>
+      <button type="button" onclick="crClearSlicer('${id}')" style="margin-top:6px;font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">Clear</button>`;
+  }
+}
+function crSlicerValueChanged(id){
+  const v=_crVisuals[id];
+  if(!v) return;
+  if(v.chart_type==='slicer_timeline'){
+    const from=document.getElementById('cr-slicer-val-'+id+'-from').value;
+    const to=document.getElementById('cr-slicer-val-'+id+'-to').value;
+    v.slicerSelected=(from&&to)?{from,to}:null;
+  } else {
+    const sel=document.getElementById('cr-slicer-val-'+id);
+    v.slicerSelected=Array.from(sel.selectedOptions).map(o=>o.value).filter(Boolean);
+  }
+  crRefreshDependentsOfSlicer(id);
+}
+function crToggleSlicerListValue(id, btnEl){
+  const v=_crVisuals[id];
+  if(!v) return;
+  const val=btnEl.dataset.val;
+  v.slicerSelected=v.slicerSelected||[];
+  if(v.slicerMulti){
+    const idx=v.slicerSelected.indexOf(val);
+    if(idx>=0) v.slicerSelected.splice(idx,1); else v.slicerSelected.push(val);
+  } else {
+    v.slicerSelected=v.slicerSelected.includes(val)?[]:[val];
+  }
+  crRenderSlicerVisual(id);  // repaint chip active states
+  crRefreshDependentsOfSlicer(id);
+}
+function crClearSlicer(id){
+  const v=_crVisuals[id];
+  if(!v) return;
+  v.slicerSelected=v.chart_type==='slicer_timeline'?null:[];
+  crRenderSlicerVisual(id);
+  crRefreshDependentsOfSlicer(id);
 }
 function crRefreshAllVisuals(){
   const pending=crReadFilterBuilder('cr-rf');
@@ -2922,8 +3094,11 @@ function crRefreshAllVisuals(){
       return;
     }
   }
-  Object.keys(_crVisuals).forEach(id=>crRenderVisual(id));
-  if(rfStatus){ rfStatus.textContent='✓ Refreshed all visuals against the current date/caller range and Report Filters.'; rfStatus.style.color='var(--green)'; }
+  Object.keys(_crVisuals).forEach(id=>{
+    const v=_crVisuals[id];
+    if(v && v.isSlicer) crRenderSlicerVisual(id); else crRenderVisual(id);
+  });
+  if(rfStatus){ rfStatus.textContent='✓ Refreshed all visuals against the current date/caller range, Report Filters, and slicers.'; rfStatus.style.color='var(--green)'; }
 }
 // The filter picker (field + values dropdowns) is a staging area for ONE
 // filter at a time — it does not represent "the" filter for the visual, it's
@@ -2952,8 +3127,36 @@ function crApplyToSelectedVisual(){
   const id=_crSelectedVisualId;
   const status=document.getElementById('cr-result-status');
   const chartType=document.getElementById('cr-chart-type').value;
-  const needsRows=crChartTypeNeedsRows(chartType);
   if(!id){ status.textContent='⚠ Add or select a visual first.'; status.style.color='#c0392b'; return; }
+
+  if(crChartTypeIsSlicer(chartType)){
+    const slicerField=document.getElementById('cr-slicer-field').value;
+    if(!slicerField){ status.textContent='⚠ Pick a field for this slicer first.'; status.style.color='#c0392b'; return; }
+    const meta=crFilterFieldMeta(slicerField);
+    const prev=_crVisuals[id]||{};
+    // Preserve the current selection across re-Applying the same slicer
+    // (e.g. just changing its label) rather than resetting it to empty —
+    // but a fresh slicer, or one whose field just changed, starts cleared.
+    const fieldChanged=prev.slicerField && prev.slicerField!==slicerField;
+    const keepSelection = prev.isSlicer && !fieldChanged;
+    _crVisuals[id]={
+      isSlicer:true, chart_type:chartType,
+      slicerField, slicerFieldLabel:(meta&&meta.label)||slicerField,
+      slicerMulti: chartType==='slicer_timeline' ? true : document.getElementById('cr-slicer-multi').checked,
+      slicerTitle: document.getElementById('cr-slicer-title').value.trim(),
+      slicerSelected: keepSelection ? prev.slicerSelected : (chartType==='slicer_timeline' ? null : []),
+      measure:'', measureLabel:'', rows:'', rowsLabel:'', columns:'', columnsLabel:'', format:{}, filters:[],
+    };
+    const titleEl=document.getElementById('cr-visual-title-'+id);
+    const titleText=_crVisuals[id].slicerTitle||_crVisuals[id].slicerFieldLabel;
+    if(titleEl) titleEl.textContent='🔧 '+titleText;
+    document.getElementById('cr-selected-visual-label').textContent='Editing slicer: '+titleText;
+    crRenderSlicerVisual(id);
+    status.textContent='✓ Applied'; status.style.color='var(--green)';
+    return;
+  }
+
+  const needsRows=crChartTypeNeedsRows(chartType);
   if(!_crCanvas.values){ status.textContent='⚠ Drag a measure into Values first.'; status.style.color='#c0392b'; return; }
   if(needsRows && !_crCanvas.rows){ status.textContent='⚠ Drag a field into Rows first.'; status.style.color='#c0392b'; return; }
   const pending=crPendingFilterSelection();
@@ -3017,8 +3220,11 @@ function crDuplicateSelectedVisual(){
   // already occupied, same as it does for any other placement conflict.
   crAddWidgetWithHtml({w, h, x:srcX+w, y:srcY, id:newId}, crVisualWidgetHtml(newId));
   const titleEl=document.getElementById('cr-visual-title-'+newId);
-  if(titleEl) titleEl.textContent=(_crVisuals[newId].measureLabel||'')+(_crVisuals[newId].rowsLabel?' by '+_crVisuals[newId].rowsLabel:'');
-  crRenderVisual(newId);
+  const dup=_crVisuals[newId];
+  if(titleEl) titleEl.textContent=dup.isSlicer
+    ? '🔧 '+(dup.slicerTitle||dup.slicerFieldLabel||'Slicer')
+    : (dup.measureLabel||'')+(dup.rowsLabel?' by '+dup.rowsLabel:'');
+  if(dup.isSlicer) crRenderSlicerVisual(newId); else crRenderVisual(newId);
   crSelectVisual(newId);
   if(status){ status.textContent='✓ Duplicated at the same size ('+w+'×'+h+').'; status.style.color='var(--green)'; }
 }
@@ -3032,7 +3238,9 @@ function renderCrMatchSizeOptions(){
   sel.disabled=false;
   sel.innerHTML=others.map(id=>{
     const v=_crVisuals[id];
-    const label=(v.measureLabel||'Untitled visual')+(v.rowsLabel?' by '+v.rowsLabel:'');
+    const label=v.isSlicer
+      ? '🔧 '+(v.slicerTitle||v.slicerFieldLabel||'Slicer')
+      : (v.measureLabel||'Untitled visual')+(v.rowsLabel?' by '+v.rowsLabel:'');
     return `<option value="${esc(id)}">${esc(label)}</option>`;
   }).join('');
 }
@@ -3048,7 +3256,8 @@ function crMatchSizeToSelected(){
   const w=parseInt(targetEl.getAttribute('gs-w')||'4',10);
   const h=parseInt(targetEl.getAttribute('gs-h')||'4',10);
   _crGrid.update(curEl, {w, h});
-  crRenderVisual(id);  // Chart.js needs a redraw to fit the new box
+  const v=_crVisuals[id];
+  if(v && v.isSlicer) crRenderSlicerVisual(id); else crRenderVisual(id);  // Chart.js needs a redraw to fit the new box
   status.textContent='✓ Matched size ('+w+'×'+h+').'; status.style.color='var(--green)';
 }
 function crRenderVisual(id){
@@ -3220,9 +3429,13 @@ function saveCustomReportCanvas(){
             columns:v.columns||'', columnsLabel:v.columnsLabel||'',
             chart_type:v.chart_type||'col_clustered',
             format:v.format||{},
-            filters:v.filters||[]};
-  }).filter(v=>v.measure && (v.rows || !crChartTypeNeedsRows(v.chart_type)));  // only persist visuals that are actually configured
-  if(!visuals.length){ alert('Configure at least one visual (drag a measure + field, then "Apply to This Visual") before saving.'); return; }
+            filters:v.filters||[],
+            isSlicer:!!v.isSlicer,
+            slicerField:v.slicerField||'', slicerFieldLabel:v.slicerFieldLabel||'',
+            slicerMulti:v.slicerMulti!==false, slicerTitle:v.slicerTitle||'',
+            slicerSelected:v.slicerSelected!==undefined ? v.slicerSelected : (v.chart_type==='slicer_timeline'?null:[])};
+  }).filter(v=> v.isSlicer ? !!v.slicerField : (v.measure && (v.rows || !crChartTypeNeedsRows(v.chart_type))));  // only persist visuals (chart or slicer) that are actually configured
+  if(!visuals.length){ alert('Configure at least one visual or slicer before saving.'); return; }
   const config={
     filters:_crReportFilters,
     visuals,
@@ -3286,15 +3499,30 @@ function crLoadReportIntoCanvas(cfg){
   crReportFilterFieldChanged();
   (cfg.visuals||[]).forEach(v=>{
     const id=v.id || ('v'+(++_crVisualSeq));
+    v.id=id;  // write back so the second pass below can find it even if the saved config predates ids
     const numPart=parseInt((String(id).match(/\d+/)||['0'])[0],10);
     if(numPart>_crVisualSeq) _crVisualSeq=numPart;
     _crVisuals[id]={measure:v.measure, measureLabel:v.measureLabel, rows:v.rows, rowsLabel:v.rowsLabel,
                     columns:v.columns||'', columnsLabel:v.columnsLabel||'', chart_type:v.chart_type||'col_clustered',
-                    format:v.format||{}, filters:v.filters||[]};
+                    format:v.format||{}, filters:v.filters||[],
+                    isSlicer:!!v.isSlicer,
+                    slicerField:v.slicerField||'', slicerFieldLabel:v.slicerFieldLabel||'',
+                    slicerMulti:v.slicerMulti!==false, slicerTitle:v.slicerTitle||'',
+                    slicerSelected:v.slicerSelected!==undefined ? v.slicerSelected : (v.chart_type==='slicer_timeline'?null:[])};
     crAddWidgetWithHtml({w:v.w||4, h:v.h||4, x:v.x, y:v.y, id:id}, crVisualWidgetHtml(id));
     const titleEl=document.getElementById('cr-visual-title-'+id);
-    if(titleEl) titleEl.textContent=(v.measureLabel||'')+(v.rowsLabel?' by '+v.rowsLabel:'');
-    crRenderVisual(id);
+    if(titleEl) titleEl.textContent=v.isSlicer
+      ? '🔧 '+(v.slicerTitle||v.slicerFieldLabel||'Slicer')
+      : (v.measureLabel||'')+(v.rowsLabel?' by '+v.rowsLabel:'');
+  });
+  // Slicers are rendered in a second pass, after every visual exists — a
+  // slicer's initial paint doesn't depend on others, but keeping the two
+  // passes separate mirrors how crRefreshAllVisuals works and avoids any
+  // ordering assumption about which tiles were saved first.
+  (cfg.visuals||[]).forEach(v=>{
+    const id=v.id;
+    if(!id || !_crVisuals[id]) return;
+    if(_crVisuals[id].isSlicer) crRenderSlicerVisual(id); else crRenderVisual(id);
   });
   crDeselectVisual();
 }
@@ -4077,6 +4305,16 @@ const APP_VERSION = "1.82";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.87", date:"2026-07", title:"Custom Report: Slicers — interactive filter tiles, Power BI/Excel-style",
+    changes:[
+      "Three new tile types, added the same way as any chart \u2014 click \"+ Add Visual\", then pick one of the three new icons under Chart Type instead of a chart: Dropdown (a select list, single- or multi-choice), List (a row of tap-to-toggle chips \u2014 the \"static column/row-based filter\" ask), and Timeline (a From/To date range).",
+      "A slicer doesn't show data itself \u2014 it filters every OTHER visual on the canvas live, the instant you use it, the same way a Power BI slicer cross-filters a page. No \"Apply\"/\"Refresh\" needed to see the effect.",
+      "This works in the read-only view too (not just while editing) \u2014 a slicer is meant to be usable by whoever's just looking at the report, exactly like Power BI's viewer mode.",
+      "Dropdown and List slicers filter on Caller, Outcome, Stage, or Source List \u2014 whichever one you pick when setting the slicer up. Timeline always filters Date Range.",
+      "Precedence when a slicer, a Report Filter, and a visual's own Filters section could all touch the same field on the same visual: the visual's own Filters section wins, then an active slicer, then a Report Filter \u2014 a manual override should always beat a global control, and a live slicer should beat a static filter someone set once and might have forgotten was there.",
+      "Slicer selections are saved and restored with the report, and \"Clear\" resets a slicer back to \"no filter\" (showing everything) in one click.",
+      "Scope note on the Timeline slicer: it's a compact From/To date-range control, not a full draggable histogram bar like Power BI's timeline visual \u2014 that would be a materially bigger, separate piece of work (a date-bucketed bar chart with live drag-to-select), and this delivers the same filtering result more simply and reliably. Flagging it in case the fuller visual version is still wanted as a follow-up.",
+    ]},
   { v:"1.86", date:"2026-07", title:"Custom Report: opening a saved report now shows a clean, canvas-only view",
     changes:[
       "Opening a saved report from the gallery (\"📂 Open\") now lands on a display-only view of the canvas \u2014 no Fields sidebar, no Add Visual toolbar, no Report Filters editing controls, and the visuals themselves can't be dragged, resized, or clicked into their edit panel.",
