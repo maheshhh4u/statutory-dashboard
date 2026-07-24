@@ -1207,8 +1207,8 @@ select:focus{outline:none;border-color:var(--green)}
         </div>
       </div>
 
-      <div id="cr-builder-grid" style="display:grid;grid-template-columns:1fr 380px;gap:16px;align-items:start">
-        <!-- LEFT: canvas — the dominant area, Power BI style -->
+      <div id="cr-builder-grid" style="display:grid;grid-template-columns:1fr 260px 300px 220px;gap:14px;align-items:start">
+        <!-- COLUMN 1: canvas — the dominant area, Power BI style -->
         <div>
           <div id="cr-add-visual-toolbar" style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
             <button class="btn btn-green btn-sm" onclick="crAddVisual()">➕ Add Visual</button>
@@ -1217,146 +1217,154 @@ select:focus{outline:none;border-color:var(--green)}
           <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;min-height:400px"></div>
         </div>
 
-        <!-- RIGHT: everything else, stacked top to bottom, sticky and
-             independently scrollable so it stays alongside the canvas
-             instead of pushing it below the fold on a long page. -->
-        <div id="cr-right-rail" style="position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding-right:4px">
-        <div id="cr-fields-sidebar" style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px">
+        <!-- COLUMN 2: Format — chart type, title bar, slicer field, formatting.
+             Sticky and independently scrollable, same as columns 3 and 4, so
+             each stays fully visible alongside the canvas without dragging
+             the others' scroll position along with it. -->
+        <div id="cr-panel-format" style="display:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#faf8fd;border:1px solid #e2dcf0;border-radius:8px;padding:10px 12px">
+          <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Chart Type</div>
+          <div id="cr-chart-type-gallery" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px"></div>
+          <input type="hidden" id="cr-chart-type" value="col_clustered">
+
+          <label style="font-size:11.5px;display:flex;align-items:center;gap:5px;margin-bottom:10px"><input type="checkbox" id="cr-tile-titlebar" checked> Show tile title bar (name + drag handle)</label>
+
+          <div id="cr-slicer-config" style="display:none;margin-bottom:10px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px">
+            <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Slicer Field</div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <select id="cr-slicer-field" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
+              <label id="cr-slicer-multi-wrap" style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-slicer-multi" checked> Allow multiple selections</label>
+              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Label
+                <input id="cr-slicer-title" placeholder="optional, defaults to the field name" style="flex:1;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+              </label>
+            </div>
+            <p style="font-size:10.5px;color:var(--t3);margin:6px 0 0">A slicer filters every other visual on the canvas live as it's used — including in the read-only view, not just while editing. It ignores Measures/Fields, Formatting, and its own Filters section (Drag & Drop column).</p>
+          </div>
+
+          <div id="cr-fmt-section" style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Formatting</div>
+          <div id="cr-fmt-box" style="display:flex;flex-direction:column;gap:8px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px">
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Palette
+                <select id="cr-fmt-palette" onchange="crApplyPalettePreset()" style="flex:1;padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                  <option value="navy">Navy/Gold (default)</option>
+                  <option value="vivid">Vivid</option>
+                  <option value="pastel">Pastel</option>
+                  <option value="mono">Monochrome Blue</option>
+                </select>
+              </label>
+              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                <button type="button" class="btn btn-outline btn-sm" onclick="crTogglePaletteCustomize()">🎨 Customize Colors</button>
+                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-gridlines" checked onchange="crPreviewFormatChanges()"> Gridlines</label>
+              </div>
+            </div>
+            <div id="cr-fmt-palette-swatches" style="display:none;flex-wrap:wrap;gap:6px;padding-top:6px;border-top:1px dashed var(--border)"></div>
+            <div style="display:flex;flex-direction:column;gap:8px;padding-top:6px;border-top:1px dashed var(--border)">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-datalabels" onchange="crPreviewFormatChanges()"> Data labels</label>
+                <span id="cr-fmt-datalabels-color-wrap"></span>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-legend" checked onchange="crPreviewFormatChanges()"> Legend</label>
+                <select id="cr-fmt-legend-pos" onchange="crPreviewFormatChanges()" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                  <option value="top">Top</option>
+                  <option value="bottom">Bottom</option>
+                  <option value="left">Left</option>
+                  <option value="right">Right</option>
+                </select>
+                <span id="cr-fmt-legend-color-wrap"></span>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;padding-top:6px;border-top:1px dashed var(--border)">
+              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Title
+                <input id="cr-fmt-title" placeholder="optional chart title" oninput="crPreviewFormatChanges()" style="flex:1;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                <span id="cr-fmt-title-color-wrap"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- COLUMN 3: Drag & Drop — Custom Measure, the Values/Rows/Columns
+             wells, Filters, and the action buttons. Sits directly next to
+             the Fields column (4) so a field/measure chip can be dragged
+             straight across without either panel needing to scroll. -->
+        <div id="cr-panel-dragdrop" style="display:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#faf8fd;border:1px solid #e2dcf0;border-radius:8px;padding:10px 12px">
+          <div id="cr-measure-builder" style="background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
+            <label style="font-size:11.5px;font-weight:700;display:flex;align-items:center;gap:5px"><input type="checkbox" id="cr-cm-enable" onchange="crToggleCustomMeasureBuilder()"> 🧮 Custom Measure</label>
+            <div id="cr-cm-body" style="display:none;margin-top:8px">
+              <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;font-size:11.5px">
+                <label><input type="radio" name="cr-cm-mode" value="simple" checked onchange="crSetCustomMeasureMode('simple')"> Single Aggregation</label>
+                <label><input type="radio" name="cr-cm-mode" value="composite" onchange="crSetCustomMeasureMode('composite')"> Combine Two Measures</label>
+              </div>
+              <div id="cr-cm-simple" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px">
+                <select id="cr-cm-agg" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
+                <select id="cr-cm-field" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
+              </div>
+              <div id="cr-cm-composite" style="display:none;flex-direction:column;gap:8px;margin-bottom:8px">
+                <div id="cr-cm-operand-a"></div>
+                <div style="text-align:center">
+                  <select id="cr-cm-op" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
+                </div>
+                <div id="cr-cm-operand-b"></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <button type="button" class="btn btn-outline btn-sm" onclick="crUseCustomMeasure()">Use This Measure</button>
+                <span id="cr-cm-status" style="font-size:11px;color:var(--t3)"></span>
+              </div>
+              <p style="font-size:10.5px;color:var(--t3);margin:6px 0 0">A Follow-Up measure can only be grouped by Caller, Day, Week, Month, or Hour of Day (or used as a Card).</p>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
+            <div id="cr-well-values" data-well="values" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:38px;border:2px dashed #d8c9ee;border-radius:6px;padding:6px 10px;background:#fff;display:flex;align-items:center;gap:6px">
+              <span style="font-size:10px;font-weight:700;color:#6a4d99;text-transform:uppercase;flex-shrink:0">Values</span>
+              <span id="cr-well-values-content" style="color:var(--t3);font-size:11.5px">Drag a measure</span>
+            </div>
+            <div id="cr-well-rows" data-well="rows" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:38px;border:2px dashed #c9dcee;border-radius:6px;padding:6px 10px;background:#fff;display:flex;align-items:center;gap:6px">
+              <span style="font-size:10px;font-weight:700;color:#2d5a8f;text-transform:uppercase;flex-shrink:0">Rows</span>
+              <span id="cr-well-rows-content" style="color:var(--t3);font-size:11.5px">Drag a field</span>
+            </div>
+            <div id="cr-well-columns" data-well="columns" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:38px;border:2px dashed #eee0c9;border-radius:6px;padding:6px 10px;background:#fff;display:flex;align-items:center;gap:6px">
+              <span style="font-size:10px;font-weight:700;color:#8a6d1a;text-transform:uppercase;flex-shrink:0">Columns</span>
+              <span id="cr-well-columns-content" style="color:var(--t3);font-size:11.5px">Optional</span>
+            </div>
+          </div>
+
+          <div id="cr-filters-section">
+            <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Filters <span style="font-weight:400;text-transform:none;color:var(--t3);letter-spacing:0">— on top of the date/caller range, Report Filters, and slicers</span></div>
+            <div id="cr-filters-list" style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px"></div>
+            <div style="display:flex;flex-direction:column;gap:6px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
+              <select id="cr-filter-field" onchange="crFilterFieldChanged()" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                <option value="">Filter by field…</option>
+              </select>
+              <span id="cr-filter-values-wrap"><select id="cr-filter-values" multiple size="5" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select></span>
+              <span id="cr-filter-daterange-wrap" style="display:none;gap:6px;align-items:center">
+                <label style="font-size:11px">From <input type="date" id="cr-filter-date-from" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></label>
+                <label style="font-size:11px">To <input type="date" id="cr-filter-date-to" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></label>
+              </span>
+              <button type="button" class="btn btn-outline btn-sm" onclick="crAddFilter()">+ Add Filter</button>
+              <span style="font-size:10.5px;color:var(--t3)">Pick a field, tick value(s) (or set a date range), then click "+ Add Filter". "▶ Apply" will warn you if you forget.</span>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <button class="btn btn-green btn-sm" onclick="crApplyToSelectedVisual()">▶ Apply to This Visual</button>
+            <button class="btn btn-outline btn-sm" onclick="crDuplicateSelectedVisual()">⧉ Duplicate Visual</button>
+            <span style="display:flex;align-items:center;gap:4px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:3px 6px">
+              <select id="cr-match-size-target" style="flex:1;padding:2px 4px;border:none;font-size:11.5px;min-width:0"></select>
+              <button type="button" class="btn btn-outline btn-sm" onclick="crMatchSizeToSelected()">⇔ Match Size</button>
+            </span>
+            <button class="btn btn-outline btn-sm" onclick="crRemoveSelectedVisual()">🗑 Remove Visual</button>
+          </div>
+          <div id="cr-result-status" style="font-size:11.5px;color:var(--t3);margin-top:6px"></div>
+        </div>
+
+        <!-- COLUMN 4: Fields — the drag source, always visible (not gated on
+             a visual being selected) so it's ready the moment column 3
+             appears next to it. -->
+        <div id="cr-fields-sidebar" style="position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px">
           <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">📏 Measures</div>
           <div id="cr-palette-measures" style="margin-bottom:14px"></div>
           <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">🔀 Fields</div>
           <div id="cr-palette-dims"></div>
-          <p style="font-size:10.5px;color:var(--t3);margin-top:10px;line-height:1.4">Click "+ Add Visual", select it, then drag a measure into Values and a field into Rows (Columns optional) — or tap a chip then tap a well. For a Slicer (interactive filter tile), pick one of the three Slicer icons under Chart Type instead — no measure/field needed there, just a field to filter by.</p>
-        </div>
-
-          <div id="cr-visual-config" style="display:none;background:#faf8fd;border:1px solid #e2dcf0;border-radius:8px;padding:10px 12px">
-            <div id="cr-measure-builder" style="background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
-              <label style="font-size:11.5px;font-weight:700;display:flex;align-items:center;gap:5px"><input type="checkbox" id="cr-cm-enable" onchange="crToggleCustomMeasureBuilder()"> 🧮 Use a Custom Measure (instead of dragging one into Values)</label>
-              <div id="cr-cm-body" style="display:none;margin-top:8px">
-                <div style="display:flex;gap:14px;margin-bottom:8px;font-size:11.5px;flex-wrap:wrap">
-                  <label><input type="radio" name="cr-cm-mode" value="simple" checked onchange="crSetCustomMeasureMode('simple')"> Single Aggregation</label>
-                  <label><input type="radio" name="cr-cm-mode" value="composite" onchange="crSetCustomMeasureMode('composite')"> Combine Two Measures</label>
-                </div>
-                <div id="cr-cm-simple" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-                  <select id="cr-cm-agg" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
-                  <span style="font-size:11.5px;color:var(--t3)">of</span>
-                  <select id="cr-cm-field" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px;flex:1;min-width:140px"></select>
-                </div>
-                <div id="cr-cm-composite" style="display:none;flex-direction:column;gap:8px;margin-bottom:8px">
-                  <div id="cr-cm-operand-a"></div>
-                  <div style="text-align:center">
-                    <select id="cr-cm-op" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
-                  </div>
-                  <div id="cr-cm-operand-b"></div>
-                </div>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                  <button type="button" class="btn btn-outline btn-sm" onclick="crUseCustomMeasure()">Use This Measure</button>
-                  <span id="cr-cm-status" style="font-size:11px;color:var(--t3)"></span>
-                </div>
-                <p style="font-size:10.5px;color:var(--t3);margin:6px 0 0">A measure that uses a Follow-Up field can only be grouped by Caller, Day, Week, Month, or Hour of Day (or used as a Card) — Follow-ups aren't individual calls, so Outcome/Stage/Source List don't apply to them.</p>
-              </div>
-            </div>
-            <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px">
-              <div id="cr-well-values" data-well="values" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:38px;border:2px dashed #d8c9ee;border-radius:6px;padding:6px 10px;background:#fff;display:flex;align-items:center;gap:6px">
-                <span style="font-size:10px;font-weight:700;color:#6a4d99;text-transform:uppercase;flex-shrink:0">Values</span>
-                <span id="cr-well-values-content" style="color:var(--t3);font-size:11.5px">Drag a measure</span>
-              </div>
-              <div id="cr-well-rows" data-well="rows" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:38px;border:2px dashed #c9dcee;border-radius:6px;padding:6px 10px;background:#fff;display:flex;align-items:center;gap:6px">
-                <span style="font-size:10px;font-weight:700;color:#2d5a8f;text-transform:uppercase;flex-shrink:0">Rows</span>
-                <span id="cr-well-rows-content" style="color:var(--t3);font-size:11.5px">Drag a field</span>
-              </div>
-              <div id="cr-well-columns" data-well="columns" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:38px;border:2px dashed #eee0c9;border-radius:6px;padding:6px 10px;background:#fff;display:flex;align-items:center;gap:6px">
-                <span style="font-size:10px;font-weight:700;color:#8a6d1a;text-transform:uppercase;flex-shrink:0">Columns</span>
-                <span id="cr-well-columns-content" style="color:var(--t3);font-size:11.5px">Optional</span>
-              </div>
-            </div>
-            <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Chart Type</div>
-            <div id="cr-chart-type-gallery" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px"></div>
-            <input type="hidden" id="cr-chart-type" value="col_clustered">
-
-            <label style="font-size:11.5px;display:flex;align-items:center;gap:5px;margin-bottom:10px"><input type="checkbox" id="cr-tile-titlebar" checked> Show tile title bar (name + drag handle)</label>
-
-            <div id="cr-slicer-config" style="display:none;margin-bottom:10px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px">
-              <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Slicer Field</div>
-              <div style="display:flex;flex-direction:column;gap:8px">
-                <select id="cr-slicer-field" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
-                <label id="cr-slicer-multi-wrap" style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-slicer-multi" checked> Allow multiple selections</label>
-                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Label
-                  <input id="cr-slicer-title" placeholder="optional, defaults to the field name" style="flex:1;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
-                </label>
-              </div>
-              <p style="font-size:10.5px;color:var(--t3);margin:6px 0 0">A slicer filters every other visual on the canvas live as it's used — including in the read-only view, not just while editing. It ignores Measures/Fields, Formatting, and its own Filters section below.</p>
-            </div>
-
-            <div id="cr-fmt-section" style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Formatting</div>
-            <div id="cr-fmt-box" style="display:flex;flex-direction:column;gap:8px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
-              <div style="display:flex;flex-direction:column;gap:8px">
-                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Palette
-                  <select id="cr-fmt-palette" onchange="crApplyPalettePreset()" style="flex:1;padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
-                    <option value="navy">Navy/Gold (default)</option>
-                    <option value="vivid">Vivid</option>
-                    <option value="pastel">Pastel</option>
-                    <option value="mono">Monochrome Blue</option>
-                  </select>
-                </label>
-                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-                  <button type="button" class="btn btn-outline btn-sm" onclick="crTogglePaletteCustomize()">🎨 Customize Colors</button>
-                  <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-gridlines" checked onchange="crPreviewFormatChanges()"> Gridlines</label>
-                </div>
-              </div>
-              <div id="cr-fmt-palette-swatches" style="display:none;flex-wrap:wrap;gap:6px;padding-top:6px;border-top:1px dashed var(--border)"></div>
-              <div style="display:flex;flex-direction:column;gap:8px;padding-top:6px;border-top:1px dashed var(--border)">
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                  <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-datalabels" onchange="crPreviewFormatChanges()"> Data labels</label>
-                  <span id="cr-fmt-datalabels-color-wrap"></span>
-                </div>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                  <label style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-fmt-legend" checked onchange="crPreviewFormatChanges()"> Legend</label>
-                  <select id="cr-fmt-legend-pos" onchange="crPreviewFormatChanges()" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
-                    <option value="top">Top</option>
-                    <option value="bottom">Bottom</option>
-                    <option value="left">Left</option>
-                    <option value="right">Right</option>
-                  </select>
-                  <span id="cr-fmt-legend-color-wrap"></span>
-                </div>
-              </div>
-              <div style="display:flex;flex-direction:column;gap:6px;padding-top:6px;border-top:1px dashed var(--border)">
-                <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Title
-                  <input id="cr-fmt-title" placeholder="optional chart title" oninput="crPreviewFormatChanges()" style="flex:1;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
-                  <span id="cr-fmt-title-color-wrap"></span>
-                </label>
-              </div>
-            </div>
-
-            <div id="cr-filters-section">
-              <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Filters <span style="font-weight:400;text-transform:none;color:var(--t3);letter-spacing:0">— this visual only, on top of the date/caller range, Report Filters, and any active slicers above</span></div>
-              <div id="cr-filters-list" style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px"></div>
-              <div style="display:flex;flex-direction:column;gap:6px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
-                <select id="cr-filter-field" onchange="crFilterFieldChanged()" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
-                  <option value="">Filter by field…</option>
-                </select>
-                <span id="cr-filter-values-wrap"><select id="cr-filter-values" multiple size="5" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select></span>
-                <span id="cr-filter-daterange-wrap" style="display:none;gap:6px;align-items:center">
-                  <label style="font-size:11px">From <input type="date" id="cr-filter-date-from" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></label>
-                  <label style="font-size:11px">To <input type="date" id="cr-filter-date-to" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></label>
-                </span>
-                <button type="button" class="btn btn-outline btn-sm" onclick="crAddFilter()">+ Add Filter</button>
-                <span style="font-size:10.5px;color:var(--t3)">Pick a field, tick value(s) (or set a date range), then click "+ Add Filter" — you'll see it appear as a tag above. "▶ Apply to This Visual" will warn you if you forget.</span>
-              </div>
-            </div>
-
-            <div style="display:flex;flex-direction:column;gap:6px">
-              <button class="btn btn-green btn-sm" onclick="crApplyToSelectedVisual()">▶ Apply to This Visual</button>
-              <button class="btn btn-outline btn-sm" onclick="crDuplicateSelectedVisual()">⧉ Duplicate Visual</button>
-              <span style="display:flex;align-items:center;gap:4px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:3px 6px">
-                <select id="cr-match-size-target" style="flex:1;padding:2px 4px;border:none;font-size:11.5px;min-width:0"></select>
-                <button type="button" class="btn btn-outline btn-sm" onclick="crMatchSizeToSelected()">⇔ Match Size</button>
-              </span>
-              <button class="btn btn-outline btn-sm" onclick="crRemoveSelectedVisual()">🗑 Remove Visual</button>
-            </div>
-            <div id="cr-result-status" style="font-size:11.5px;color:var(--t3);margin-top:6px"></div>
-          </div>
+          <p style="font-size:10.5px;color:var(--t3);margin-top:10px;line-height:1.4">Click "+ Add Visual", select it, then drag a measure into Values and a field into Rows (Columns optional) — or tap a chip then tap a well. For a Slicer, pick one of the three Slicer icons under Chart Type instead.</p>
         </div>
       </div>
     </div>
@@ -2871,11 +2879,11 @@ function crSetBuilderMode(mode){
   const editBtn=document.getElementById('cr-edit-toggle-btn'); if(editBtn) editBtn.style.display=isEdit?'none':'';
   const saveBtn=document.getElementById('cr-save-btn'); if(saveBtn) saveBtn.style.display=isEdit?'':'none';
   const filtersPanel=document.getElementById('cr-report-filters-panel'); if(filtersPanel) filtersPanel.style.display=isEdit?'flex':'none';
-  const rail=document.getElementById('cr-right-rail'); if(rail) rail.style.display=isEdit?'flex':'none';
+  const fieldsCol=document.getElementById('cr-fields-sidebar'); if(fieldsCol) fieldsCol.style.display=isEdit?'block':'none';
   const toolbar=document.getElementById('cr-add-visual-toolbar'); if(toolbar) toolbar.style.display=isEdit?'flex':'none';
-  const gridWrap=document.getElementById('cr-builder-grid'); if(gridWrap) gridWrap.style.gridTemplateColumns=isEdit?'1fr 380px':'1fr';
+  const gridWrap=document.getElementById('cr-builder-grid'); if(gridWrap) gridWrap.style.gridTemplateColumns=isEdit?'1fr 260px 300px 220px':'1fr';
   if(_crGrid) _crGrid.setStatic(!isEdit);  // view mode: canvas is display-only, no drag/resize
-  if(!isEdit) crDeselectVisual();  // closes the visual config panel too, if it was open
+  if(!isEdit) crDeselectVisual();  // closes the Format/Drag & Drop columns too, if they were open
 }
 function crEnterEditMode(){
   crSetBuilderMode('edit');
@@ -3055,7 +3063,8 @@ function crSelectVisual(id){
   const fdfEl=document.getElementById('cr-filter-date-from'); if(fdfEl) fdfEl.value='';
   const fdtEl=document.getElementById('cr-filter-date-to'); if(fdtEl) fdtEl.value='';
   crFilterFieldChanged();
-  document.getElementById('cr-visual-config').style.display='block';
+  document.getElementById('cr-panel-format').style.display='block';
+  document.getElementById('cr-panel-dragdrop').style.display='block';
   document.getElementById('cr-selected-visual-label').textContent = crChartTypeIsSlicer(v.chart_type)
     ? (v.slicerField ? 'Editing slicer: '+(v.slicerTitle||v.slicerFieldLabel||v.slicerField) : 'Editing a new, unconfigured slicer')
     : (v.measureLabel ? 'Editing: '+v.measureLabel+(v.rowsLabel?' by '+v.rowsLabel:'') : 'Editing a new, unconfigured visual');
@@ -3070,7 +3079,8 @@ function crDeselectVisual(){
   _crCanvas={values:null, rows:null, columns:null};
   _crCanvasFilters=[];
   const filtersList=document.getElementById('cr-filters-list'); if(filtersList) filtersList.innerHTML='';
-  const cfg=document.getElementById('cr-visual-config'); if(cfg) cfg.style.display='none';
+  const fmtCol=document.getElementById('cr-panel-format'); if(fmtCol) fmtCol.style.display='none';
+  const ddCol=document.getElementById('cr-panel-dragdrop'); if(ddCol) ddCol.style.display='none';
   const lbl=document.getElementById('cr-selected-visual-label'); if(lbl) lbl.textContent='No visual selected — add one, or click an existing visual below';
   document.querySelectorAll('#cr-gridstack .grid-stack-item').forEach(el=>{ el.style.outline='none'; });
   renderCrMatchSizeOptions();
@@ -4946,6 +4956,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.94", date:"2026-07", title:"Custom Report builder: split into 4 columns so Fields and the Values/Rows/Columns wells are visible at the same time",
+    changes:[
+      "The single stacked right-hand rail from v1.93 is now 3 separate columns, as requested: Format (Chart Type, title bar toggle, Slicer Field, Formatting) right after the canvas, Drag & Drop (Custom Measure, the Values/Rows/Columns wells, Filters, and the action buttons) in the middle, and Fields (Measures + Fields, the drag source) on the far right.",
+      "Fields and the wells now sit directly next to each other \u2014 the actual reason drag-and-drop felt broken before wasn't the drag handling itself, it was that the Fields palette and the wells you'd drop onto were far apart in one long scrolling column, often not both on screen at once.",
+      "Each of the 4 columns (canvas, Format, Drag & Drop, Fields) scrolls independently and stays in view via its own sticky positioning, so working in one doesn't move the others out from under you.",
+      "No functional changes beyond the layout \u2014 every control does the same thing it did before.",
+    ]},
   { v:"1.93", date:"2026-07", title:"Custom Report builder: redesigned layout, Power BI style — canvas on the left, controls on the right",
     changes:[
       "The canvas now sits on the left and takes up most of the screen, the way Power BI's report canvas does \u2014 previously it was pushed below a tall, fully-expanded config panel, so on a smaller screen (or after adding a few sections like Formatting and Custom Measure) you could scroll a long way down and never actually see the chart you were editing.",
