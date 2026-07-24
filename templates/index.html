@@ -1208,13 +1208,24 @@ select:focus{outline:none;border-color:var(--green)}
       </div>
 
       <div id="cr-builder-grid" style="display:grid;grid-template-columns:1fr 240px 280px 200px;gap:14px;align-items:start">
-        <!-- COLUMN 1: canvas — the dominant area, Power BI style -->
+        <!-- COLUMN 1: canvas — the dominant area, Power BI style. Deliberately
+             NOT stretched to fill this column's available width: GridStack
+             computes each grid cell's pixel size as (its own width) ÷ (column
+             count), so a stretchy canvas meant every visual's pixel size
+             changed every time a side panel was collapsed or expanded, even
+             though its column-span (w) never changed. #cr-gridstack below
+             has a fixed pixel width instead, so a visual's size only ever
+             changes when it's deliberately resized — collapsing a panel now
+             only changes how much blank canvas space is available, exactly
+             as requested. -->
         <div>
           <div id="cr-add-visual-toolbar" style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
             <button class="btn btn-green btn-sm" onclick="crAddVisual()">➕ Add Visual</button>
             <span id="cr-selected-visual-label" style="font-size:12px;color:var(--t3)">No visual selected — add one, or click an existing visual below</span>
           </div>
-          <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;min-height:400px"></div>
+          <div style="overflow-x:auto;padding-bottom:4px">
+            <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;min-height:400px;width:1100px"></div>
+          </div>
         </div>
 
         <!-- COLUMN 2: Format — chart type, title bar, slicer field, formatting.
@@ -5012,6 +5023,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.96", date:"2026-07", title:"Fixed: visuals were resizing every time a side panel was collapsed or expanded",
+    changes:[
+      "Found the cause: the canvas was stretched to fill 100% of its column's width, and GridStack computes every visual's pixel size as (canvas width) \u00f7 (12 grid columns) \u2014 so a visual's on-screen size changed every time the canvas got wider or narrower from collapsing/expanding Format, Drag & Drop, or Fields, even though the visual's own size (its column span) never changed.",
+      "The canvas now has a fixed pixel width instead of stretching \u2014 a visual's size now only changes when you deliberately resize it, exactly as expected. Collapsing a panel changes how much blank canvas space is available, not the size of anything already on it.",
+      "If the canvas column ever gets narrower than that fixed width (e.g. a smaller screen with all 3 panels expanded), the canvas scrolls horizontally rather than shrinking every visual to fit \u2014 the same trade-off, for the same reason: visuals stay a stable, predictable size no matter what.",
+    ]},
   { v:"1.95", date:"2026-07", title:"Custom Report builder: collapsible columns and a bigger default canvas, Power BI style",
     changes:[
       "Each of the 3 right-hand columns (Format, Drag & Drop, Fields) can now be collapsed to a slim icon strip by clicking its header \u2014 the same collapse-to-a-strip behaviour as Power BI's own Visualizations/Fields panes. Click the strip to expand it back.",
