@@ -2232,6 +2232,115 @@ def custom_report_fields():
         "cr_operators": [{"value": k, "label": v} for k, v in _CR_OPS.items()],
     })
 
+# Chart types an AI suggestion is allowed to pick — deliberately excludes the
+# three Slicer types (slicer_dropdown/slicer_list/slicer_timeline), since AI
+# Visual builds a data visual from a description, not an interactive filter
+# tile with its own field/multi-select settings.
+CR_AI_CHART_TYPES = ["card","col_clustered","col_stacked","col_stacked100","bar_clustered",
+                      "bar_stacked","bar_stacked100","line","area","pie","doughnut","radar","polarArea","table"]
+
+@app.route("/api/custom_report/ai_suggest", methods=["POST"])
+def custom_report_ai_suggest():
+    """Translates a plain-English request ('meetings secured by caller as a
+    bar chart') into a visual configuration (measure, rows, columns, chart
+    type) for the person to review before applying — it never applies
+    anything itself. The AI's output is treated as untrusted input and
+    validated against the exact same allow-lists (_cr_validate_measure_def,
+    REPORT_DIMENSIONS, CR_AI_CHART_TYPES) the manually-built version of this
+    request would be checked against — a hallucinated field name is
+    rejected, not silently accepted."""
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False,
+            "error": "AI is not configured. Add the OPENAI_API_KEY environment variable in Render."}), 400
+    data = request.json or {}
+    prompt = str(data.get("prompt","")).strip()[:400]
+    if not prompt:
+        return jsonify({"ok": False, "error": "Type what you'd like to see first."}), 400
+
+    measures_list = "\n".join(f'- "{k}": {v["label"]}' for k, v in REPORT_MEASURES.items())
+    dims_list = "\n".join(f'- "{k}": {v["label"]}' for k, v in REPORT_DIMENSIONS.items())
+    fields_list = "\n".join(f'- "{k}": {v["label"]} (call-level)' for k, v in CR_FIELDS.items()) + "\n" + \
+                  "\n".join(f'- "{k}": {v["label"]} (follow-up-level)' for k, v in CR_FOLLOWUP_FIELDS.items())
+    aggs_list = ", ".join(f'"{k}"' for k in _CR_AGGS)
+    ops_list = ", ".join(f'"{k}"' for k in _CR_OPS)
+    chart_types_list = ", ".join(f'"{t}"' for t in CR_AI_CHART_TYPES)
+
+    system_prompt = f"""You translate a person's plain-English request into a chart configuration for a reporting tool. Reply with ONLY a JSON object, no other text, matching exactly this shape:
+{{"measure": <string or object>, "rows": <string, may be empty>, "columns": <string, may be empty or null>, "chart_type": <string>, "explanation": <short string>}}
+
+"measure" is EITHER one of these built-in keys (a plain string):
+{measures_list}
+
+OR a Custom Measure object if the request needs an aggregation of a raw field, or two measures combined:
+- Simple: {{"type":"simple","agg":<agg>,"field":<field>}}
+- Composite: {{"type":"composite","op":<op>,"a":<measure>,"b":<measure>}} — "a"/"b" can each be a built-in key string OR a simple object (never another composite)
+
+Allowed aggregations: {aggs_list}
+Allowed operators: {ops_list}
+Allowed raw fields:
+{fields_list}
+
+"rows" and "columns" must each be one of these keys, or an empty string if not needed:
+{dims_list}
+A measure using a follow-up-level field can ONLY use "caller", "date_day", "date_week", "date_month", "hour", or an empty "rows" — never outcome/stage/source_list or any charity_* field.
+
+"chart_type" must be exactly one of: {chart_types_list}
+Use "card" only for a single overall number with no breakdown. Prefer "col_clustered" for a simple one-field breakdown, "pie" or "doughnut" for a share-of-whole with few categories, "line" for a trend over Day/Week/Month, "table" when there'd be many rows/columns.
+
+"explanation" is one short sentence (under 20 words), in plain English, describing what you built.
+
+Never invent a key that isn't listed above. If the request is ambiguous, make your best reasonable choice — you cannot ask a follow-up question."""
+
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={"model": OPENAI_MODEL, "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ], "temperature": 0.2, "max_tokens": 400, "response_format": {"type": "json_object"}},
+            timeout=30)
+        if resp.status_code != 200:
+            return jsonify({"ok": False, "error": f"OpenAI error {resp.status_code}: {resp.text[:200]}"}), 502
+        out = resp.json()
+        content = (out.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        if not content:
+            return jsonify({"ok": False, "error": "Empty response from AI"}), 502
+        try:
+            suggestion = json.loads(content)
+        except Exception:
+            return jsonify({"ok": False, "error": "AI returned something that wasn't valid JSON — try rephrasing."}), 502
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"AI request failed: {str(e)[:200]}"}), 500
+
+    if not isinstance(suggestion, dict):
+        return jsonify({"ok": False, "error": "AI response wasn't in the expected format — try rephrasing."}), 502
+    measure = suggestion.get("measure")
+    err = _cr_validate_measure_def(measure) if measure is not None else "Missing measure"
+    if err:
+        return jsonify({"ok": False, "error": f"AI suggested an invalid measure ({err}) — try rephrasing."}), 502
+    rows_dim = str(suggestion.get("rows") or "").strip()
+    cols_dim = str(suggestion.get("columns") or "").strip()
+    if rows_dim and rows_dim not in REPORT_DIMENSIONS:
+        return jsonify({"ok": False, "error": "AI suggested an unrecognised Rows field — try rephrasing."}), 502
+    if cols_dim and cols_dim not in REPORT_DIMENSIONS:
+        return jsonify({"ok": False, "error": "AI suggested an unrecognised Columns field — try rephrasing."}), 502
+    chart_type = str(suggestion.get("chart_type") or "").strip()
+    if chart_type not in CR_AI_CHART_TYPES:
+        chart_type = "table" if rows_dim else "card"  # sane fallback rather than rejecting outright
+    if _cr_measure_uses_followups(measure):
+        ok_dims = {"", "caller", "date_day", "date_week", "date_month", "hour"}
+        if rows_dim not in ok_dims or (cols_dim and cols_dim not in ok_dims):
+            return jsonify({"ok": False,
+                "error": "That combination mixes a Follow-Up measure with a field it can't be grouped by (only Caller/Day/Week/Month/Hour of Day work there) — try rephrasing."}), 502
+
+    return jsonify({"ok": True,
+        "measure": measure, "measure_label": _cr_measure_label(measure),
+        "rows": rows_dim, "rows_label": REPORT_DIMENSIONS.get(rows_dim, {}).get("label", "") if rows_dim else "",
+        "columns": cols_dim, "columns_label": REPORT_DIMENSIONS.get(cols_dim, {}).get("label", "") if cols_dim else "",
+        "chart_type": chart_type,
+        "explanation": str(suggestion.get("explanation") or "").strip()[:200]})
+
 @app.route("/api/custom_report/tiles", methods=["GET"])
 def custom_report_tiles_list():
     rows = db_query("SELECT name, config FROM custom_report_tiles ORDER BY id ASC") or []
