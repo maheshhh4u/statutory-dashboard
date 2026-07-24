@@ -1351,8 +1351,12 @@ select:focus{outline:none;border-color:var(--green)}
           </div>
           <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
             <div id="cr-well-values" data-well="values" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:38px;border:2px dashed #d8c9ee;border-radius:6px;padding:6px 10px;background:#fff;display:flex;align-items:center;gap:6px">
-              <span style="font-size:10px;font-weight:700;color:#6a4d99;text-transform:uppercase;flex-shrink:0">Values</span>
+              <span id="cr-well-values-label" style="font-size:10px;font-weight:700;color:#6a4d99;text-transform:uppercase;flex-shrink:0">Values</span>
               <span id="cr-well-values-content" style="color:var(--t3);font-size:11.5px">Drag a measure</span>
+            </div>
+            <div id="cr-well-values_line" data-well="values_line" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="display:none;min-height:38px;border:2px dashed #d8c9ee;border-radius:6px;padding:6px 10px;background:#fff9f0;align-items:center;gap:6px">
+              <span style="font-size:10px;font-weight:700;color:#8a6d1a;text-transform:uppercase;flex-shrink:0">Values (Line)</span>
+              <span id="cr-well-values_line-content" style="color:var(--t3);font-size:11.5px">Drag a measure for the line series</span>
             </div>
             <div id="cr-well-rows" data-well="rows" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:38px;border:2px dashed #c9dcee;border-radius:6px;padding:6px 10px;background:#fff;display:flex;align-items:center;gap:6px">
               <span style="font-size:10px;font-weight:700;color:#2d5a8f;text-transform:uppercase;flex-shrink:0">Rows</span>
@@ -2542,6 +2546,8 @@ const CR_CHART_TYPES=[
   {value:'radar', label:'Radar', icon:'🕸️'},
   {value:'polarArea', label:'Polar Area', icon:'🎯'},
   {value:'table', label:'Table', icon:'🔢'},
+  {value:'combo_col_line', label:'Combo: Column + Line', icon:'📊📈'},
+  {value:'combo_col_line_dual', label:'Combo: Column + Line (Dual Axis)', icon:'📊⇄📈'},
   {value:'slicer_dropdown', label:'Slicer - Dropdown', icon:'🔽'},
   {value:'slicer_list', label:'Slicer - List', icon:'☰'},
   {value:'slicer_timeline', label:'Slicer - Timeline', icon:'📅'},
@@ -2552,6 +2558,13 @@ const CR_CHART_TYPES=[
 // sections — see crSetChartType).
 function crChartTypeIsSlicer(chartType){ return chartType==='slicer_dropdown' || chartType==='slicer_list' || chartType==='slicer_timeline'; }
 function crChartTypeNeedsRows(chartType){ return chartType!=='card' && !crChartTypeIsSlicer(chartType); }
+// Combo charts (Excel/Power BI style): two independent measures plotted
+// together — one as columns, one as a line — sharing the same Rows category
+// axis. That's a genuinely different shape from a normal chart (which is
+// one measure, optionally broken down further by Columns), so combo charts
+// get a second "Values (Line)" well instead of a Columns well — there's no
+// cross-tab breakdown here, just two measures side by side.
+function crChartTypeIsCombo(chartType){ return chartType==='combo_col_line' || chartType==='combo_col_line_dual'; }
 const CR_PALETTES={
   navy:  ['#1e3a5f','#e8b339','#1d7a3a','#a02c2c','#6a4d99','#2d8f8f','#c47a2c','#4d6a99'],
   vivid: ['#e63946','#f4a261','#2a9d8f','#264653','#e9c46a','#8338ec','#3a86ff','#fb5607'],
@@ -2812,7 +2825,7 @@ function crPreviewFormatChanges(){
   crRenderVisual(id);
 }
 let _crMeasures=[], _crDimensions=[];
-let _crCanvas={values:null, rows:null, columns:null};  // wells UI state, for whichever visual is currently selected
+let _crCanvas={values:null, values_line:null, rows:null, columns:null};  // wells UI state, for whichever visual is currently selected — values_line is only used by Combo chart types
 let _crTapSelected=null;
 let _crFieldsLoaded=false;
 let _crGrid=null;             // the GridStack instance for the canvas
@@ -3035,7 +3048,7 @@ document.addEventListener('click', function(e){
   }
 });
 function crPlaceInWell(well, payload){
-  if(well==='values' && payload.kind!=='measure'){
+  if((well==='values'||well==='values_line') && payload.kind!=='measure'){
     document.getElementById('cr-result-status').textContent='⚠ Values needs a measure, not a field.'; return;
   }
   if((well==='rows'||well==='columns') && payload.kind!=='dim'){
@@ -3055,13 +3068,13 @@ function crPlaceInWell(well, payload){
 }
 function crClearWell(well){ _crCanvas[well]=null; renderCrWells(); }
 function renderCrWells(){
-  ['values','rows','columns'].forEach(w=>{
+  ['values','values_line','rows','columns'].forEach(w=>{
     const el=document.getElementById('cr-well-'+w+'-content');
     if(!el) return;
     const v=_crCanvas[w];
     el.innerHTML = v
       ? `<span style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:3px 10px;font-size:12px">${esc(v.label)} <span onclick="crClearWell('${w}')" style="cursor:pointer;font-weight:700;margin-left:4px">✕</span></span>`
-      : (w==='columns' ? 'Optional — drag a field here' : `Drag a ${w==='values'?'measure':'field'} here`);
+      : (w==='columns' ? 'Optional — drag a field here' : (w==='values_line' ? 'Drag a measure for the line series' : `Drag a ${w==='values'?'measure':'field'} here`));
   });
 }
 
@@ -3073,7 +3086,10 @@ function crVisualWidgetHtml(id){
       <span style="font-size:9px;color:#bbb;flex-shrink:0;margin-left:6px">⇲</span>
     </div>
     <div onclick="crSelectVisual('${id}')" style="flex:1;padding:6px;overflow:auto;cursor:pointer;position:relative;min-height:0">
-      <div id="cr-visual-chart-${id}-wrap" style="display:none;height:100%;position:relative"><canvas id="cr-visual-chart-${id}"></canvas></div>
+      <div id="cr-visual-chart-${id}-wrap" style="display:none;height:100%;flex-direction:column">
+        <div id="cr-visual-combo-legend-${id}" style="display:none;flex-shrink:0;justify-content:space-between;align-items:center;font-size:10.5px;padding:2px 4px 6px"></div>
+        <div style="flex:1;position:relative;min-height:0"><canvas id="cr-visual-chart-${id}"></canvas></div>
+      </div>
       <div id="cr-visual-table-${id}" style="display:none;overflow:auto;height:100%;font-size:11px"></div>
       <div id="cr-visual-card-${id}" style="display:none;height:100%;flex-direction:column;align-items:center;justify-content:center;text-align:center"></div>
       <div id="cr-visual-slicer-${id}" style="display:none;flex-direction:column;height:100%;overflow:auto;cursor:default" onclick="if(event.target.closest('button,select,input,label')) event.stopPropagation()"></div>
@@ -3113,6 +3129,10 @@ function crSelectVisual(id){
   _crCanvas.columns = v.columns ? {value:v.columns, label:v.columnsLabel} : null;
   renderCrWells();
   crSetChartType(v.chart_type||'col_clustered');
+  if(crChartTypeIsCombo(v.chart_type) && v.measure2){
+    _crCanvas.values_line={value:v.measure2, label:v.measure2Label};
+    renderCrWells();
+  }
   if(!crChartTypeIsSlicer(v.chart_type)){
     if(v.measureDef) crRestoreCustomMeasureBuilder(v.measureDef);
     else crResetCustomMeasureBuilder();
@@ -3152,7 +3172,7 @@ function crSelectVisual(id){
 }
 function crDeselectVisual(){
   _crSelectedVisualId=null;
-  _crCanvas={values:null, rows:null, columns:null};
+  _crCanvas={values:null, values_line:null, rows:null, columns:null};
   _crCanvasFilters=[];
   const filtersList=document.getElementById('cr-filters-list'); if(filtersList) filtersList.innerHTML='';
   const fmtCol=document.getElementById('cr-panel-format'); if(fmtCol) fmtCol.style.display='none';
@@ -3178,17 +3198,27 @@ function crSetChartType(value){
     b.style.boxShadow = active ? 'inset 0 0 0 1px #1e3a5f' : 'none';
   });
   const isSlicer=crChartTypeIsSlicer(value);
+  const isCombo=crChartTypeIsCombo(value);
   const needsRows=crChartTypeNeedsRows(value);
   const valuesWell=document.getElementById('cr-well-values');
+  const valuesLineWell=document.getElementById('cr-well-values_line');
+  const valuesLabel=document.getElementById('cr-well-values-label');
   const rowsWell=document.getElementById('cr-well-rows');
   const colsWell=document.getElementById('cr-well-columns');
   if(valuesWell) valuesWell.style.display=isSlicer?'none':'flex';
+  if(valuesLabel) valuesLabel.textContent=isCombo?'Values (Columns)':'Values';
+  if(valuesLineWell) valuesLineWell.style.display=isCombo?'flex':'none';
+  if(!isCombo && _crCanvas.values_line){ _crCanvas.values_line=null; renderCrWells(); }
   if(rowsWell) rowsWell.style.display=needsRows?'flex':'none';
-  if(colsWell) colsWell.style.display=needsRows?'flex':'none';
+  if(colsWell) colsWell.style.display=(needsRows && !isCombo)?'flex':'none';
   if(!needsRows){
     // Card tiles and Slicers don't group by anything — clear any Rows/Columns
     // already placed so a stale field from a previous chart type can't linger.
     _crCanvas.rows=null; _crCanvas.columns=null;
+    renderCrWells();
+  } else if(isCombo && _crCanvas.columns){
+    // Combo charts use two measures instead of a Columns cross-tab breakdown.
+    _crCanvas.columns=null;
     renderCrWells();
   }
   if(isSlicer) _crCanvas.values=null;  // Slicers don't take a measure either
@@ -3900,8 +3930,11 @@ function crApplyToSelectedVisual(){
   }
 
   const needsRows=crChartTypeNeedsRows(chartType);
-  if(!_crCanvas.values){ status.textContent='⚠ Drag a measure into Values first.'; status.style.color='#c0392b'; return; }
+  const isCombo=crChartTypeIsCombo(chartType);
+  if(!_crCanvas.values){ status.textContent='⚠ Drag a measure into '+(isCombo?'Values (Columns)':'Values')+' first.'; status.style.color='#c0392b'; return; }
   if(needsRows && !_crCanvas.rows){ status.textContent='⚠ Drag a field into Rows first.'; status.style.color='#c0392b'; return; }
+  if(isCombo && !_crCanvas.values_line){ status.textContent='⚠ Drag a measure into Values (Line) too — a combo chart needs both.'; status.style.color='#c0392b'; return; }
+  if(isCombo && _crCanvas.values_line.customDef){ status.textContent='⚠ Values (Line) only accepts a built-in measure for now, not a Custom Measure — drag one from the Measures palette.'; status.style.color='#c0392b'; return; }
   const customDef=_crCanvas.values.customDef || null;
   if(customDef && crMeasureDefUsesFollowups(customDef)){
     const restricted=new Set(['outcome','stage','source_list']);
@@ -3920,10 +3953,11 @@ function crApplyToSelectedVisual(){
   }
   _crVisuals[id]={
     measure:_crCanvas.values.value, measureLabel:_crCanvas.values.label, measureDef:customDef,
+    measure2: isCombo ? _crCanvas.values_line.value : '', measure2Label: isCombo ? _crCanvas.values_line.label : '',
     rows: needsRows && _crCanvas.rows ? _crCanvas.rows.value : '',
     rowsLabel: needsRows && _crCanvas.rows ? _crCanvas.rows.label : '',
-    columns: needsRows && _crCanvas.columns ? _crCanvas.columns.value : '',
-    columnsLabel: needsRows && _crCanvas.columns ? _crCanvas.columns.label : '',
+    columns: (needsRows && !isCombo && _crCanvas.columns) ? _crCanvas.columns.value : '',
+    columnsLabel: (needsRows && !isCombo && _crCanvas.columns) ? _crCanvas.columns.label : '',
     chart_type:chartType,
     showTitleBar: document.getElementById('cr-tile-titlebar').checked,
     format:{
@@ -3943,7 +3977,9 @@ function crApplyToSelectedVisual(){
       : {field:f.field, fieldLabel:f.fieldLabel, values:f.values.slice()}),
   };
   const titleEl=document.getElementById('cr-visual-title-'+id);
-  const titleText=_crVisuals[id].measureLabel+(_crVisuals[id].rowsLabel?' by '+_crVisuals[id].rowsLabel:'');
+  const titleText=isCombo
+    ? _crVisuals[id].measureLabel+' + '+_crVisuals[id].measure2Label+(_crVisuals[id].rowsLabel?' by '+_crVisuals[id].rowsLabel:'')
+    : _crVisuals[id].measureLabel+(_crVisuals[id].rowsLabel?' by '+_crVisuals[id].rowsLabel:'');
   if(titleEl) titleEl.textContent=titleText;
   document.getElementById('cr-selected-visual-label').textContent='Editing: '+titleText;
   crApplyTitleBarVisibility(id);
@@ -4037,6 +4073,23 @@ function crRenderVisual(id){
   if(emptyEl) emptyEl.style.display='none';
   const filters=crCombinedFilters(v);
   const measurePayload = v.measureDef || v.measure;
+
+  if(crChartTypeIsCombo(v.chart_type)){
+    if(!v.measure2) return;
+    // Two independent requests, same Rows/filters — a combo chart is two
+    // separate measures sharing one category axis, not one cross-tab query,
+    // so there's no single endpoint call that returns both series at once.
+    const body1=JSON.stringify({measure:measurePayload, rows:v.rows||'', columns:null, date_from:'', date_to:'', callers:[], filters});
+    const body2=JSON.stringify({measure:v.measure2, rows:v.rows||'', columns:null, date_from:'', date_to:'', callers:[], filters});
+    return Promise.all([
+      fetch('/api/custom_report/run',{method:'POST',headers:{'Content-Type':'application/json'},body:body1}).then(r=>r.json()),
+      fetch('/api/custom_report/run',{method:'POST',headers:{'Content-Type':'application/json'},body:body2}).then(r=>r.json()),
+    ]).then(([d1,d2])=>{
+      if(!d1.ok || !d2.ok) return;
+      renderCrComboResult(d1, d2, v, 'cr-visual-chart-'+id);
+    }).catch(()=>{});
+  }
+
   return fetch('/api/custom_report/run',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({measure:measurePayload, rows:v.rows||'', columns:v.columns||null, date_from:'', date_to:'', callers:[], filters})})
     .then(r=>r.json()).then(d=>{
@@ -4186,7 +4239,9 @@ function renderCrResult(d, chartType, chartId, tableWrapId, isTile, format, card
     return;
   }
   if(tableWrap) tableWrap.style.display='none';
-  if(chartWrap) chartWrap.style.display='block';
+  if(chartWrap) chartWrap.style.display='flex';
+  const comboLegendEl=isTile ? document.getElementById('cr-visual-combo-legend-'+chartId.replace('cr-visual-chart-','')) : null;
+  if(comboLegendEl) comboLegendEl.style.display='none';
   const canvasEl=document.getElementById(chartId);
   if(!canvasEl || typeof Chart==='undefined') return;
   if(canvasEl._chartInst){ canvasEl._chartInst.destroy(); canvasEl._chartInst=null; }
@@ -4197,6 +4252,80 @@ function renderCrResult(d, chartType, chartId, tableWrapId, isTile, format, card
   const chartOpts={type:cfg.type, data:cfg.data, options:cfg.options};
   if(cfg._usesDataLabels && typeof ChartDataLabels!=='undefined') chartOpts.plugins=[ChartDataLabels];
   canvasEl._chartInst = new Chart(canvasEl, chartOpts);
+}
+// Combo charts (Excel/Power BI style: two independent measures sharing one
+// category axis, one plotted as columns and one as a line) are built from
+// two separate /api/custom_report/run results rather than one, since
+// there's no single query that returns two unrelated measures at once —
+// see crRenderVisual. This merges them into one Chart.js config with two
+// datasets, and — since Chart.js's built-in legend shows every dataset
+// together and can only be positioned as a whole, not split by series type
+// — renders a small custom two-sided legend instead: the column series'
+// swatch+label on the left, the line series' on the right, exactly the
+// "bar legend on the left, line legend on the right" layout asked for.
+function renderCrComboResult(d1, d2, v, chartId){
+  const id=chartId.replace('cr-visual-chart-','');
+  const titlebar=document.getElementById('cr-visual-titlebar-'+id);
+  if(titlebar) titlebar.title=[d1.note,d2.note].filter(Boolean).join(' ');
+  const tableWrap=document.getElementById('cr-visual-table-'+id); if(tableWrap) tableWrap.style.display='none';
+  const cardWrap=document.getElementById('cr-visual-card-'+id); if(cardWrap) cardWrap.style.display='none';
+  const slicerWrap=document.getElementById('cr-visual-slicer-'+id); if(slicerWrap) slicerWrap.style.display='none';
+  const chartWrap=document.getElementById(chartId+'-wrap'); if(chartWrap) chartWrap.style.display='flex';
+  const emptyEl=document.getElementById('cr-visual-empty-'+id); if(emptyEl) emptyEl.style.display='none';
+
+  // Union of both series' row labels, in d1's order first (whichever
+  // dimension value either measure doesn't have data for gets a 0, rather
+  // than the two series silently misaligning against each other).
+  const labels=(d1.row_labels||[]).slice();
+  (d2.row_labels||[]).forEach(l=>{ if(!labels.includes(l)) labels.push(l); });
+  const idx1={}; (d1.row_labels||[]).forEach((l,i)=>{ idx1[l]=i; });
+  const idx2={}; (d2.row_labels||[]).forEach((l,i)=>{ idx2[l]=i; });
+  const data1=labels.map(l=> l in idx1 ? d1.data[idx1[l]] : 0);
+  const data2=labels.map(l=> l in idx2 ? d2.data[idx2[l]] : 0);
+
+  const fmt=v.format||{};
+  const palette=(fmt.customPalette && fmt.customPalette.length) ? fmt.customPalette : (CR_PALETTES[fmt.palette]||CR_PALETTES.navy);
+  const barColor=palette[0], lineColor=palette[1]||'#e8b339';
+  const isDual=v.chart_type==='combo_col_line_dual';
+  const showGrid=fmt.gridlines!==false;
+
+  const canvasEl=document.getElementById(chartId);
+  if(!canvasEl || typeof Chart==='undefined') return;
+  if(canvasEl._chartInst){ canvasEl._chartInst.destroy(); canvasEl._chartInst=null; }
+
+  const scales={
+    x:{grid:{display:showGrid}},
+    y:{grid:{display:showGrid}, beginAtZero:true, position:'left', title:{display:true, text:d1.measure_label}},
+  };
+  if(isDual) scales.y1={grid:{display:false}, beginAtZero:true, position:'right', title:{display:true, text:d2.measure_label}};
+
+  canvasEl._chartInst = new Chart(canvasEl, {
+    type:'bar',
+    data:{labels, datasets:[
+      {type:'bar', label:d1.measure_label, data:data1, backgroundColor:barColor, borderColor:barColor, yAxisID:'y'},
+      {type:'line', label:d2.measure_label, data:data2, borderColor:lineColor, backgroundColor:lineColor, yAxisID: isDual?'y1':'y', tension:0.3, fill:false},
+    ]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{
+        legend:{display:false},  // replaced by the custom split legend below
+        title:{display:!!fmt.title, text:fmt.title||'', color:fmt.titleColor||undefined},
+      },
+      scales,
+    },
+  });
+
+  const legendEl=document.getElementById('cr-visual-combo-legend-'+id);
+  if(legendEl){
+    legendEl.style.display='flex';
+    legendEl.innerHTML=
+      `<span style="display:flex;align-items:center;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        <span style="width:10px;height:10px;background:${esc(barColor)};border-radius:2px;flex-shrink:0"></span>${esc(d1.measure_label)}
+      </span>
+      <span style="display:flex;align-items:center;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        ${esc(d2.measure_label)}<span style="width:14px;height:2px;background:${esc(lineColor)};flex-shrink:0"></span>
+      </span>`;
+  }
 }
 
 // ── Saved tiles ──────────────────────────────────────────────────────────────
@@ -4210,6 +4339,7 @@ function saveCustomReportCanvas(){
     const v=_crVisuals[p.id]||{};
     return {id:p.id, x:p.x, y:p.y, w:p.w, h:p.h,
             measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null,
+            measure2:v.measure2||'', measure2Label:v.measure2Label||'',
             rows:v.rows, rowsLabel:v.rowsLabel,
             columns:v.columns||'', columnsLabel:v.columnsLabel||'',
             chart_type:v.chart_type||'col_clustered',
@@ -4288,7 +4418,9 @@ function crLoadReportIntoCanvas(cfg){
     v.id=id;  // write back so the second pass below can find it even if the saved config predates ids
     const numPart=parseInt((String(id).match(/\d+/)||['0'])[0],10);
     if(numPart>_crVisualSeq) _crVisualSeq=numPart;
-    _crVisuals[id]={measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null, rows:v.rows, rowsLabel:v.rowsLabel,
+    _crVisuals[id]={measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null,
+                    measure2:v.measure2||'', measure2Label:v.measure2Label||'',
+                    rows:v.rows, rowsLabel:v.rowsLabel,
                     columns:v.columns||'', columnsLabel:v.columnsLabel||'', chart_type:v.chart_type||'col_clustered',
                     format:v.format||{}, filters:v.filters||[],
                     isSlicer:!!v.isSlicer,
@@ -4300,7 +4432,7 @@ function crLoadReportIntoCanvas(cfg){
     const titleEl=document.getElementById('cr-visual-title-'+id);
     if(titleEl) titleEl.textContent=v.isSlicer
       ? '🔧 '+(v.slicerTitle||v.slicerFieldLabel||'Slicer')
-      : (v.measureLabel||'')+(v.rowsLabel?' by '+v.rowsLabel:'');
+      : (crChartTypeIsCombo(v.chart_type) ? (v.measureLabel||'')+' + '+(v.measure2Label||'') : (v.measureLabel||''))+(v.rowsLabel?' by '+v.rowsLabel:'');
     crApplyTitleBarVisibility(id);
   });
   // Slicers are rendered in a second pass, after every visual exists — a
@@ -5092,6 +5224,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.99", date:"2026-07", title:"Custom Report: Combo charts — column + line, dual axis, split legend",
+    changes:[
+      "Two new chart types under Chart Type: \"Combo: Column + Line\" and \"Combo: Column + Line (Dual Axis)\" \u2014 real Excel/Power BI-style combo charts, not a single combined number. Pick this and a second well, \"Values (Line)\", appears next to the usual Values well (now labelled \"Values (Columns)\") \u2014 drag one measure into each, e.g. Calls Made into Columns and Sum of Call Duration into Line, both broken down by the same Rows field (What (Charity), Caller, whatever you'd normally group by).",
+      "The Dual Axis version puts the column measure on the left axis and the line measure on its own axis on the right \u2014 for when the two measures are on very different scales (call counts vs. seconds of duration), so the line doesn't flatten out against a shared axis built for the bigger numbers.",
+      "Legend is split the way it was asked for, not Chart.js's usual single positioned legend: the column series' swatch and label sit on the left, the line series' on the right \u2014 built as a small custom row above the chart, since Chart.js can only position one combined legend, not two.",
+      "Values (Line) currently only accepts a built-in measure dragged from the palette, not a Custom Measure \u2014 the primary Values (Columns) well still supports Custom Measures as usual.",
+      "Combo visuals save and restore with the report, including reopening one for editing with both measures shown.",
+    ]},
   { v:"1.98", date:"2026-07", title:"Custom Report: AI Visual — describe what you want, get Values/Rows/Columns and Chart Type filled in",
     changes:[
       "New \"\u2728 AI Visual\" box at the top of the Format column. Type what you'd like to see \u2014 e.g. \u201cmeetings secured by caller as a bar chart\u201d or \u201caverage call duration by day this week\u201d \u2014 and click Generate. It fills in Values, Rows, Columns, and Chart Type below, the same way picking them manually would leave them.",
