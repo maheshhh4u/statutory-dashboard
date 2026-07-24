@@ -1703,7 +1703,23 @@ REPORT_DIMENSIONS = {
     "date_week":   {"label": "Week"},
     "date_month":  {"label": "Month"},
     "hour":        {"label": "Hour of Day"},
+    # Charity-level classification (not call-level) — pulled from the same
+    # Charity Commission data already used by Search's Who/What/How/Area
+    # pickers, looked up per charity for whichever reg_numbers actually
+    # appear in the matching calls (see _cr_attach_charity_classification).
+    # A charity is commonly tagged with SEVERAL Who/What/How values and can
+    # operate in several areas at once — grouping by one of these counts a
+    # call once per category/area the charity belongs to, the same way the
+    # Charity Commission's own published statistics work, so totals across
+    # groups can add up to more than the overall total. That's expected,
+    # not a bug — a call to a charity serving both "Children/young people"
+    # and "Elderly/old people" genuinely belongs in both groups.
+    "charity_who":  {"label": "Who (Charity)"},
+    "charity_what": {"label": "What (Charity)"},
+    "charity_how":  {"label": "How (Charity)"},
+    "charity_area": {"label": "Area of Operation (Charity)"},
 }
+_CR_CHARITY_DIMS = {"charity_who", "charity_what", "charity_how", "charity_area"}
 REPORT_MEASURES = {
     "calls_made":              {"label": "Calls Made"},
     "unique_charities":        {"label": "Unique Charities Called"},
@@ -1742,6 +1758,7 @@ def _cr_dim_key(dim, row):
     if dim == "outcome": return row["outcome"] or "(no outcome)"
     if dim == "stage": return row["stage"] or "(no stage)"
     if dim == "source_list": return row["source_list"]
+    if dim in _CR_CHARITY_DIMS: return row.get(dim) or "(unclassified)"
     if dim in ("date_day","date_week","date_month","hour"):
         local = utc_to_display_str(row["timestamp"], "%Y-%m-%d %H:%M")
         if not local: return None
@@ -1754,6 +1771,42 @@ def _cr_dim_key(dim, row):
         if dim == "date_month": return dt.strftime("%Y-%m")
         if dim == "hour": return dt.strftime("%H:00")
     return None
+
+def _cr_dim_keys(dim, row):
+    """Like _cr_dim_key, but returns a LIST of keys — most dimensions have
+    exactly one, but the charity-classification dims are multi-label (a
+    charity is commonly tagged with several Who/What/How values, or
+    operates in several areas), stored as a comma-joined string, and a
+    matching call belongs in every one of those groups, not just one
+    combined-string bucket."""
+    if dim in _CR_CHARITY_DIMS:
+        raw = row.get(dim) or ""
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        return parts if parts else ["(unclassified)"]
+    k = _cr_dim_key(dim, row)
+    return [k] if k is not None else []
+
+def _cr_attach_charity_classification(rows_all):
+    """Looks up Who/What/How/Area of Operation for every distinct charity in
+    rows_all and attaches them onto each row dict, using the same bounded,
+    memory-safe scan already used for CSV export enrichment (_scan_
+    classification_for / _scan_area_for) rather than the old unbounded
+    whole-country cache that previously caused out-of-memory crashes (see
+    the comment above EXPORT_ENRICH_MAX). Only called when a report actually
+    groups or filters by one of these fields, so a normal report pays
+    nothing extra."""
+    reg_set = {str(r["reg_number"]).strip() for r in rows_all if str(r["reg_number"]).strip()}
+    classif = _scan_classification_for(reg_set) if reg_set else {}
+    areas = _scan_area_for(reg_set) if reg_set else {}
+    for r in rows_all:
+        reg = str(r["reg_number"]).strip()
+        c = classif.get(reg, {})
+        a = areas.get(reg, {})
+        r["charity_who"] = c.get("who") or ""
+        r["charity_what"] = c.get("what") or ""
+        r["charity_how"] = c.get("how") or ""
+        area_parts = [a.get("region",""), a.get("local_authority",""), a.get("country","")]
+        r["charity_area"] = ", ".join(dict.fromkeys(p for p in area_parts if p))
 
 def _cr_compute_measure(measure, rows):
     if measure == "calls_made":
@@ -1880,7 +1933,7 @@ def _cr_sort_keys(dim, keys):
 # narrowed to a different, tighter window without touching the report-wide
 # range everything else depends on. This predicate is meant to be reused by
 # slicer tiles later, per the plan noted in the v1.82 handoff.
-_CR_FILTERABLE_DIMS = {"caller", "outcome", "stage", "source_list"}
+_CR_FILTERABLE_DIMS = {"caller", "outcome", "stage", "source_list"} | _CR_CHARITY_DIMS
 # Only Caller (and Date Range, handled separately below) apply to follow_ups
 # rows — Outcome/Stage/Source List are call_log-only columns that don't
 # exist on a follow-up record.
@@ -1895,6 +1948,14 @@ def _cr_row_matches_filters(row, filters):
             # display timezone isn't UTC.
             local_day = utc_to_display_str(row.get("timestamp"), "%Y-%m-%d")
             if not local_day or not (f["from"] <= local_day <= f["to"]):
+                return False
+            continue
+        if f["field"] in _CR_CHARITY_DIMS:
+            # A charity commonly belongs to several Who/What/How categories
+            # or areas at once (comma-joined in the row) — match if ANY of
+            # them is one of the selected values, not the whole string.
+            parts = {p.strip() for p in (row.get(f["field"]) or "").split(",") if p.strip()}
+            if not (parts & f["values"]):
                 return False
             continue
         if (row.get(f["field"]) or "") not in f["values"]:
@@ -2012,6 +2073,9 @@ def custom_report_run():
                  "caller": r[4], "timestamp": r[5], "stage": r[6], "source_list": r[7]} for r in raw]
     src_labels = {r["source_list"]: CALLING_CATEGORIES.get(r["source_list"], r["source_list"] or "Unknown") for r in rows_all}
     for r in rows_all: r["source_list"] = src_labels.get(r["source_list"], r["source_list"])
+    needs_charity = (rows_dim in _CR_CHARITY_DIMS) or (cols_dim in _CR_CHARITY_DIMS) or any(f["field"] in _CR_CHARITY_DIMS for f in filters)
+    if needs_charity:
+        _cr_attach_charity_classification(rows_all)
     if filters:
         rows_all = [r for r in rows_all if _cr_row_matches_filters(r, filters)]
 
@@ -2057,13 +2121,19 @@ def custom_report_run():
     # Bucket rows into groups by (row_key[, col_key]) — call rows and (if
     # needed) follow-up rows are bucketed independently, by the same key
     # functions, so a composite measure can pull the matching subset of each.
+    # _cr_dim_keys (plural) returns more than one key for the charity
+    # classification dims, since a row can genuinely belong to several
+    # groups at once there (see REPORT_DIMENSIONS's charity_who comment).
     def _bucket(rows):
         g = {}
         for r in rows:
-            rk = _cr_dim_key(rows_dim, r)
-            if rk is None: continue
-            ck = _cr_dim_key(cols_dim, r) if cols_dim else None
-            g.setdefault(rk, {}).setdefault(ck, []).append(r)
+            rks = _cr_dim_keys(rows_dim, r)
+            if not rks: continue
+            cks = _cr_dim_keys(cols_dim, r) if cols_dim else [None]
+            if not cks: cks = [None]
+            for rk in rks:
+                for ck in cks:
+                    g.setdefault(rk, {}).setdefault(ck, []).append(r)
         return g
     groups = _bucket(rows_all)
     fu_groups = _bucket(followup_rows) if uses_followups else {}
@@ -2081,6 +2151,10 @@ def custom_report_run():
         fu_sub = fu_groups.get(rk, {}).get(ck, [])
         return _cr_resolve_measure(measure, call_sub, fu_sub)
 
+    _charity_note = ("A charity is often tagged with more than one Who/What/How category, or operates in "
+                      "more than one area — a call to that charity counts once in every matching group, so "
+                      "these totals can add up to more than the report's overall total.") if needs_charity else None
+
     if col_keys is None:
         computed = [(rk, _resolve(rk, None)) for rk in row_keys]
         if rows_dim not in ("date_day","date_week","date_month","hour"):
@@ -2091,7 +2165,8 @@ def custom_report_run():
             "data": [c[1] for c in computed],
             "measure_label": measure_label,
             "row_field_label": REPORT_DIMENSIONS[rows_dim]["label"],
-            "column_field_label": None})
+            "column_field_label": None,
+            "note": _charity_note})
     else:
         # Sort rows by their total across all columns (for non-chronological dims)
         totals = {rk: sum(_resolve(rk, ck) for ck in col_keys) for rk in row_keys}
@@ -2102,7 +2177,8 @@ def custom_report_run():
             "row_labels": row_keys, "column_labels": col_keys, "data": matrix,
             "measure_label": measure_label,
             "row_field_label": REPORT_DIMENSIONS[rows_dim]["label"],
-            "column_field_label": REPORT_DIMENSIONS[cols_dim]["label"]})
+            "column_field_label": REPORT_DIMENSIONS[cols_dim]["label"],
+            "note": _charity_note})
 
 @app.route("/api/custom_report/fields", methods=["GET"])
 def custom_report_fields():
@@ -2121,6 +2197,16 @@ def custom_report_fields():
                             FROM call_log cl
                             LEFT JOIN calling_batch cb ON cb.reg_number=cl.reg_number AND cb.active=1""") or []
     source_opts = sorted({CALLING_CATEGORIES.get(r[0], r[0]) for r in src_rows if r[0]})
+    # Who/What/How options come from the same fixed Charity Commission
+    # taxonomy (CC_CODE_MAP) used by Search's own classification pickers —
+    # small, fixed lists, so no need to scan any data for them. Area of
+    # Operation isn't included here: its full option list (~400 UK local
+    # authorities/regions/countries) already lives client-side as
+    # AREA_OF_OPERATION_GROUPS for Search's own Area picker, so the frontend
+    # reuses that directly rather than this endpoint duplicating it.
+    who_opts = sorted({v for k, v in CC_CODE_MAP.items() if k.startswith("2")})
+    what_opts = sorted({v for k, v in CC_CODE_MAP.items() if k.startswith("1")})
+    how_opts = sorted({v for k, v in CC_CODE_MAP.items() if k.startswith("3")})
     return jsonify({"ok": True,
         "measures": [{"value": k, "label": v["label"]} for k, v in REPORT_MEASURES.items()],
         "dimensions": [{"value": k, "label": v["label"]} for k, v in REPORT_DIMENSIONS.items()],
@@ -2128,6 +2214,9 @@ def custom_report_fields():
             {"value": "outcome", "label": "Outcome", "options": outcome_opts},
             {"value": "stage", "label": "Stage", "options": stage_opts},
             {"value": "source_list", "label": "Source List", "options": source_opts},
+            {"value": "charity_who", "label": "Who (Charity)", "options": who_opts},
+            {"value": "charity_what", "label": "What (Charity)", "options": what_opts},
+            {"value": "charity_how", "label": "How (Charity)", "options": how_opts},
         ],
         # For the Custom Measure builder (Power BI-measure-style): pick an
         # aggregation + a raw field, or combine two measures with an

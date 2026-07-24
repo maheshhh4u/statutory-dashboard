@@ -3201,7 +3201,9 @@ function crSetChartType(value){
 // by the separate Timeline slicer type instead, which has its own from/to
 // inputs rather than a field dropdown at all.
 function crSlicerFieldChoices(){
-  return [{value:'caller', label:'Caller'}].concat(_crFilterFieldsMeta.map(f=>({value:f.value,label:f.label})));
+  return [{value:'caller', label:'Caller'}]
+    .concat(_crFilterFieldsMeta.map(f=>({value:f.value,label:f.label})))
+    .concat([{value:'charity_area', label:'Area of Operation (Charity)'}]);
 }
 function renderCrSlicerFieldOptions(chartType){
   const sel=document.getElementById('cr-slicer-field');
@@ -3229,11 +3231,23 @@ function renderCrFilterFieldOptions(){
 // it isn't backend-supplied like Outcome/Stage/Source List are.
 function crFilterFieldChoices(){
   return [{value:'caller', label:'Caller'}, {value:'date_range', label:'Date Range'}]
-    .concat(_crFilterFieldsMeta.map(f=>({value:f.value,label:f.label})));
+    .concat(_crFilterFieldsMeta.map(f=>({value:f.value,label:f.label})))
+    .concat([{value:'charity_area', label:'Area of Operation (Charity)'}]);
+}
+// Area of Operation's ~400 UK local authorities/regions/countries already
+// live client-side as AREA_OF_OPERATION_GROUPS (Search's own Area picker) —
+// reused here flattened, rather than duplicating that list on the backend.
+function crAreaOfOperationFlatOptions(){
+  const out=[];
+  (typeof AREA_OF_OPERATION_GROUPS!=='undefined' ? AREA_OF_OPERATION_GROUPS : []).forEach(g=>{
+    (g.items||[]).forEach(item=>out.push(item));
+  });
+  return out;
 }
 function crFilterFieldMeta(field){
   if(field==='caller') return {value:'caller', label:'Caller', options:(userList||[]).slice()};
   if(field==='date_range') return {value:'date_range', label:'Date Range'};
+  if(field==='charity_area') return {value:'charity_area', label:'Area of Operation (Charity)', options:crAreaOfOperationFlatOptions()};
   return _crFilterFieldsMeta.find(f=>f.value===field) || null;
 }
 // Toggles the values-select vs. the two date inputs depending on which field
@@ -4077,6 +4091,16 @@ function crBuildChartConfig(d, chartType, format){
   };
 }
 function renderCrResult(d, chartType, chartId, tableWrapId, isTile, format, cardId){
+  if(isTile){
+    // Surfaces any note the backend attached to this response (e.g. "these
+    // totals can add up to more than the overall total" for a Who/What/How/
+    // Area of Operation grouping) as a hover tooltip on the tile's own title
+    // bar — low-friction, doesn't disturb the layout, and only shows up
+    // when there's actually something worth flagging.
+    const id=chartId.replace('cr-visual-chart-','');
+    const titlebar=document.getElementById('cr-visual-titlebar-'+id);
+    if(titlebar) titlebar.title=d.note||'';
+  }
   const chartWrap = document.getElementById(isTile ? chartId+'-wrap' : 'cr-result-chart-wrap');
   const tableWrap = document.getElementById(tableWrapId);
   const cardWrap = cardId ? document.getElementById(cardId) : null;
@@ -5023,6 +5047,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.97", date:"2026-07", title:"Custom Report: added Who, What, How, and Area of Operation as fields",
+    changes:[
+      "Four new fields, pulled from the same Charity Commission classification/area data Search's own Who/What/How/Area pickers already use: Who (Charity), What (Charity), How (Charity), and Area of Operation (Charity). They show up automatically in the Fields palette, drag straight into Rows/Columns like any other field, and are also available as Filters and as Slicer fields.",
+      "These describe the charity being called, not the call itself \u2014 looked up per charity for whichever ones actually appear in the matching calls, using the same memory-safe, bounded lookup already used for CSV exports (not the old whole-country cache that used to cause out-of-memory crashes).",
+      "A charity is usually tagged with several Who/What/How categories at once, and can operate in several areas \u2014 grouping or filtering by one of these counts a call in every matching group/area it genuinely belongs to, the same way the Charity Commission's own published statistics work. That means totals across groups can add up to more than the report's overall total \u2014 expected, not a bug \u2014 and a tile using one of these fields shows a hover tooltip explaining it.",
+      "Filtering matches if ANY of a charity's tags is one of the selected values, not the whole combined set \u2014 so filtering to \"Children/young people\" correctly includes a charity also tagged \"Elderly/old people\", rather than requiring an exact all-tags match.",
+    ]},
   { v:"1.96", date:"2026-07", title:"Fixed: visuals were resizing every time a side panel was collapsed or expanded",
     changes:[
       "Found the cause: the canvas was stretched to fill 100% of its column's width, and GridStack computes every visual's pixel size as (canvas width) \u00f7 (12 grid columns) \u2014 so a visual's on-screen size changed every time the canvas got wider or narrower from collapsing/expanding Format, Drag & Drop, or Fields, even though the visual's own size (its column span) never changed.",
