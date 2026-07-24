@@ -1254,6 +1254,8 @@ select:focus{outline:none;border-color:var(--green)}
           <div id="cr-chart-type-gallery" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px"></div>
           <input type="hidden" id="cr-chart-type" value="col_clustered">
 
+          <label id="cr-combo-secondary-axis-wrap" style="display:none;font-size:11.5px;align-items:center;gap:5px;margin-bottom:10px"><input type="checkbox" id="cr-combo-secondary-axis" onchange="crPreviewFormatChanges()"> Secondary axis for Line (own scale on the right, separate from the columns)</label>
+
           <label style="font-size:11.5px;display:flex;align-items:center;gap:5px;margin-bottom:10px"><input type="checkbox" id="cr-tile-titlebar" checked> Show tile title bar (name + drag handle)</label>
 
           <div id="cr-slicer-config" style="display:none;margin-bottom:10px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px">
@@ -2547,7 +2549,6 @@ const CR_CHART_TYPES=[
   {value:'polarArea', label:'Polar Area', icon:'🎯'},
   {value:'table', label:'Table', icon:'🔢'},
   {value:'combo_col_line', label:'Combo: Column + Line', icon:'📊📈'},
-  {value:'combo_col_line_dual', label:'Combo: Column + Line (Dual Axis)', icon:'📊⇄📈'},
   {value:'slicer_dropdown', label:'Slicer - Dropdown', icon:'🔽'},
   {value:'slicer_list', label:'Slicer - List', icon:'☰'},
   {value:'slicer_timeline', label:'Slicer - Timeline', icon:'📅'},
@@ -2564,6 +2565,10 @@ function crChartTypeNeedsRows(chartType){ return chartType!=='card' && !crChartT
 // one measure, optionally broken down further by Columns), so combo charts
 // get a second "Values (Line)" well instead of a Columns well — there's no
 // cross-tab breakdown here, just two measures side by side.
+// "combo_col_line_dual" is a legacy chart_type value (the secondary axis
+// used to be a separate chart type before it became the checkbox below) —
+// still recognized here so a visual saved with it doesn't break, even
+// though nothing can create one anymore.
 function crChartTypeIsCombo(chartType){ return chartType==='combo_col_line' || chartType==='combo_col_line_dual'; }
 const CR_PALETTES={
   navy:  ['#1e3a5f','#e8b339','#1d7a3a','#a02c2c','#6a4d99','#2d8f8f','#c47a2c','#4d6a99'],
@@ -3150,6 +3155,8 @@ function crSelectVisual(id){
   document.getElementById('cr-fmt-legend-pos').value=fmt.legendPosition||'top';
   document.getElementById('cr-fmt-title').value=fmt.title||'';
   crRestoreFormatSwatches(fmt);
+  const secAxisEl=document.getElementById('cr-combo-secondary-axis');
+  if(secAxisEl) secAxisEl.checked = fmt.secondaryAxis!==undefined ? !!fmt.secondaryAxis : (v.chart_type==='combo_col_line_dual');
   _crCanvasFilters=(v.filters||[]).map(f=> f.field==='date_range'
     ? {field:f.field, fieldLabel:f.fieldLabel, from:f.from, to:f.to}
     : {field:f.field, fieldLabel:f.fieldLabel, values:(f.values||[]).slice()});
@@ -3209,6 +3216,8 @@ function crSetChartType(value){
   if(valuesLabel) valuesLabel.textContent=isCombo?'Values (Columns)':'Values';
   if(valuesLineWell) valuesLineWell.style.display=isCombo?'flex':'none';
   if(!isCombo && _crCanvas.values_line){ _crCanvas.values_line=null; renderCrWells(); }
+  const secAxisWrap=document.getElementById('cr-combo-secondary-axis-wrap');
+  if(secAxisWrap) secAxisWrap.style.display=isCombo?'flex':'none';
   if(rowsWell) rowsWell.style.display=needsRows?'flex':'none';
   if(colsWell) colsWell.style.display=(needsRows && !isCombo)?'flex':'none';
   if(!needsRows){
@@ -3971,6 +3980,7 @@ function crApplyToSelectedVisual(){
       title:document.getElementById('cr-fmt-title').value.trim(),
       titleColor:crReadSwatchColor('cr-fmt-title-color-wrap'),
       gridlines:document.getElementById('cr-fmt-gridlines').checked,
+      secondaryAxis:document.getElementById('cr-combo-secondary-axis').checked,
     },
     filters:_crCanvasFilters.map(f=> f.field==='date_range'
       ? {field:f.field, fieldLabel:f.fieldLabel, from:f.from, to:f.to}
@@ -4286,7 +4296,7 @@ function renderCrComboResult(d1, d2, v, chartId){
   const fmt=v.format||{};
   const palette=(fmt.customPalette && fmt.customPalette.length) ? fmt.customPalette : (CR_PALETTES[fmt.palette]||CR_PALETTES.navy);
   const barColor=palette[0], lineColor=palette[1]||'#e8b339';
-  const isDual=v.chart_type==='combo_col_line_dual';
+  const isDual = fmt.secondaryAxis!==undefined ? !!fmt.secondaryAxis : (v.chart_type==='combo_col_line_dual');
   const showGrid=fmt.gridlines!==false;
 
   const canvasEl=document.getElementById(chartId);
@@ -5224,6 +5234,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.00", date:"2026-07", title:"Combo charts: secondary axis is now a checkbox, not a separate chart type",
+    changes:[
+      "Replaced the separate \"Combo: Column + Line (Dual Axis)\" chart type with a single \"Combo: Column + Line\" type plus a \"Secondary axis for Line\" checkbox in Format \u2014 simpler than having to pick between two near-identical chart types, and fixes picking the plain \"Column + Line\" one and expecting a secondary axis that (correctly, but confusingly) wasn't there.",
+      "Unchecked (the default): both series share one axis. Checked: the line gets its own axis on the right, independent of the column measure's scale \u2014 useful when the two measures are on very different scales, like call counts vs. seconds of duration.",
+      "Any visual that was still using the old \"Dual Axis\" chart type keeps working exactly as before \u2014 it's treated as the checkbox being on, nothing needs to be redone.",
+    ]},
   { v:"1.99", date:"2026-07", title:"Custom Report: Combo charts — column + line, dual axis, split legend",
     changes:[
       "Two new chart types under Chart Type: \"Combo: Column + Line\" and \"Combo: Column + Line (Dual Axis)\" \u2014 real Excel/Power BI-style combo charts, not a single combined number. Pick this and a second well, \"Values (Line)\", appears next to the usual Values well (now labelled \"Values (Columns)\") \u2014 drag one measure into each, e.g. Calls Made into Columns and Sum of Call Duration into Line, both broken down by the same Rows field (What (Charity), Caller, whatever you'd normally group by).",
