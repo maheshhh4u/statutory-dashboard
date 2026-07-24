@@ -2810,6 +2810,7 @@ function crRestoreFormatSwatches(fmt){
 // its effect on the actual chart immediately. Only does anything if this
 // visual has already been configured at least once (has a measure to run);
 // a brand-new, never-applied visual has nothing to preview yet.
+let _crVisualDataCache={};  // id -> {kind:'chart', d} or {kind:'combo', d1, d2} — the last successfully fetched raw result per visual, so a purely cosmetic change (colour, gridlines, title text, legend, data labels) can re-render instantly instead of re-querying the server. Populated by crRenderVisual on every real fetch; a format-only change never invalidates it, since it never changes which rows/measure/filters the visual is built from.
 function crPreviewFormatChanges(){
   const id=_crSelectedVisualId;
   if(!id) return;
@@ -2826,7 +2827,19 @@ function crPreviewFormatChanges(){
     title:document.getElementById('cr-fmt-title').value.trim(),
     titleColor:crReadSwatchColor('cr-fmt-title-color-wrap'),
     gridlines:document.getElementById('cr-fmt-gridlines').checked,
+    secondaryAxis:document.getElementById('cr-combo-secondary-axis').checked,
   };
+  // This was the main cause of the report feeling slow: every single
+  // formatting tweak — even just typing a title — used to re-run the full
+  // query from scratch. A cosmetic change never affects which data the
+  // visual is built from, so re-use the last fetch instead of hitting the
+  // server again.
+  const cached=_crVisualDataCache[id];
+  if(cached){
+    if(cached.kind==='combo') renderCrComboResult(cached.d1, cached.d2, v, 'cr-visual-chart-'+id);
+    else renderCrResult(cached.d, v.chart_type, 'cr-visual-chart-'+id, 'cr-visual-table-'+id, true, v.format, 'cr-visual-card-'+id);
+    return;
+  }
   crRenderVisual(id);
 }
 let _crMeasures=[], _crDimensions=[];
@@ -2989,6 +3002,7 @@ function crOpenBuilder(){
   crInitGridIfNeeded();
   document.getElementById('cr-report-name').value='';
   _crVisuals={};
+  _crVisualDataCache={};
   _crVisualSeq=0;
   _crReportFilters=[];
   renderCrReportFiltersList();
@@ -4012,6 +4026,7 @@ function crRemoveSelectedVisual(){
   const el=document.querySelector(`#cr-gridstack [gs-id="${id}"]`);
   if(el) _crGrid.removeWidget(el);
   delete _crVisuals[id];
+  delete _crVisualDataCache[id];
   crDeselectVisual();
 }
 // Copies the selected visual (measure, rows, columns, chart type,
@@ -4096,6 +4111,7 @@ function crRenderVisual(id){
       fetch('/api/custom_report/run',{method:'POST',headers:{'Content-Type':'application/json'},body:body2}).then(r=>r.json()),
     ]).then(([d1,d2])=>{
       if(!d1.ok || !d2.ok) return;
+      _crVisualDataCache[id]={kind:'combo', d1, d2};
       renderCrComboResult(d1, d2, v, 'cr-visual-chart-'+id);
     }).catch(()=>{});
   }
@@ -4104,6 +4120,7 @@ function crRenderVisual(id){
     body:JSON.stringify({measure:measurePayload, rows:v.rows||'', columns:v.columns||null, date_from:'', date_to:'', callers:[], filters})})
     .then(r=>r.json()).then(d=>{
       if(!d.ok) return;
+      _crVisualDataCache[id]={kind:'chart', d};
       renderCrResult(d, v.chart_type, 'cr-visual-chart-'+id, 'cr-visual-table-'+id, true, v.format, 'cr-visual-card-'+id);
     }).catch(()=>{});
 }
@@ -4305,9 +4322,13 @@ function renderCrComboResult(d1, d2, v, chartId){
 
   const scales={
     x:{grid:{display:showGrid}},
-    y:{grid:{display:showGrid}, beginAtZero:true, position:'left', title:{display:true, text:d1.measure_label}},
+    y:{type:'linear', grid:{display:showGrid}, beginAtZero:true, position:'left',
+       title:{display:true, text:d1.measure_label, color:barColor},
+       ticks:{color:barColor}},
   };
-  if(isDual) scales.y1={grid:{display:false}, beginAtZero:true, position:'right', title:{display:true, text:d2.measure_label}};
+  if(isDual) scales.y1={type:'linear', grid:{display:false}, beginAtZero:true, position:'right',
+       title:{display:true, text:d2.measure_label, color:lineColor},
+       ticks:{color:lineColor}};
 
   canvasEl._chartInst = new Chart(canvasEl, {
     type:'bar',
@@ -5234,6 +5255,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.01", date:"2026-07", title:"Major Custom Report performance fix (the actual cause of the slowness and Render memory spikes), plus clearer combo chart axes",
+    changes:[
+      "Found the real cause of the reported slowness and the app hitting Render's 512MB limit: any visual using Who/What/How/Area of Operation was re-downloading and re-scanning the ENTIRE Charity Commission classification/area bulk files from scratch on every single render \u2014 not just when you clicked Apply, but on every Refresh All, every slicer click, and (see next fix) every formatting tweak. That's now scanned once and cached for a day, the same safe, bounded-memory approach already used elsewhere in the app for other large Charity Commission datasets \u2014 every render after the first is a plain lookup instead of a multi-second re-download.",
+      "Bigger fix, affecting every visual regardless of what fields it uses: picking a colour, toggling Gridlines/Data Labels/Legend, or typing a chart title was re-running the full underlying query from scratch on every single change \u2014 that's what \"live preview\" (added in v1.91) was actually doing under the hood. None of that ever needed fresh data; only Values/Rows/Columns/Filters do. Formatting changes now reuse the last-fetched data and just redraw, with no server round-trip at all \u2014 this is the main fix for \"very very slow.\"",
+      "Combo chart secondary axis: the right-hand axis was rendering correctly but easy to miss when its numbers happened to land in a similar range to the left axis. Each axis's tick labels and title are now colour-matched to their series (navy for columns, gold for the line, or whatever your palette uses) so the two independent axes are unmistakable regardless of their numbers.",
+    ]},
   { v:"2.00", date:"2026-07", title:"Combo charts: secondary axis is now a checkbox, not a separate chart type",
     changes:[
       "Replaced the separate \"Combo: Column + Line (Dual Axis)\" chart type with a single \"Combo: Column + Line\" type plus a \"Secondary axis for Line\" checkbox in Format \u2014 simpler than having to pick between two near-identical chart types, and fixes picking the plain \"Column + Line\" one and expecting a secondary axis that (correctly, but confusingly) wasn't there.",

@@ -630,11 +630,17 @@ def cache_get(key,max_age=180):
 # risks an out-of-memory crash exactly like the one that just happened.
 # Cap how many of these large sources can be held at once; anything older
 # gets dropped and will simply be recomputed on next access, same as if it
-# had expired normally.
-_LARGE_SOURCE_CACHE_LIMIT = 2
+# had expired normally. Bumped from 2 to 3 when classif_full_map/
+# area_full_map joined this pool (see _get_full_classification_map) — those
+# two replaced a pattern that re-downloaded and re-scanned the same bulk
+# files on every single Custom Report render, which was the actual cause of
+# reported slowness and repeated memory spikes; caching them here is a much
+# smaller cost than that was.
+_LARGE_SOURCE_CACHE_LIMIT = 3
 def _is_large_source_key(k):
     return (k=="prospects" or k=="late" or k=="old_charities" or k.startswith("new_")
-            or k.startswith("milestones_") or k.startswith("area_regs_") or k.startswith("classif_regs_"))
+            or k.startswith("milestones_") or k.startswith("area_regs_") or k.startswith("classif_regs_")
+            or k=="classif_full_map" or k=="area_full_map")
 def _evict_stale_large_sources():
     large_keys=[k for k in _cache if _is_large_source_key(k)]
     if len(large_keys) <= _LARGE_SOURCE_CACHE_LIMIT: return
@@ -1786,18 +1792,80 @@ def _cr_dim_keys(dim, row):
     k = _cr_dim_key(dim, row)
     return [k] if k is not None else []
 
+def _get_full_classification_map():
+    """Whole-country Who/What/How map, cached with the same bounded eviction
+    used for the other large CC bulk sources (see _is_large_source_key).
+    Custom Report used to call _scan_classification_for(reg_set) directly —
+    correct, but it re-downloaded and re-scanned the ENTIRE classification
+    bulk file from the Charity Commission on every single call, with no
+    caching at all (stream_zip_csv always does a fresh HTTP fetch). Since a
+    Custom Report visual re-renders on nearly every UI interaction (Apply,
+    Refresh All, a slicer click, even picking a colour via the live-preview
+    formatting panel), that meant a full multi-second bulk-file re-download
+    behind ordinary clicks — the actual cause of the reported slowness and
+    repeated memory spikes, not anything about the chart rendering itself.
+    Scanning once and caching the result turns every render after the first
+    into a plain dict lookup."""
+    cached = cache_get("classif_full_map", max_age=1440)  # 1 day — CC bulk data doesn't change intraday
+    if cached is not None:
+        return cached
+    tmp = {}
+    try:
+        cols = {"registered_charity_number","classification_code","classification_type"}
+        for row in stream_zip_csv(CLASSIF_URL, cols):
+            reg = row.get("registered_charity_number","").strip()
+            if not reg: continue
+            ctype = row.get("classification_type","").strip().lower()
+            code = row.get("classification_code","").strip()
+            if not code or ctype not in ("what","who","how"): continue
+            tmp.setdefault(reg, {"what":[],"who":[],"how":[]})[ctype].append(CC_CODE_MAP.get(code, code))
+    except Exception as e:
+        print(f"_get_full_classification_map error: {e}")
+        return {}
+    out = {reg: {"what": ",".join(dict.fromkeys(d["what"])),
+                 "who":  ",".join(dict.fromkeys(d["who"])),
+                 "how":  ",".join(dict.fromkeys(d["how"]))}
+           for reg, d in tmp.items()}
+    cache_set("classif_full_map", out)
+    return out
+
+def _get_full_area_map():
+    """Whole-country Region/Local Authority/Country map — same reasoning and
+    caching as _get_full_classification_map above."""
+    cached = cache_get("area_full_map", max_age=1440)
+    if cached is not None:
+        return cached
+    tmp = {}
+    try:
+        cols = {"registered_charity_number","geographic_area_type","geographic_area_description"}
+        for row in stream_zip_csv(AREA_URL, cols):
+            reg = row.get("registered_charity_number","").strip()
+            if not reg: continue
+            atype = row.get("geographic_area_type","").strip().lower()
+            adesc = row.get("geographic_area_description","").strip()
+            if not adesc: continue
+            d = tmp.setdefault(reg, {"region":[], "local_authority":[], "country":[]})
+            bucket = "region" if atype=="region" else ("local_authority" if atype=="local authority" else ("country" if atype=="country" else None))
+            if bucket and adesc not in d[bucket]:
+                d[bucket].append(adesc)
+    except Exception as e:
+        print(f"_get_full_area_map error: {e}")
+        return {}
+    out = {reg: {"region": ", ".join(d["region"]),
+                 "local_authority": ", ".join(d["local_authority"]),
+                 "country": ", ".join(d["country"])}
+           for reg, d in tmp.items()}
+    cache_set("area_full_map", out)
+    return out
+
 def _cr_attach_charity_classification(rows_all):
     """Looks up Who/What/How/Area of Operation for every distinct charity in
-    rows_all and attaches them onto each row dict, using the same bounded,
-    memory-safe scan already used for CSV export enrichment (_scan_
-    classification_for / _scan_area_for) rather than the old unbounded
-    whole-country cache that previously caused out-of-memory crashes (see
-    the comment above EXPORT_ENRICH_MAX). Only called when a report actually
-    groups or filters by one of these fields, so a normal report pays
-    nothing extra."""
-    reg_set = {str(r["reg_number"]).strip() for r in rows_all if str(r["reg_number"]).strip()}
-    classif = _scan_classification_for(reg_set) if reg_set else {}
-    areas = _scan_area_for(reg_set) if reg_set else {}
+    rows_all and attaches them onto each row dict, from the cached whole-
+    country maps above (a lookup, not a fresh scan). Only called when a
+    report actually groups or filters by one of these fields, so a normal
+    report pays nothing extra."""
+    classif = _get_full_classification_map()
+    areas = _get_full_area_map()
     for r in rows_all:
         reg = str(r["reg_number"]).strip()
         c = classif.get(reg, {})
