@@ -1207,7 +1207,7 @@ select:focus{outline:none;border-color:var(--green)}
         </div>
       </div>
 
-      <div id="cr-builder-grid" style="display:grid;grid-template-columns:1fr 260px 300px 220px;gap:14px;align-items:start">
+      <div id="cr-builder-grid" style="display:grid;grid-template-columns:1fr 240px 280px 200px;gap:14px;align-items:start">
         <!-- COLUMN 1: canvas — the dominant area, Power BI style -->
         <div>
           <div id="cr-add-visual-toolbar" style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
@@ -1221,7 +1221,15 @@ select:focus{outline:none;border-color:var(--green)}
              Sticky and independently scrollable, same as columns 3 and 4, so
              each stays fully visible alongside the canvas without dragging
              the others' scroll position along with it. -->
-        <div id="cr-panel-format" style="display:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#faf8fd;border:1px solid #e2dcf0;border-radius:8px;padding:10px 12px">
+        <div id="cr-panel-format" style="display:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#faf8fd;border:1px solid #e2dcf0;border-radius:8px;padding:0">
+          <div id="cr-panel-format-header" onclick="crToggleColumnCollapse('format')" style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;cursor:pointer;border-bottom:1px solid #e2dcf0;position:sticky;top:0;background:#faf8fd;border-radius:8px 8px 0 0">
+            <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">🎨 Format</span>
+            <span style="font-size:13px;color:var(--t3)" title="Collapse">◂</span>
+          </div>
+          <div id="cr-panel-format-collapsed" onclick="crToggleColumnCollapse('format')" title="Expand Format" style="display:none;flex-direction:column;align-items:center;padding:12px 0;cursor:pointer">
+            <span style="font-size:16px">🎨</span>
+          </div>
+          <div id="cr-panel-format-body" style="padding:10px 12px">
           <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Chart Type</div>
           <div id="cr-chart-type-gallery" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px"></div>
           <input type="hidden" id="cr-chart-type" value="col_clustered">
@@ -1280,13 +1288,22 @@ select:focus{outline:none;border-color:var(--green)}
               </label>
             </div>
           </div>
+          </div>
         </div>
 
         <!-- COLUMN 3: Drag & Drop — Custom Measure, the Values/Rows/Columns
              wells, Filters, and the action buttons. Sits directly next to
              the Fields column (4) so a field/measure chip can be dragged
              straight across without either panel needing to scroll. -->
-        <div id="cr-panel-dragdrop" style="display:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#faf8fd;border:1px solid #e2dcf0;border-radius:8px;padding:10px 12px">
+        <div id="cr-panel-dragdrop" style="display:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#faf8fd;border:1px solid #e2dcf0;border-radius:8px;padding:0">
+          <div id="cr-panel-dragdrop-header" onclick="crToggleColumnCollapse('dragdrop')" style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;cursor:pointer;border-bottom:1px solid #e2dcf0;position:sticky;top:0;background:#faf8fd;border-radius:8px 8px 0 0">
+            <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">🖱️ Drag &amp; Drop</span>
+            <span style="font-size:13px;color:var(--t3)" title="Collapse">◂</span>
+          </div>
+          <div id="cr-panel-dragdrop-collapsed" onclick="crToggleColumnCollapse('dragdrop')" title="Expand Drag &amp; Drop" style="display:none;flex-direction:column;align-items:center;padding:12px 0;cursor:pointer">
+            <span style="font-size:16px">🖱️</span>
+          </div>
+          <div id="cr-panel-dragdrop-body" style="padding:10px 12px">
           <div id="cr-measure-builder" style="background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
             <label style="font-size:11.5px;font-weight:700;display:flex;align-items:center;gap:5px"><input type="checkbox" id="cr-cm-enable" onchange="crToggleCustomMeasureBuilder()"> 🧮 Custom Measure</label>
             <div id="cr-cm-body" style="display:none;margin-top:8px">
@@ -1354,17 +1371,27 @@ select:focus{outline:none;border-color:var(--green)}
             <button class="btn btn-outline btn-sm" onclick="crRemoveSelectedVisual()">🗑 Remove Visual</button>
           </div>
           <div id="cr-result-status" style="font-size:11.5px;color:var(--t3);margin-top:6px"></div>
+          </div>
         </div>
 
         <!-- COLUMN 4: Fields — the drag source, always visible (not gated on
              a visual being selected) so it's ready the moment column 3
              appears next to it. -->
-        <div id="cr-fields-sidebar" style="position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px">
+        <div id="cr-fields-sidebar" style="position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:8px;padding:0">
+          <div id="cr-panel-fields-header" onclick="crToggleColumnCollapse('fields')" style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);position:sticky;top:0;background:#fff;border-radius:8px 8px 0 0">
+            <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">📏 Fields</span>
+            <span style="font-size:13px;color:var(--t3)" title="Collapse">◂</span>
+          </div>
+          <div id="cr-panel-fields-collapsed" onclick="crToggleColumnCollapse('fields')" title="Expand Fields" style="display:none;flex-direction:column;align-items:center;padding:12px 0;cursor:pointer">
+            <span style="font-size:16px">📏</span>
+          </div>
+          <div id="cr-panel-fields-body" style="padding:10px 12px">
           <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">📏 Measures</div>
           <div id="cr-palette-measures" style="margin-bottom:14px"></div>
           <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">🔀 Fields</div>
           <div id="cr-palette-dims"></div>
           <p style="font-size:10.5px;color:var(--t3);margin-top:10px;line-height:1.4">Click "+ Add Visual", select it, then drag a measure into Values and a field into Rows (Columns optional) — or tap a chip then tap a well. For a Slicer, pick one of the three Slicer icons under Chart Type instead.</p>
+          </div>
         </div>
       </div>
     </div>
@@ -2777,6 +2804,13 @@ let _crCMFields=[], _crCMAggs=[], _crCMOps=[];  // Custom Measure builder: aggre
 let _crCanvasFilters=[];      // working filter list [{field,fieldLabel,values:[...]}] for whichever visual is selected — a date_range entry has {from,to} instead of values
 let _crReportFilters=[];      // committed report-level filters, same shape, applied to every visual unless that visual sets its own filter on the same field
 let _crBuilderMode='edit';    // 'view' (opening a saved report — canvas only) or 'edit' (new report, or after clicking ✏️ Edit)
+// Power BI-style collapsible side columns — each of the 3 right-hand
+// columns (Format, Drag & Drop, Fields) can shrink to a slim icon strip so
+// the canvas (which is always the 1fr column and absorbs whatever width the
+// collapsed columns free up) can be widened on demand, rather than the
+// canvas being a fixed size regardless of what the person is doing.
+const CR_COL_WIDTHS = {format:240, dragdrop:280, fields:200};
+let _crColCollapsed = {format:false, dragdrop:false, fields:false};
 
 function initCustomReport(){
   // Land on the gallery of saved reports, not the builder — matches how
@@ -2881,9 +2915,31 @@ function crSetBuilderMode(mode){
   const filtersPanel=document.getElementById('cr-report-filters-panel'); if(filtersPanel) filtersPanel.style.display=isEdit?'flex':'none';
   const fieldsCol=document.getElementById('cr-fields-sidebar'); if(fieldsCol) fieldsCol.style.display=isEdit?'block':'none';
   const toolbar=document.getElementById('cr-add-visual-toolbar'); if(toolbar) toolbar.style.display=isEdit?'flex':'none';
-  const gridWrap=document.getElementById('cr-builder-grid'); if(gridWrap) gridWrap.style.gridTemplateColumns=isEdit?'1fr 260px 300px 220px':'1fr';
+  crUpdateBuilderGridColumns();
   if(_crGrid) _crGrid.setStatic(!isEdit);  // view mode: canvas is display-only, no drag/resize
   if(!isEdit) crDeselectVisual();  // closes the Format/Drag & Drop columns too, if they were open
+}
+// Recomputes the 4-column grid's widths from the current collapse state of
+// each of the 3 right-hand columns — called on mode switch and whenever a
+// column is collapsed/expanded. The canvas column is always "1fr", so it
+// automatically widens to absorb whatever space a collapsed column frees up.
+function crUpdateBuilderGridColumns(){
+  const gridWrap=document.getElementById('cr-builder-grid');
+  if(!gridWrap) return;
+  if(_crBuilderMode!=='edit'){ gridWrap.style.gridTemplateColumns='1fr'; return; }
+  const w=(col)=> _crColCollapsed[col] ? '40px' : CR_COL_WIDTHS[col]+'px';
+  gridWrap.style.gridTemplateColumns=`1fr ${w('format')} ${w('dragdrop')} ${w('fields')}`;
+}
+function crToggleColumnCollapse(col){
+  _crColCollapsed[col]=!_crColCollapsed[col];
+  const collapsed=_crColCollapsed[col];
+  const header=document.getElementById('cr-panel-'+col+'-header');
+  const body=document.getElementById('cr-panel-'+col+'-body');
+  const strip=document.getElementById('cr-panel-'+col+'-collapsed');
+  if(header) header.style.display=collapsed?'none':'flex';
+  if(body) body.style.display=collapsed?'none':'block';
+  if(strip) strip.style.display=collapsed?'flex':'none';
+  crUpdateBuilderGridColumns();
 }
 function crEnterEditMode(){
   crSetBuilderMode('edit');
@@ -4956,6 +5012,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"1.95", date:"2026-07", title:"Custom Report builder: collapsible columns and a bigger default canvas, Power BI style",
+    changes:[
+      "Each of the 3 right-hand columns (Format, Drag & Drop, Fields) can now be collapsed to a slim icon strip by clicking its header \u2014 the same collapse-to-a-strip behaviour as Power BI's own Visualizations/Fields panes. Click the strip to expand it back.",
+      "The canvas column always fills whatever space isn't taken by the other 3, so collapsing any of them (or all three) immediately gives the canvas more room \u2014 useful when you just want to look at the layout without the side panels in the way.",
+      "Slightly narrowed the 3 columns' default (expanded) widths too, so the canvas starts a bit larger even before collapsing anything.",
+    ]},
   { v:"1.94", date:"2026-07", title:"Custom Report builder: split into 4 columns so Fields and the Values/Rows/Columns wells are visible at the same time",
     changes:[
       "The single stacked right-hand rail from v1.93 is now 3 separate columns, as requested: Format (Chart Type, title bar toggle, Slicer Field, Formatting) right after the canvas, Drag & Drop (Custom Measure, the Values/Rows/Columns wells, Filters, and the action buttons) in the middle, and Fields (Measures + Fields, the drag source) on the far right.",
