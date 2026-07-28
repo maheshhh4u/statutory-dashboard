@@ -1267,8 +1267,12 @@ select:focus{outline:none;border-color:var(--green)}
 
           <div id="cr-slicer-config" style="display:none;margin-bottom:10px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px">
             <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Slicer Field</div>
+            <div id="cr-well-slicer_field" data-well="slicer_field" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:38px;border:2px dashed #eee0c9;border-radius:6px;padding:6px 10px;background:#fffaf0;display:flex;align-items:center;gap:6px;margin-bottom:8px">
+              <span style="font-size:10px;font-weight:700;color:#8a6d1a;text-transform:uppercase;flex-shrink:0">Field</span>
+              <span id="cr-well-slicer_field-content" style="color:var(--t3);font-size:11.5px">Drag a field here, or pick below</span>
+            </div>
             <div style="display:flex;flex-direction:column;gap:8px">
-              <select id="cr-slicer-field" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
+              <select id="cr-slicer-field" onchange="crSlicerFieldSelectChanged()" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
               <label id="cr-slicer-multi-wrap" style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-slicer-multi" checked> Allow multiple selections</label>
               <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Label
                 <input id="cr-slicer-title" placeholder="optional, defaults to the field name" style="flex:1;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
@@ -2920,6 +2924,11 @@ function crSetPageSize(preset){
   if(canvas){ canvas.style.width=size.w+'px'; canvas.style.height=size.h+'px'; }
   const sel=document.getElementById('cr-page-size');
   if(sel) sel.value=_crPageSize;
+  if(_crGrid) _crGrid.opts.maxRow=crComputeMaxRow();
+}
+function crComputeMaxRow(){
+  const size=CR_PAGE_SIZES[_crPageSize]||CR_PAGE_SIZES['16:9'];
+  return Math.max(2, Math.floor(size.h/(70+8)));  // 70=cellHeight, 8=margin, matching GridStack.init below
 }
 function crInitGridIfNeeded(){
   if(_crGrid) return;
@@ -2930,7 +2939,11 @@ function crInitGridIfNeeded(){
   // edges/corners (not just the bottom-right corner, which was the actual
   // cause of "resizing feels imprecise") and a live size readout during
   // drag/resize are added instead, without touching the grid's units.
-  _crGrid=GridStack.init({cellHeight:70, margin:8, minRow:2,
+  // maxRow caps how many rows the grid will allow — without it, GridStack
+  // happily grows the canvas taller every time a widget is added or
+  // dragged further down, which is exactly the "vertically it keeps
+  // expanding" behaviour reported even after the width was fixed.
+  _crGrid=GridStack.init({cellHeight:70, margin:8, minRow:2, maxRow:crComputeMaxRow(),
     resizable:{handles:'e, se, s, sw, w, n, ne, nw'}}, document.getElementById('cr-gridstack'));
   // Re-render a visual's chart after it's resized, so Chart.js redraws to fit
   // the new box instead of staying the old size.
@@ -3094,6 +3107,21 @@ function crPlaceInWell(well, payload){
   if(!_crSelectedVisualId){
     document.getElementById('cr-result-status').textContent='⚠ Add or select a visual first.'; return;
   }
+  if(well==='slicer_field'){
+    if(payload.kind!=='dim'){
+      document.getElementById('cr-result-status').textContent='⚠ Slicer Field needs a field, not a measure.'; return;
+    }
+    const sel=document.getElementById('cr-slicer-field');
+    if(!sel) return;
+    const hasOption=Array.from(sel.options).some(o=>o.value===payload.value);
+    if(!hasOption){
+      document.getElementById('cr-result-status').textContent='⚠ '+payload.label+' isn\u2019t available for this slicer type.';
+      return;
+    }
+    sel.value=payload.value;
+    crSlicerFieldSelectChanged();
+    return;
+  }
   if((well==='values'||well==='values_line') && payload.kind==='dim'){
     // A field like Outcome is qualitative (a category) — it's not a number
     // to total up, so it doesn't belong in Values. Silently turning it into
@@ -3207,6 +3235,7 @@ function crSelectVisual(id){
   const tbEl=document.getElementById('cr-tile-titlebar'); if(tbEl) tbEl.checked=v.showTitleBar!==false;
   if(crChartTypeIsSlicer(v.chart_type)){
     const sfEl=document.getElementById('cr-slicer-field'); if(sfEl) sfEl.value=v.slicerField||'';
+    crSlicerFieldSelectChanged();
     const smEl=document.getElementById('cr-slicer-multi'); if(smEl) smEl.checked=v.slicerMulti!==false;
     const stEl=document.getElementById('cr-slicer-title'); if(stEl) stEl.value=v.slicerTitle||'';
   }
@@ -3330,6 +3359,21 @@ function renderCrSlicerFieldOptions(chartType){
     sel.innerHTML=crSlicerFieldChoices().map(f=>`<option value="${esc(f.value)}">${esc(f.label)}</option>`).join('');
     if(multiWrap) multiWrap.style.display='flex';
   }
+  crSlicerFieldSelectChanged();
+}
+// Keeps the drag-and-drop Field well's chip display in sync with whatever
+// the underlying <select> currently holds — fired on the select's own
+// onchange, and also called directly after a drag-drop or a programmatic
+// restore sets sel.value (since setting .value in JS doesn't fire onchange
+// by itself).
+function crSlicerFieldSelectChanged(){
+  const sel=document.getElementById('cr-slicer-field');
+  const content=document.getElementById('cr-well-slicer_field-content');
+  if(!sel || !content) return;
+  if(!sel.value){ content.textContent='Drag a field here, or pick below'; return; }
+  const meta=crFilterFieldMeta(sel.value);
+  const label=(meta && meta.label) || sel.options[sel.selectedIndex]?.textContent || sel.value;
+  content.innerHTML=`<span style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:3px 10px;font-size:12px">${esc(label)}</span>`;
 }
 function renderCrFilterFieldOptions(){
   const sel=document.getElementById('cr-filter-field');
@@ -5305,6 +5349,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.05", date:"2026-07", title:"Fixed Slicer Field drag-and-drop, canvas now genuinely fixed in height too, and the qualitative-field warning",
+    changes:[
+      "Found the real cause of dragging a field onto a Slicer landing on the wrong control: Slicer Field lived in the Format column while Values/Rows/Columns lived in the Drag & Drop column next to it \u2014 dragging from Fields (the far-right column) toward Slicer Field meant crossing over the Values well first, and Slicer Field had no drop zone of its own to catch the drop before that happened. It now has a proper drag-and-drop well, matching Values/Rows/Columns, right above the existing dropdown \u2014 drag a field there directly, or still just pick it from the dropdown; both stay in sync.",
+      "The canvas (Page Size, added last round) was only fixed horizontally \u2014 GridStack still happily grew it taller every time a visual was added or dragged further down. It's now capped to the actual row count that fits the chosen page height, so the canvas genuinely stops growing in both directions, not just one.",
+      "Checked the About dialog (\u2139\ufe0f About, top right) \u2014 it already shows \u201cWhat's new in [current version]\u201d with that release's specific changes, plus a full version history below with every release's own change list. If you're seeing something different from that, let me know exactly what \u2014 didn't want to change working code without knowing what's actually broken.",
+    ]},
   { v:"2.04", date:"2026-07", title:"Fixed: dropping a field into Values no longer mislabels it as a Count; Page Size added (first piece of the Power BI canvas ask)",
     changes:[
       "Reverted the \"Count of <field>\" auto-conversion from v2.03 \u2014 right instinct (accept the drop instead of just rejecting it), wrong result: it silently turned a category like Outcome into a plain row count mislabeled with its name, which isn't actually what dropping a qualitative field into a quantitative slot should do. Dropping a field into Values now, if Rows is empty, places it there instead \u2014 that's almost always where it was meant to go \u2014 and otherwise gives a clear message explaining the field is a category, not a number, with the actual options (drag a Measure for a count, or build one with \ud83e\uddee Custom Measure).",
