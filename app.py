@@ -2430,9 +2430,9 @@ def custom_report_tiles_save():
     config = data.get("config") or {}
     if not name:
         return jsonify({"ok": False, "error": "Name is required"}), 400
-    visuals = config.get("visuals") if isinstance(config, dict) else None
-    if not isinstance(config, dict) or not isinstance(visuals, list) or not visuals:
+    if not isinstance(config, dict):
         return jsonify({"ok": False, "error": "Add at least one configured visual before saving"}), 400
+
     def _visual_ok(v):
         if not isinstance(v, dict):
             return False
@@ -2443,8 +2443,30 @@ def custom_report_tiles_save():
                 and _cr_validate_measure_def(v.get("measureDef")) is None \
                 and (bool(v.get("rows")) or v.get("chart_type") == "card")
         return bool(v.get("measure")) and (bool(v.get("rows")) or v.get("chart_type") == "card")
-    if not all(_visual_ok(v) for v in visuals):
-        return jsonify({"ok": False, "error": "Every visual needs at least a measure (and a field, unless it's a Card or Slicer)"}), 400
+
+    # Multi-page reports store visuals nested under "pages" (each page its
+    # own canvas); reports saved before multiple pages existed have a flat
+    # "visuals" list at the top level instead — accept either shape.
+    pages = config.get("pages")
+    if isinstance(pages, list) and pages:
+        all_visuals = []
+        for pg in pages:
+            if not isinstance(pg, dict):
+                return jsonify({"ok": False, "error": "Malformed page data"}), 400
+            pv = pg.get("visuals")
+            if isinstance(pv, list):
+                all_visuals.extend(pv)
+        if not all_visuals:
+            return jsonify({"ok": False, "error": "Add at least one configured visual (on any page) before saving"}), 400
+        if not all(_visual_ok(v) for v in all_visuals):
+            return jsonify({"ok": False, "error": "Every visual needs at least a measure (and a field, unless it's a Card or Slicer)"}), 400
+    else:
+        visuals = config.get("visuals")
+        if not isinstance(visuals, list) or not visuals:
+            return jsonify({"ok": False, "error": "Add at least one configured visual before saving"}), 400
+        if not all(_visual_ok(v) for v in visuals):
+            return jsonify({"ok": False, "error": "Every visual needs at least a measure (and a field, unless it's a Card or Slicer)"}), 400
+
     db_exec("DELETE FROM custom_report_tiles WHERE name=?", (name,))
     db_exec("INSERT INTO custom_report_tiles(name, config, created_at) VALUES(?,?,?)",
             (name, json.dumps(config), datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))

@@ -1233,6 +1233,7 @@ select:focus{outline:none;border-color:var(--green)}
           <div style="overflow:auto;padding-bottom:4px;max-height:calc(100vh - 24px)">
             <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;width:1280px;height:720px"></div>
           </div>
+          <div id="cr-page-tabs" style="display:flex;align-items:flex-end;gap:4px;margin-top:6px;flex-wrap:wrap"></div>
         </div>
 
         <!-- COLUMN 2: Format — chart type, title bar, slicer field, formatting.
@@ -2874,6 +2875,19 @@ let _crBuilderMode='edit';    // 'view' (opening a saved report — canvas only)
 // window is smaller than the chosen page size, rather than shrinking.
 const CR_PAGE_SIZES={'16:9':{w:1280,h:720}, '4:3':{w:960,h:720}, 'letter':{w:850,h:1100}};
 let _crPageSize='16:9';
+// Multiple renameable pages (tabs), Power BI style — each page is its own
+// canvas of visuals. Only the ACTIVE page's visuals live in the normal
+// _crVisuals/_crGrid state that every other function already reads and
+// writes; every other page is held as a plain-data "snapshot" in
+// _crPageSnapshots, restored into _crVisuals/_crGrid only when switched to.
+// This means every existing per-visual function (Apply, Render, Duplicate,
+// Match Size, etc.) needed zero changes — they only ever see "the current
+// page", exactly as before.
+let _crPageList=[];          // [{id, name}], in tab order
+let _crPageSnapshots={};     // pageId -> {visuals:{...}, layout:[{id,x,y,w,h}], pageSize}  — for every page NOT currently on screen
+let _crActivePageId=null;
+let _crPageSeq=0;
+function crNewPageId(){ return 'p'+(++_crPageSeq); }
 // Power BI-style collapsible side columns — each of the 3 right-hand
 // columns (Format, Drag & Drop, Fields) can shrink to a slim icon strip so
 // the canvas (which is always the 1fr column and absorbs whatever width the
@@ -2929,6 +2943,128 @@ function crSetPageSize(preset){
 function crComputeMaxRow(){
   const size=CR_PAGE_SIZES[_crPageSize]||CR_PAGE_SIZES['16:9'];
   return Math.max(2, Math.floor(size.h/(70+8)));  // 70=cellHeight, 8=margin, matching GridStack.init below
+}
+// Serializes the current page's live visuals+layout into the shape saved
+// reports use — shared by both "save the report" (every page, via
+// snapshots) and "save just what's on screen right now" so there's one
+// definition of what a valid, persisted visual looks like.
+function crSerializeVisualsFromSnapshot(layout, visualsMap){
+  return (layout||[]).map(p=>{
+    const v=visualsMap[p.id]||{};
+    return {id:p.id, x:p.x, y:p.y, w:p.w, h:p.h,
+            measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null,
+            measure2:v.measure2||'', measure2Label:v.measure2Label||'', measure2Def:v.measure2Def||null,
+            rows:v.rows, rowsLabel:v.rowsLabel,
+            columns:v.columns||'', columnsLabel:v.columnsLabel||'',
+            chart_type:v.chart_type||'col_clustered',
+            format:v.format||{},
+            filters:v.filters||[],
+            isSlicer:!!v.isSlicer,
+            slicerField:v.slicerField||'', slicerFieldLabel:v.slicerFieldLabel||'',
+            slicerMulti:v.slicerMulti!==false, slicerTitle:v.slicerTitle||'',
+            slicerSelected:v.slicerSelected!==undefined ? v.slicerSelected : (v.chart_type==='slicer_timeline'?null:[]),
+            showTitleBar:v.showTitleBar!==false};
+  }).filter(v=> v.isSlicer ? !!v.slicerField : (v.measure && (v.rows || !crChartTypeNeedsRows(v.chart_type))));
+}
+// Copies the LIVE canvas (_crVisuals/_crGrid) into _crPageSnapshots for
+// whichever page is currently active — a no-op on the visible canvas
+// itself, just captures a copy. Called before switching away from a page
+// (so its state isn't lost) and before saving (so every page, including
+// the one on screen, is captured the same way).
+function crSnapshotCurrentPage(){
+  if(!_crActivePageId || !_crGrid) return;
+  _crPageSnapshots[_crActivePageId]={
+    visuals:JSON.parse(JSON.stringify(_crVisuals)),
+    layout:_crGrid.save(false),
+    pageSize:_crPageSize,
+  };
+}
+// Clears the canvas and rebuilds it from a page's snapshot — the reverse of
+// crSnapshotCurrentPage. Reuses the exact same widget-creation path
+// (crAddWidgetWithHtml + crRenderVisual/crRenderSlicerVisual) every other
+// "load visuals onto the canvas" flow already uses.
+function crLoadPageSnapshot(id){
+  _crGrid.removeAll();
+  _crVisuals={};
+  _crVisualDataCache={};
+  crDeselectVisual();
+  const snap=_crPageSnapshots[id] || {visuals:{}, layout:[], pageSize:'16:9'};
+  delete _crPageSnapshots[id];  // becomes "live" again
+  _crActivePageId=id;
+  crSetPageSize(snap.pageSize||'16:9');
+  (snap.layout||[]).forEach(p=>{
+    const v=snap.visuals[p.id];
+    if(!v) return;
+    _crVisuals[p.id]=v;
+    crAddWidgetWithHtml({w:p.w||4, h:p.h||4, x:p.x, y:p.y, id:p.id}, crVisualWidgetHtml(p.id));
+    const titleEl=document.getElementById('cr-visual-title-'+p.id);
+    if(titleEl) titleEl.textContent = v.isSlicer
+      ? '🔧 '+(v.slicerTitle||v.slicerFieldLabel||'Slicer')
+      : (crChartTypeIsCombo(v.chart_type) ? (v.measureLabel||'')+' + '+(v.measure2Label||'') : (v.measureLabel||''))+(v.rowsLabel?' by '+v.rowsLabel:'');
+    crApplyTitleBarVisibility(p.id);
+  });
+  Object.keys(_crVisuals).forEach(vid=>{
+    if(_crVisuals[vid].isSlicer) crRenderSlicerVisual(vid); else crRenderVisual(vid);
+  });
+  renderCrPageTabs();
+}
+function crSwitchToPage(id){
+  if(id===_crActivePageId) return;
+  crSnapshotCurrentPage();
+  crLoadPageSnapshot(id);
+}
+function crAddPage(){
+  const suggested='Page '+(_crPageList.length+1);
+  const name=prompt('Name this page:', suggested);
+  if(name===null) return;
+  const id=crNewPageId();
+  crSnapshotCurrentPage();
+  _crPageSnapshots[id]={visuals:{}, layout:[], pageSize:_crPageSize};
+  _crPageList.push({id, name:(name.trim()||suggested)});
+  crLoadPageSnapshot(id);
+}
+function crRenamePage(id){
+  if(_crBuilderMode!=='edit') return;
+  const page=_crPageList.find(p=>p.id===id);
+  if(!page) return;
+  const name=prompt('Rename page:', page.name);
+  if(name===null || !name.trim()) return;
+  page.name=name.trim();
+  renderCrPageTabs();
+}
+function crDeletePage(id){
+  if(_crPageList.length<=1){ alert('A report needs at least one page.'); return; }
+  if(!confirm('Delete this page and everything on it? This can\u2019t be undone.')) return;
+  const idx=_crPageList.findIndex(p=>p.id===id);
+  if(idx<0) return;
+  const wasActive=(id===_crActivePageId);
+  _crPageList.splice(idx,1);
+  delete _crPageSnapshots[id];
+  if(wasActive){
+    const fallback=_crPageList[Math.max(0, idx-1)];
+    _crActivePageId=null;  // the deleted page had nothing worth snapshotting
+    crLoadPageSnapshot(fallback.id);
+  } else {
+    renderCrPageTabs();
+  }
+}
+// Tab width isn't set anywhere — each tab sizes itself to its own label
+// (plus padding) automatically, so a longer page name just makes a wider tab.
+function renderCrPageTabs(){
+  const wrap=document.getElementById('cr-page-tabs');
+  if(!wrap) return;
+  const isEdit=_crBuilderMode==='edit';
+  const tabsHtml=_crPageList.map(p=>{
+    const active=p.id===_crActivePageId;
+    return `<div class="cr-page-tab" onclick="crSwitchToPage('${p.id}')" ${isEdit?`ondblclick="crRenamePage('${p.id}')"`:''}
+      title="${isEdit?'Click to switch, double-click to rename':'Click to switch'}"
+      style="padding:5px 12px;border:1px solid var(--border);border-bottom:${active?'2px solid #1e3a5f':'1px solid var(--border)'};border-radius:6px 6px 0 0;background:${active?'#fff':'#f5f5f7'};font-size:12.5px;font-weight:${active?'700':'400'};color:${active?'#1e3a5f':'var(--t3)'};cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:6px;flex-shrink:0">
+      <span>${esc(p.name)}</span>
+      ${isEdit ? `<span onclick="event.stopPropagation();crDeletePage('${p.id}')" title="Delete page" style="cursor:pointer;color:#bbb;font-size:11px;flex-shrink:0">✕</span>` : ''}
+    </div>`;
+  }).join('');
+  const addBtn=isEdit ? `<button type="button" onclick="crAddPage()" title="Add page" style="padding:5px 10px;border:1px dashed var(--border);border-radius:6px 6px 0 0;background:#fafafa;font-size:13px;cursor:pointer;flex-shrink:0">+</button>` : '';
+  wrap.innerHTML=tabsHtml+addBtn;
 }
 function crInitGridIfNeeded(){
   if(_crGrid) return;
@@ -3005,6 +3141,7 @@ function crSetBuilderMode(mode){
   crUpdateBuilderGridColumns();
   if(_crGrid) _crGrid.setStatic(!isEdit);  // view mode: canvas is display-only, no drag/resize
   if(!isEdit) crDeselectVisual();  // closes the Format/Drag & Drop columns too, if they were open
+  renderCrPageTabs();  // the +/rename/delete controls only show in edit mode
 }
 // Recomputes the 4-column grid's widths from the current collapse state of
 // each of the 3 right-hand columns — called on mode switch and whenever a
@@ -3037,16 +3174,18 @@ function crOpenBuilder(){
   if(build) build.style.display='block';
   crInitGridIfNeeded();
   document.getElementById('cr-report-name').value='';
-  crSetPageSize('16:9');
   _crVisuals={};
   _crVisualDataCache={};
   _crVisualSeq=0;
+  _crPageList=[{id:'p1', name:'Page 1'}];
+  _crPageSnapshots={'p1':{visuals:{}, layout:[], pageSize:'16:9'}};
+  _crActivePageId=null;
+  _crPageSeq=1;
   _crReportFilters=[];
   renderCrReportFiltersList();
   const rfField=document.getElementById('cr-rf-field'); if(rfField) rfField.value='';
   crReportFilterFieldChanged();
-  _crGrid.removeAll();
-  crDeselectVisual();
+  crLoadPageSnapshot('p1');
   crSetBuilderMode('edit');
 }
 function crBackToGallery(){
@@ -3972,7 +4111,16 @@ function crRestoreCustomMeasureBuilder(def){
 function crResetCustomMeasureBuilder(){
   const enableEl=document.getElementById('cr-cm-enable'); if(enableEl) enableEl.checked=false;
   const bodyEl=document.getElementById('cr-cm-body'); if(bodyEl) bodyEl.style.display='none';
-  const valuesWell=document.getElementById('cr-well-values'); if(valuesWell) valuesWell.style.display='flex';
+  // Was unconditionally re-showing Values here — that's what undid the
+  // Slicer config panel correctly hiding it moments earlier in crSetChartType
+  // (which calls this function right after), so the Values well stayed
+  // visible for slicers and caught drags meant for the Slicer Field well
+  // instead.
+  const valuesWell=document.getElementById('cr-well-values');
+  if(valuesWell){
+    const curType=document.getElementById('cr-chart-type').value;
+    valuesWell.style.display = crChartTypeIsSlicer(curType) ? 'none' : 'flex';
+  }
   const statusEl=document.getElementById('cr-cm-status'); if(statusEl) statusEl.textContent='';
 }
 // ── AI Visual — plain-English request -> a filled-in Values/Rows/Columns +
@@ -4457,28 +4605,16 @@ function saveCustomReportCanvas(){
   const name=(nameEl.value||'').trim();
   if(!name){ alert('Give this report a name first (top of the page).'); nameEl.focus(); return; }
   if(!_crGrid){ alert('Add at least one visual first.'); return; }
-  const positions=_crGrid.save(false);  // [{id,x,y,w,h}] — no rendered HTML, just layout
-  const visuals=positions.map(p=>{
-    const v=_crVisuals[p.id]||{};
-    return {id:p.id, x:p.x, y:p.y, w:p.w, h:p.h,
-            measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null,
-            measure2:v.measure2||'', measure2Label:v.measure2Label||'', measure2Def:v.measure2Def||null,
-            rows:v.rows, rowsLabel:v.rowsLabel,
-            columns:v.columns||'', columnsLabel:v.columnsLabel||'',
-            chart_type:v.chart_type||'col_clustered',
-            format:v.format||{},
-            filters:v.filters||[],
-            isSlicer:!!v.isSlicer,
-            slicerField:v.slicerField||'', slicerFieldLabel:v.slicerFieldLabel||'',
-            slicerMulti:v.slicerMulti!==false, slicerTitle:v.slicerTitle||'',
-            slicerSelected:v.slicerSelected!==undefined ? v.slicerSelected : (v.chart_type==='slicer_timeline'?null:[]),
-            showTitleBar:v.showTitleBar!==false};
-  }).filter(v=> v.isSlicer ? !!v.slicerField : (v.measure && (v.rows || !crChartTypeNeedsRows(v.chart_type))));  // only persist visuals (chart or slicer) that are actually configured
-  if(!visuals.length){ alert('Configure at least one visual or slicer before saving.'); return; }
+  crSnapshotCurrentPage();  // so the page on screen right now is captured the same way as every other page
+  const pages=_crPageList.map(p=>{
+    const snap=_crPageSnapshots[p.id] || {visuals:{}, layout:[], pageSize:'16:9'};
+    return {id:p.id, name:p.name, pageSize:snap.pageSize||'16:9',
+            visuals:crSerializeVisualsFromSnapshot(snap.layout, snap.visuals)};
+  });
+  if(!pages.some(p=>p.visuals.length)){ alert('Configure at least one visual or slicer (on any page) before saving.'); return; }
   const config={
     filters:_crReportFilters,
-    pageSize:_crPageSize,
-    visuals,
+    pages,
   };
   fetch('/api/custom_report/tiles',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name, config})})
@@ -4500,10 +4636,13 @@ function renderCrTilesGallery(tiles){
   if(!gal) return;
   if(!tiles.length){ gal.innerHTML='<p style="color:var(--t3);font-size:12.5px;grid-column:1/-1">No saved reports yet — click "+ Create New Report" above to build your first one.</p>'; return; }
   gal.innerHTML=tiles.map((t,i)=>{
-    const n=(t.config.visuals||[]).length;
+    const pages=t.config.pages;
+    const hasPages=Array.isArray(pages) && pages.length;
+    const n = hasPages ? pages.reduce((sum,p)=>sum+((p.visuals||[]).length),0) : (t.config.visuals||[]).length;
+    const pageCount = hasPages ? pages.length : 1;
     return `<div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:6px">
       <strong style="font-size:14px">${esc(t.name)}</strong>
-      <span style="font-size:12px;color:var(--t3)">${n} visual${n===1?'':'s'}</span>
+      <span style="font-size:12px;color:var(--t3)">${n} visual${n===1?'':'s'}${pageCount>1?' · '+pageCount+' pages':''}</span>
       <div style="display:flex;gap:8px;margin-top:8px">
         <button type="button" data-tile-idx="${i}" onclick="crEditTileByIdx(this)" class="btn btn-outline btn-sm" style="flex:1">📂 Open</button>
         <button type="button" data-tile-idx="${i}" onclick="crDeleteTileByIdx(this)" class="btn btn-outline btn-sm" style="color:#c0392b">🗑</button>
@@ -4520,7 +4659,6 @@ function crEditTileByIdx(el){
   crSetBuilderMode('view');
 }
 function crLoadReportIntoCanvas(cfg){
-  crSetPageSize(cfg.pageSize || '16:9');
   _crReportFilters=(cfg.filters||[]).map(f=> f.field==='date_range'
     ? {field:f.field, fieldLabel:f.fieldLabel, from:f.from, to:f.to}
     : {field:f.field, fieldLabel:f.fieldLabel, values:(f.values||[]).slice()});
@@ -4538,12 +4676,28 @@ function crLoadReportIntoCanvas(cfg){
   renderCrReportFiltersList();
   const rfField=document.getElementById('cr-rf-field'); if(rfField) rfField.value='';
   crReportFilterFieldChanged();
-  (cfg.visuals||[]).forEach(v=>{
-    const id=v.id || ('v'+(++_crVisualSeq));
-    v.id=id;  // write back so the second pass below can find it even if the saved config predates ids
+
+  // Backward compatibility: reports saved before multiple pages existed had
+  // a flat "visuals" array (and optionally "pageSize") at the top level —
+  // wrap that as a single page rather than needing a data migration.
+  const pagesRaw = (cfg.pages && cfg.pages.length) ? cfg.pages
+    : [{id:'p1', name:'Page 1', pageSize:cfg.pageSize||'16:9', visuals:cfg.visuals||[]}];
+
+  _crPageList=[];
+  _crPageSnapshots={};
+  _crPageSeq=0;
+  pagesRaw.forEach((pg,i)=>{
+    const id=pg.id || ('p'+(i+1));
     const numPart=parseInt((String(id).match(/\d+/)||['0'])[0],10);
-    if(numPart>_crVisualSeq) _crVisualSeq=numPart;
-    _crVisuals[id]={measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null,
+    if(numPart>_crPageSeq) _crPageSeq=numPart;
+    const visualsMap={};
+    let maxVisualNum=0;
+    (pg.visuals||[]).forEach(v=>{
+      const vid=v.id || ('v'+(++_crVisualSeq));
+      v.id=vid;
+      const vNum=parseInt((String(vid).match(/\d+/)||['0'])[0],10);
+      if(vNum>maxVisualNum) maxVisualNum=vNum;
+      visualsMap[vid]={measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null,
                     measure2:v.measure2||'', measure2Label:v.measure2Label||'', measure2Def:v.measure2Def||null,
                     rows:v.rows, rowsLabel:v.rowsLabel,
                     columns:v.columns||'', columnsLabel:v.columnsLabel||'', chart_type:v.chart_type||'col_clustered',
@@ -4553,23 +4707,14 @@ function crLoadReportIntoCanvas(cfg){
                     slicerMulti:v.slicerMulti!==false, slicerTitle:v.slicerTitle||'',
                     slicerSelected:v.slicerSelected!==undefined ? v.slicerSelected : (v.chart_type==='slicer_timeline'?null:[]),
                     showTitleBar:v.showTitleBar!==false};
-    crAddWidgetWithHtml({w:v.w||4, h:v.h||4, x:v.x, y:v.y, id:id}, crVisualWidgetHtml(id));
-    const titleEl=document.getElementById('cr-visual-title-'+id);
-    if(titleEl) titleEl.textContent=v.isSlicer
-      ? '🔧 '+(v.slicerTitle||v.slicerFieldLabel||'Slicer')
-      : (crChartTypeIsCombo(v.chart_type) ? (v.measureLabel||'')+' + '+(v.measure2Label||'') : (v.measureLabel||''))+(v.rowsLabel?' by '+v.rowsLabel:'');
-    crApplyTitleBarVisibility(id);
+    });
+    if(maxVisualNum>_crVisualSeq) _crVisualSeq=maxVisualNum;
+    const layout=(pg.visuals||[]).map(v=>({id:v.id, x:v.x, y:v.y, w:v.w||4, h:v.h||4}));
+    _crPageSnapshots[id]={visuals:visualsMap, layout, pageSize:pg.pageSize||'16:9'};
+    _crPageList.push({id, name:pg.name||('Page '+(i+1))});
   });
-  // Slicers are rendered in a second pass, after every visual exists — a
-  // slicer's initial paint doesn't depend on others, but keeping the two
-  // passes separate mirrors how crRefreshAllVisuals works and avoids any
-  // ordering assumption about which tiles were saved first.
-  (cfg.visuals||[]).forEach(v=>{
-    const id=v.id;
-    if(!id || !_crVisuals[id]) return;
-    if(_crVisuals[id].isSlicer) crRenderSlicerVisual(id); else crRenderVisual(id);
-  });
-  crDeselectVisual();
+  _crActivePageId=null;  // nothing "live" yet — crLoadPageSnapshot below sets it
+  crLoadPageSnapshot(_crPageList[0].id);
 }
 function crDeleteTileByIdx(el){
   const t=_crLoadedTiles[parseInt(el.dataset.tileIdx,10)];
@@ -5349,6 +5494,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.06", date:"2026-07", title:"Custom Report: multiple renameable pages (tabs), and the actual fix for Slicer Field",
+    changes:[
+      "Found the real Slicer Field bug: a function (crResetCustomMeasureBuilder) was unconditionally re-showing the Values well every time it ran \u2014 including right after Slicer mode had correctly hidden it moments earlier, in the same click. Fixed to respect whichever chart type is actually selected instead of always showing Values.",
+      "New: multiple renameable pages, Power BI style. A small tab bar now sits below the canvas, bottom-left \u2014 click \"+\" to add a page (you'll be asked to name it), click a tab to switch to it, double-click a tab to rename it, click the \u2715 on a tab to delete it (a report always keeps at least one page). Tab width isn't fixed \u2014 each one sizes itself to its own name, exactly as asked.",
+      "Each page is its own independent canvas with its own visuals, layout, and Page Size \u2014 Report Filters stay shared across every page in the report, the same way Power BI's page-level vs. report-level distinction works.",
+      "The tab bar's Add/Rename/Delete controls only show while editing \u2014 opening a saved report (the clean, canvas-only view from v1.86) still lets you click between pages to look at them, just not restructure them.",
+      "Reports saved before this existed still open correctly \u2014 they're treated as a single page named \u201cPage 1.\u201d",
+    ]},
   { v:"2.05", date:"2026-07", title:"Fixed Slicer Field drag-and-drop, canvas now genuinely fixed in height too, and the qualitative-field warning",
     changes:[
       "Found the real cause of dragging a field onto a Slicer landing on the wrong control: Slicer Field lived in the Format column while Values/Rows/Columns lived in the Drag & Drop column next to it \u2014 dragging from Fields (the far-right column) toward Slicer Field meant crossing over the Values well first, and Slicer Field had no drop zone of its own to catch the drop before that happened. It now has a proper drag-and-drop well, matching Values/Rows/Columns, right above the existing dropdown \u2014 drag a field there directly, or still just pick it from the dropdown; both stay in sync.",
