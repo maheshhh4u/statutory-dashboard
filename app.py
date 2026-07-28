@@ -630,17 +630,20 @@ def cache_get(key,max_age=180):
 # risks an out-of-memory crash exactly like the one that just happened.
 # Cap how many of these large sources can be held at once; anything older
 # gets dropped and will simply be recomputed on next access, same as if it
-# had expired normally. Bumped from 2 to 3 when classif_full_map/
-# area_full_map joined this pool (see _get_full_classification_map) — those
-# two replaced a pattern that re-downloaded and re-scanned the same bulk
-# files on every single Custom Report render, which was the actual cause of
-# reported slowness and repeated memory spikes; caching them here is a much
-# smaller cost than that was.
-_LARGE_SOURCE_CACHE_LIMIT = 3
+# had expired normally.
+#
+# NOTE: this limit was briefly bumped to 3 to make room for a Custom Report
+# cache that turned out to store the ENTIRE national charity classification/
+# area datasets (269,000+ charities) — that immediately caused a real
+# out-of-memory crash (see Render logs, 2026-07-28). It's back to 2. The
+# replacement caches (classif_called_map/area_called_map — see
+# _get_called_classification_map) are scoped to only the charities that have
+# actually been called, not the whole country, so they're small enough not
+# to need this eviction pool at all.
+_LARGE_SOURCE_CACHE_LIMIT = 2
 def _is_large_source_key(k):
     return (k=="prospects" or k=="late" or k=="old_charities" or k.startswith("new_")
-            or k.startswith("milestones_") or k.startswith("area_regs_") or k.startswith("classif_regs_")
-            or k=="classif_full_map" or k=="area_full_map")
+            or k.startswith("milestones_") or k.startswith("area_regs_") or k.startswith("classif_regs_"))
 def _evict_stale_large_sources():
     large_keys=[k for k in _cache if _is_large_source_key(k)]
     if len(large_keys) <= _LARGE_SOURCE_CACHE_LIMIT: return
@@ -1792,80 +1795,56 @@ def _cr_dim_keys(dim, row):
     k = _cr_dim_key(dim, row)
     return [k] if k is not None else []
 
-def _get_full_classification_map():
-    """Whole-country Who/What/How map, cached with the same bounded eviction
-    used for the other large CC bulk sources (see _is_large_source_key).
-    Custom Report used to call _scan_classification_for(reg_set) directly —
-    correct, but it re-downloaded and re-scanned the ENTIRE classification
-    bulk file from the Charity Commission on every single call, with no
-    caching at all (stream_zip_csv always does a fresh HTTP fetch). Since a
-    Custom Report visual re-renders on nearly every UI interaction (Apply,
-    Refresh All, a slicer click, even picking a colour via the live-preview
-    formatting panel), that meant a full multi-second bulk-file re-download
-    behind ordinary clicks — the actual cause of the reported slowness and
-    repeated memory spikes, not anything about the chart rendering itself.
-    Scanning once and caching the result turns every render after the first
-    into a plain dict lookup."""
-    cached = cache_get("classif_full_map", max_age=1440)  # 1 day — CC bulk data doesn't change intraday
+def _cr_all_called_reg_numbers():
+    """Every distinct reg_number that has ever appeared in call_log — small
+    and bounded by actual calling activity (typically a few hundred
+    charities for this app), never the whole country."""
+    rows = db_query("SELECT DISTINCT reg_number FROM call_log WHERE reg_number IS NOT NULL AND reg_number<>''") or []
+    return {str(r[0]).strip() for r in rows if str(r[0]).strip()}
+
+def _get_called_classification_map():
+    """Who/What/How for every charity that has ever been called, cached.
+    THIS REPLACED A VERSION THAT CACHED THE ENTIRE NATIONAL DATASET
+    (269,000+ charities) AND CRASHED THE APP WITH AN OUT-OF-MEMORY ERROR —
+    see Render logs from 2026-07-28. That version was solving a real
+    problem (Custom Report re-downloading and re-scanning the whole
+    classification bulk file on every single render) but the fix was wrong:
+    caching the ENTIRE country when a report only ever needs the charities
+    that have actually been called is enormously wasteful. This scans the
+    same bulk file the same way, but filters and caches only the charities
+    call_log actually references — the file-download cost is paid once
+    either way, but the CACHED RESULT is now bounded by calling activity
+    (hundreds of entries) rather than national scale (hundreds of
+    thousands), which is the number that actually matters for memory on a
+    512MB instance. Deliberately NOT registered as a "large source" (see
+    _is_large_source_key) — it's small enough now not to need that."""
+    cached = cache_get("classif_called_map", max_age=1440)  # 1 day — CC bulk data doesn't change intraday
     if cached is not None:
         return cached
-    tmp = {}
-    try:
-        cols = {"registered_charity_number","classification_code","classification_type"}
-        for row in stream_zip_csv(CLASSIF_URL, cols):
-            reg = row.get("registered_charity_number","").strip()
-            if not reg: continue
-            ctype = row.get("classification_type","").strip().lower()
-            code = row.get("classification_code","").strip()
-            if not code or ctype not in ("what","who","how"): continue
-            tmp.setdefault(reg, {"what":[],"who":[],"how":[]})[ctype].append(CC_CODE_MAP.get(code, code))
-    except Exception as e:
-        print(f"_get_full_classification_map error: {e}")
-        return {}
-    out = {reg: {"what": ",".join(dict.fromkeys(d["what"])),
-                 "who":  ",".join(dict.fromkeys(d["who"])),
-                 "how":  ",".join(dict.fromkeys(d["how"]))}
-           for reg, d in tmp.items()}
-    cache_set("classif_full_map", out)
+    reg_set = _cr_all_called_reg_numbers()
+    out = _scan_classification_for(reg_set) if reg_set else {}
+    cache_set("classif_called_map", out)
     return out
 
-def _get_full_area_map():
-    """Whole-country Region/Local Authority/Country map — same reasoning and
-    caching as _get_full_classification_map above."""
-    cached = cache_get("area_full_map", max_age=1440)
+def _get_called_area_map():
+    """Region/Local Authority/Country for every charity that has ever been
+    called — same reasoning and caching as _get_called_classification_map."""
+    cached = cache_get("area_called_map", max_age=1440)
     if cached is not None:
         return cached
-    tmp = {}
-    try:
-        cols = {"registered_charity_number","geographic_area_type","geographic_area_description"}
-        for row in stream_zip_csv(AREA_URL, cols):
-            reg = row.get("registered_charity_number","").strip()
-            if not reg: continue
-            atype = row.get("geographic_area_type","").strip().lower()
-            adesc = row.get("geographic_area_description","").strip()
-            if not adesc: continue
-            d = tmp.setdefault(reg, {"region":[], "local_authority":[], "country":[]})
-            bucket = "region" if atype=="region" else ("local_authority" if atype=="local authority" else ("country" if atype=="country" else None))
-            if bucket and adesc not in d[bucket]:
-                d[bucket].append(adesc)
-    except Exception as e:
-        print(f"_get_full_area_map error: {e}")
-        return {}
-    out = {reg: {"region": ", ".join(d["region"]),
-                 "local_authority": ", ".join(d["local_authority"]),
-                 "country": ", ".join(d["country"])}
-           for reg, d in tmp.items()}
-    cache_set("area_full_map", out)
+    reg_set = _cr_all_called_reg_numbers()
+    out = _scan_area_for(reg_set) if reg_set else {}
+    cache_set("area_called_map", out)
     return out
 
 def _cr_attach_charity_classification(rows_all):
     """Looks up Who/What/How/Area of Operation for every distinct charity in
-    rows_all and attaches them onto each row dict, from the cached whole-
-    country maps above (a lookup, not a fresh scan). Only called when a
-    report actually groups or filters by one of these fields, so a normal
+    rows_all and attaches them onto each row dict, from the cached called-
+    charities-only maps above (a lookup, not a fresh scan). Only called when
+    a report actually groups or filters by one of these fields, so a normal
     report pays nothing extra."""
-    classif = _get_full_classification_map()
-    areas = _get_full_area_map()
+    classif = _get_called_classification_map()
+    areas = _get_called_area_map()
     for r in rows_all:
         reg = str(r["reg_number"]).strip()
         c = classif.get(reg, {})

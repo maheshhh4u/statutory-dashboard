@@ -5255,6 +5255,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.02", date:"2026-07", title:"Critical fix: the v2.01 memory fix itself caused an out-of-memory crash — corrected",
+    changes:[
+      "The Render logs told the story directly: \u201cClassif cache: 269438 charities.\u201d The v2.01 fix (caching Who/What/How/Area of Operation instead of re-downloading them on every render) was solving a real problem, but it cached the ENTIRE country's classification and area data \u2014 269,000+ charities \u2014 when Custom Report only ever needs data for the charities you've actually called. That's almost certainly what pushed the instance over Render's 512MB limit and crashed it, which also explains the timezone save failing with \u201cUnexpected end of JSON input\u201d \u2014 that's what a browser sees when the server dies mid-request, not a bug in saving the setting itself.",
+      "Fixed properly this time: the same bulk files are still scanned once and cached (so the speed benefit from v2.01 stays), but now filtered to only the charities that have ever appeared in your call log \u2014 typically a few hundred, not a few hundred thousand. Same download cost paid once, a tiny fraction of the memory footprint.",
+      "Reverted the cache-slot increase from v2.01 that made room for the oversized cache \u2014 back to the original, more conservative limit now that it's no longer needed.",
+      "The timezone setting itself was already being saved correctly to the database (confirmed in the same logs \u2014 it loads back correctly on every restart); it should save cleanly now that the crash causing the empty response is fixed. The error message is also clearer if this ever happens again \u2014 it'll say the server may be restarting, rather than a raw JSON parsing error.",
+    ]},
   { v:"2.01", date:"2026-07", title:"Major Custom Report performance fix (the actual cause of the slowness and Render memory spikes), plus clearer combo chart axes",
     changes:[
       "Found the real cause of the reported slowness and the app hitting Render's 512MB limit: any visual using Who/What/How/Area of Operation was re-downloading and re-scanning the ENTIRE Charity Commission classification/area bulk files from scratch on every single render \u2014 not just when you clicked Apply, but on every Refresh All, every slicer click, and (see next fix) every formatting tweak. That's now scanned once and cached for a day, the same safe, bounded-memory approach already used elsewhere in the app for other large Charity Commission datasets \u2014 every render after the first is a plain lookup instead of a multi-second re-download.",
@@ -6872,12 +6879,26 @@ function saveTimezoneSetting(){
   if(status){ status.textContent='Saving…'; status.style.color='var(--t3)'; }
   fetch('/api/settings/timezone',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({timezone:tz})})
-    .then(r=>r.json()).then(d=>{
+    .then(r=>{
+      if(!r.ok) throw new Error('server-not-ok:'+r.status);
+      return r.json();
+    })
+    .then(d=>{
       if(!d.ok){ if(status){ status.textContent='⚠ '+(d.error||'Could not save'); status.style.color='var(--red)'; } return; }
       DISPLAY_TZ=tz;
       if(status){ status.textContent='✓ Saved — applies to everyone. Refreshing the page to update all displayed times…'; status.style.color='var(--green)'; }
       setTimeout(()=>location.reload(), 1200);
-    }).catch(e=>{ if(status){ status.textContent='⚠ '+e.message; status.style.color='var(--red)'; } });
+    }).catch(e=>{
+      // A genuinely empty/invalid response (rather than a proper {ok:false,
+      // error:...} from the endpoint itself) almost always means the server
+      // was restarting mid-request, not a real bug in saving the setting —
+      // give a clearer message than the raw "Unexpected end of JSON input"
+      // parse error, and point at what to actually do about it.
+      const msg = /Unexpected end of JSON|server-not-ok/.test(e.message)
+        ? 'Server didn\u2019t respond properly \u2014 it may have been mid-restart. Wait a few seconds and try again; the setting likely didn\u2019t save this time.'
+        : e.message;
+      if(status){ status.textContent='⚠ '+msg; status.style.color='var(--red)'; }
+    });
 }
 
 function renderAdminUserList(){
