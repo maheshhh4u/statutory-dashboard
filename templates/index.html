@@ -1219,12 +1219,19 @@ select:focus{outline:none;border-color:var(--green)}
              only changes how much blank canvas space is available, exactly
              as requested. -->
         <div>
-          <div id="cr-add-visual-toolbar" style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+          <div id="cr-add-visual-toolbar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
             <button class="btn btn-green btn-sm" onclick="crAddVisual()">➕ Add Visual</button>
+            <label style="font-size:11.5px;display:flex;align-items:center;gap:4px;color:var(--t3)">Page Size
+              <select id="cr-page-size" onchange="crSetPageSize(this.value)" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                <option value="16:9">16:9 (1280 × 720)</option>
+                <option value="4:3">4:3 (960 × 720)</option>
+                <option value="letter">Letter (850 × 1100)</option>
+              </select>
+            </label>
             <span id="cr-selected-visual-label" style="font-size:12px;color:var(--t3)">No visual selected — add one, or click an existing visual below</span>
           </div>
-          <div style="overflow-x:auto;padding-bottom:4px">
-            <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;min-height:400px;width:1100px"></div>
+          <div style="overflow:auto;padding-bottom:4px;max-height:calc(100vh - 24px)">
+            <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;width:1280px;height:720px"></div>
           </div>
         </div>
 
@@ -2855,6 +2862,14 @@ let _crCMFields=[], _crCMAggs=[], _crCMOps=[];  // Custom Measure builder: aggre
 let _crCanvasFilters=[];      // working filter list [{field,fieldLabel,values:[...]}] for whichever visual is selected — a date_range entry has {from,to} instead of values
 let _crReportFilters=[];      // committed report-level filters, same shape, applied to every visual unless that visual sets its own filter on the same field
 let _crBuilderMode='edit';    // 'view' (opening a saved report — canvas only) or 'edit' (new report, or after clicking ✏️ Edit)
+// Power BI Desktop's own canvas Page Size presets (Format pane > Page size)
+// — a genuinely fixed-size canvas, not one that stretches to fill whatever
+// space happens to be available, which is what "static size like Power BI"
+// meant. Visuals keep their exact placement/size on this canvas regardless
+// of anything else on screen; the canvas itself scrolls if the browser
+// window is smaller than the chosen page size, rather than shrinking.
+const CR_PAGE_SIZES={'16:9':{w:1280,h:720}, '4:3':{w:960,h:720}, 'letter':{w:850,h:1100}};
+let _crPageSize='16:9';
 // Power BI-style collapsible side columns — each of the 3 right-hand
 // columns (Format, Drag & Drop, Fields) can shrink to a slim icon strip so
 // the canvas (which is always the 1fr column and absorbs whatever width the
@@ -2897,6 +2912,14 @@ function initCustomReport(){
   }
   renderCrReportFiltersList();
   loadCustomReportTiles();
+}
+function crSetPageSize(preset){
+  const size=CR_PAGE_SIZES[preset] || CR_PAGE_SIZES['16:9'];
+  _crPageSize = CR_PAGE_SIZES[preset] ? preset : '16:9';
+  const canvas=document.getElementById('cr-gridstack');
+  if(canvas){ canvas.style.width=size.w+'px'; canvas.style.height=size.h+'px'; }
+  const sel=document.getElementById('cr-page-size');
+  if(sel) sel.value=_crPageSize;
 }
 function crInitGridIfNeeded(){
   if(_crGrid) return;
@@ -3001,6 +3024,7 @@ function crOpenBuilder(){
   if(build) build.style.display='block';
   crInitGridIfNeeded();
   document.getElementById('cr-report-name').value='';
+  crSetPageSize('16:9');
   _crVisuals={};
   _crVisualDataCache={};
   _crVisualSeq=0;
@@ -3071,19 +3095,31 @@ function crPlaceInWell(well, payload){
     document.getElementById('cr-result-status').textContent='⚠ Add or select a visual first.'; return;
   }
   if((well==='values'||well==='values_line') && payload.kind==='dim'){
-    // A field dropped into Values becomes an implicit "Count of <field>" —
-    // the same behaviour Power BI/Excel PivotTables have when you drop a
-    // categorical field into a Values area, rather than rejecting it. Count
-    // doesn't actually depend on which field is named (see
-    // _cr_compute_simple's count branch, which just does len(rows)), so
-    // "duration_sec" here is just a harmless placeholder to satisfy the
-    // Custom Measure shape.
-    _crCanvas[well]={value:'custom', label:'Count of '+payload.label, customDef:{type:'simple', agg:'count', field:'duration_sec'}};
-    renderCrWells();
+    // A field like Outcome is qualitative (a category) — it's not a number
+    // to total up, so it doesn't belong in Values. Silently turning it into
+    // a "Count of X" measure (an earlier attempt at this) was the wrong
+    // fix: it mislabels a plain row count as if it specifically counted
+    // that field, and buries a real category behind a number instead of
+    // showing it. If Rows is empty, that's almost certainly where this
+    // field was meant to go, so place it there instead of just rejecting
+    // the drop.
+    const rowsWell=document.getElementById('cr-well-rows');
+    const rowsVisible = rowsWell && rowsWell.style.display!=='none';
+    if(well==='values' && rowsVisible && !_crCanvas.rows){
+      _crCanvas.rows={value:payload.value, label:payload.label};
+      renderCrWells();
+      const st=document.getElementById('cr-result-status');
+      st.textContent='ℹ️ '+payload.label+' is a category, not a number — placed it in Rows instead. Drag a Measure into Values.';
+      st.style.color='var(--t3)';
+      return;
+    }
+    const st=document.getElementById('cr-result-status');
+    st.textContent='⚠ '+payload.label+' is a category (qualitative) field, not a number — drag it into Rows or Columns. For a count, drag a Measure like "Calls Made" into Values, or build one with 🧮 Custom Measure.';
+    st.style.color='#c0392b';
     return;
   }
-  if((well==='values'||well==='values_line') && payload.kind!=='measure' && payload.kind!=='dim'){
-    document.getElementById('cr-result-status').textContent='⚠ Values needs a measure or a field.'; return;
+  if((well==='values'||well==='values_line') && payload.kind!=='measure'){
+    document.getElementById('cr-result-status').textContent='⚠ Values needs a measure, not a field.'; return;
   }
   if((well==='rows'||well==='columns') && payload.kind!=='dim'){
     document.getElementById('cr-result-status').textContent='⚠ Rows/Columns need a field, not a measure.'; return;
@@ -3968,7 +4004,7 @@ function crApplyToSelectedVisual(){
   const isCombo=crChartTypeIsCombo(chartType);
   if(!_crCanvas.values){ status.textContent='⚠ Drag a measure into '+(isCombo?'Values (Columns)':'Values')+' first.'; status.style.color='#c0392b'; return; }
   if(needsRows && !_crCanvas.rows){ status.textContent='⚠ Drag a field into Rows first.'; status.style.color='#c0392b'; return; }
-  if(isCombo && !_crCanvas.values_line){ status.textContent='⚠ Drag a measure or field into Values (Line) too — a combo chart needs both.'; status.style.color='#c0392b'; return; }
+  if(isCombo && !_crCanvas.values_line){ status.textContent='⚠ Drag a measure into Values (Line) too — a combo chart needs both.'; status.style.color='#c0392b'; return; }
   const customDef=_crCanvas.values.customDef || null;
   const customDef2=isCombo ? (_crCanvas.values_line.customDef || null) : null;
   if((customDef && crMeasureDefUsesFollowups(customDef)) || (customDef2 && crMeasureDefUsesFollowups(customDef2))){
@@ -4397,6 +4433,7 @@ function saveCustomReportCanvas(){
   if(!visuals.length){ alert('Configure at least one visual or slicer before saving.'); return; }
   const config={
     filters:_crReportFilters,
+    pageSize:_crPageSize,
     visuals,
   };
   fetch('/api/custom_report/tiles',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -4439,6 +4476,7 @@ function crEditTileByIdx(el){
   crSetBuilderMode('view');
 }
 function crLoadReportIntoCanvas(cfg){
+  crSetPageSize(cfg.pageSize || '16:9');
   _crReportFilters=(cfg.filters||[]).map(f=> f.field==='date_range'
     ? {field:f.field, fieldLabel:f.fieldLabel, from:f.from, to:f.to}
     : {field:f.field, fieldLabel:f.fieldLabel, values:(f.values||[]).slice()});
@@ -5267,6 +5305,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.04", date:"2026-07", title:"Fixed: dropping a field into Values no longer mislabels it as a Count; Page Size added (first piece of the Power BI canvas ask)",
+    changes:[
+      "Reverted the \"Count of <field>\" auto-conversion from v2.03 \u2014 right instinct (accept the drop instead of just rejecting it), wrong result: it silently turned a category like Outcome into a plain row count mislabeled with its name, which isn't actually what dropping a qualitative field into a quantitative slot should do. Dropping a field into Values now, if Rows is empty, places it there instead \u2014 that's almost always where it was meant to go \u2014 and otherwise gives a clear message explaining the field is a category, not a number, with the actual options (drag a Measure for a count, or build one with \ud83e\uddee Custom Measure).",
+      "New Page Size selector next to \"+ Add Visual\": 16:9 (1280\u00d7720), 4:3 (960\u00d7720), or Letter (850\u00d71100) \u2014 the exact same presets Power BI Desktop's own Format pane offers. The canvas is now a genuinely fixed-size box at whichever size you pick, not a container that stretches or shrinks to fit whatever space happens to be available \u2014 it scrolls instead, in both directions, if the window is smaller than the page.",
+      "Page size is saved and restored with the report.",
+      "Still pending, each a substantial standalone build rather than a quick addition: multiple renameable tabs/pages (this round's Page Size selector is a first piece of that, not the whole thing \u2014 one canvas can now have a fixed size, but there's still only one canvas per report), background image upload for the canvas, and a formatted Text Box visual (bold/italic/underline/strikethrough, font, size, colour). Didn't want to start any of these with limited room left and risk handing over something half-working \u2014 next in line, whichever order works for you.",
+    ]},
   { v:"2.03", date:"2026-07", title:"Values now accepts fields (implicit Count), plus Call Duration (min) and Last Dialed Date",
     changes:[
       "Dragging a field (Caller, Outcome, Stage, Source List, Day, etc.) into Values \u2014 or Values (Line) on a combo chart \u2014 now works, the same way it does in Power BI/Excel PivotTables: it becomes an implicit \"Count of <field>\" measure instead of being rejected with \"Values needs a measure, not a field.\"",
