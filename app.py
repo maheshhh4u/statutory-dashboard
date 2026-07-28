@@ -1736,6 +1736,7 @@ REPORT_MEASURES = {
     "avg_duration_sec":        {"label": "Average Call Duration (sec)"},
     "meaningful_interactions": {"label": "Meaningful Interactions"},
     "meetings_secured":        {"label": "Meetings Secured"},
+    "last_dialed_date":        {"label": "Last Dialed Date"},
 }
 # Raw, per-row numeric fields a Custom Measure can aggregate (Sum/Average/
 # Count/Min/Max), Power BI-measure-builder style, rather than being limited
@@ -1748,6 +1749,7 @@ REPORT_MEASURES = {
 # correct without a fragile row-level join between the two tables.
 CR_FIELDS = {
     "duration_sec": {"label": "Call Duration (sec)"},
+    "duration_min": {"label": "Call Duration (min)"},
 }
 CR_FOLLOWUP_FIELDS = {
     "fu_days_late":  {"label": "Follow-Up: Days Late"},
@@ -1869,10 +1871,18 @@ def _cr_compute_measure(measure, rows):
                    and (r["outcome"] in _CR_MEANINGFUL_OUTCOMES or r["stage"] in _CR_MEANINGFUL_STAGES))
     if measure == "meetings_secured":
         return sum(1 for r in rows if r["outcome"] == "Meeting secured" or r["stage"] == "Meeting secured")
+    if measure == "last_dialed_date":
+        # A date, not a number — makes sense as a Card or Table value; a
+        # chart type expecting a numeric axis (bar/line/etc.) won't render
+        # it meaningfully, same as any other text-valued measure wouldn't.
+        timestamps = [r["timestamp"] for r in rows if r.get("timestamp")]
+        if not timestamps: return ""
+        return utc_to_display_str(max(timestamps), "%Y-%m-%d") or ""
     return 0
 
 def _cr_field_value(field, row):
     if field == "duration_sec": return row.get("duration_sec") or 0
+    if field == "duration_min": return (row.get("duration_sec") or 0) / 60.0
     if field == "fu_days_late": return row.get("days_late") or 0
     if field == "fu_completed": return row.get("completed") or 0
     return 0

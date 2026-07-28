@@ -3067,14 +3067,26 @@ document.addEventListener('click', function(e){
   }
 });
 function crPlaceInWell(well, payload){
-  if((well==='values'||well==='values_line') && payload.kind!=='measure'){
-    document.getElementById('cr-result-status').textContent='⚠ Values needs a measure, not a field.'; return;
+  if(!_crSelectedVisualId){
+    document.getElementById('cr-result-status').textContent='⚠ Add or select a visual first.'; return;
+  }
+  if((well==='values'||well==='values_line') && payload.kind==='dim'){
+    // A field dropped into Values becomes an implicit "Count of <field>" —
+    // the same behaviour Power BI/Excel PivotTables have when you drop a
+    // categorical field into a Values area, rather than rejecting it. Count
+    // doesn't actually depend on which field is named (see
+    // _cr_compute_simple's count branch, which just does len(rows)), so
+    // "duration_sec" here is just a harmless placeholder to satisfy the
+    // Custom Measure shape.
+    _crCanvas[well]={value:'custom', label:'Count of '+payload.label, customDef:{type:'simple', agg:'count', field:'duration_sec'}};
+    renderCrWells();
+    return;
+  }
+  if((well==='values'||well==='values_line') && payload.kind!=='measure' && payload.kind!=='dim'){
+    document.getElementById('cr-result-status').textContent='⚠ Values needs a measure or a field.'; return;
   }
   if((well==='rows'||well==='columns') && payload.kind!=='dim'){
     document.getElementById('cr-result-status').textContent='⚠ Rows/Columns need a field, not a measure.'; return;
-  }
-  if(!_crSelectedVisualId){
-    document.getElementById('cr-result-status').textContent='⚠ Add or select a visual first.'; return;
   }
   if((well==='rows'||well==='columns') && _crCanvas.values && _crCanvas.values.customDef && crMeasureDefUsesFollowups(_crCanvas.values.customDef)){
     if(['outcome','stage','source_list'].includes(payload.value)){
@@ -3149,7 +3161,7 @@ function crSelectVisual(id){
   renderCrWells();
   crSetChartType(v.chart_type||'col_clustered');
   if(crChartTypeIsCombo(v.chart_type) && v.measure2){
-    _crCanvas.values_line={value:v.measure2, label:v.measure2Label};
+    _crCanvas.values_line = v.measure2Def ? {value:'custom', label:v.measure2Label, customDef:v.measure2Def} : {value:v.measure2, label:v.measure2Label};
     renderCrWells();
   }
   if(!crChartTypeIsSlicer(v.chart_type)){
@@ -3956,13 +3968,13 @@ function crApplyToSelectedVisual(){
   const isCombo=crChartTypeIsCombo(chartType);
   if(!_crCanvas.values){ status.textContent='⚠ Drag a measure into '+(isCombo?'Values (Columns)':'Values')+' first.'; status.style.color='#c0392b'; return; }
   if(needsRows && !_crCanvas.rows){ status.textContent='⚠ Drag a field into Rows first.'; status.style.color='#c0392b'; return; }
-  if(isCombo && !_crCanvas.values_line){ status.textContent='⚠ Drag a measure into Values (Line) too — a combo chart needs both.'; status.style.color='#c0392b'; return; }
-  if(isCombo && _crCanvas.values_line.customDef){ status.textContent='⚠ Values (Line) only accepts a built-in measure for now, not a Custom Measure — drag one from the Measures palette.'; status.style.color='#c0392b'; return; }
+  if(isCombo && !_crCanvas.values_line){ status.textContent='⚠ Drag a measure or field into Values (Line) too — a combo chart needs both.'; status.style.color='#c0392b'; return; }
   const customDef=_crCanvas.values.customDef || null;
-  if(customDef && crMeasureDefUsesFollowups(customDef)){
+  const customDef2=isCombo ? (_crCanvas.values_line.customDef || null) : null;
+  if((customDef && crMeasureDefUsesFollowups(customDef)) || (customDef2 && crMeasureDefUsesFollowups(customDef2))){
     const restricted=new Set(['outcome','stage','source_list']);
     if((_crCanvas.rows && restricted.has(_crCanvas.rows.value)) || (_crCanvas.columns && restricted.has(_crCanvas.columns.value))){
-      status.textContent='⚠ This measure uses a Follow-Up field — Rows/Columns can only be Caller, Day, Week, Month, or Hour of Day.';
+      status.textContent='⚠ A Follow-Up measure is in use — Rows/Columns can only be Caller, Day, Week, Month, or Hour of Day.';
       status.style.color='#c0392b';
       return;
     }
@@ -3976,7 +3988,7 @@ function crApplyToSelectedVisual(){
   }
   _crVisuals[id]={
     measure:_crCanvas.values.value, measureLabel:_crCanvas.values.label, measureDef:customDef,
-    measure2: isCombo ? _crCanvas.values_line.value : '', measure2Label: isCombo ? _crCanvas.values_line.label : '',
+    measure2: isCombo ? _crCanvas.values_line.value : '', measure2Label: isCombo ? _crCanvas.values_line.label : '', measure2Def: customDef2,
     rows: needsRows && _crCanvas.rows ? _crCanvas.rows.value : '',
     rowsLabel: needsRows && _crCanvas.rows ? _crCanvas.rows.label : '',
     columns: (needsRows && !isCombo && _crCanvas.columns) ? _crCanvas.columns.value : '',
@@ -4105,7 +4117,7 @@ function crRenderVisual(id){
     // separate measures sharing one category axis, not one cross-tab query,
     // so there's no single endpoint call that returns both series at once.
     const body1=JSON.stringify({measure:measurePayload, rows:v.rows||'', columns:null, date_from:'', date_to:'', callers:[], filters});
-    const body2=JSON.stringify({measure:v.measure2, rows:v.rows||'', columns:null, date_from:'', date_to:'', callers:[], filters});
+    const body2=JSON.stringify({measure:v.measure2Def || v.measure2, rows:v.rows||'', columns:null, date_from:'', date_to:'', callers:[], filters});
     return Promise.all([
       fetch('/api/custom_report/run',{method:'POST',headers:{'Content-Type':'application/json'},body:body1}).then(r=>r.json()),
       fetch('/api/custom_report/run',{method:'POST',headers:{'Content-Type':'application/json'},body:body2}).then(r=>r.json()),
@@ -4370,7 +4382,7 @@ function saveCustomReportCanvas(){
     const v=_crVisuals[p.id]||{};
     return {id:p.id, x:p.x, y:p.y, w:p.w, h:p.h,
             measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null,
-            measure2:v.measure2||'', measure2Label:v.measure2Label||'',
+            measure2:v.measure2||'', measure2Label:v.measure2Label||'', measure2Def:v.measure2Def||null,
             rows:v.rows, rowsLabel:v.rowsLabel,
             columns:v.columns||'', columnsLabel:v.columnsLabel||'',
             chart_type:v.chart_type||'col_clustered',
@@ -4450,7 +4462,7 @@ function crLoadReportIntoCanvas(cfg){
     const numPart=parseInt((String(id).match(/\d+/)||['0'])[0],10);
     if(numPart>_crVisualSeq) _crVisualSeq=numPart;
     _crVisuals[id]={measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null,
-                    measure2:v.measure2||'', measure2Label:v.measure2Label||'',
+                    measure2:v.measure2||'', measure2Label:v.measure2Label||'', measure2Def:v.measure2Def||null,
                     rows:v.rows, rowsLabel:v.rowsLabel,
                     columns:v.columns||'', columnsLabel:v.columnsLabel||'', chart_type:v.chart_type||'col_clustered',
                     format:v.format||{}, filters:v.filters||[],
@@ -5255,6 +5267,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.03", date:"2026-07", title:"Values now accepts fields (implicit Count), plus Call Duration (min) and Last Dialed Date",
+    changes:[
+      "Dragging a field (Caller, Outcome, Stage, Source List, Day, etc.) into Values \u2014 or Values (Line) on a combo chart \u2014 now works, the same way it does in Power BI/Excel PivotTables: it becomes an implicit \"Count of <field>\" measure instead of being rejected with \"Values needs a measure, not a field.\"",
+      "New field for the Custom Measure builder: Call Duration (min), alongside the existing Call Duration (sec) \u2014 build Sum/Average/etc. directly in minutes without converting by hand.",
+      "New built-in measure: Last Dialed Date \u2014 the most recent call date within whatever's currently in scope. Best used on a Card or Table (a date isn't a number, so a bar/line chart won't plot it meaningfully).",
+      "Worth confirming since it came up: every measure \u2014 built-in or custom, including the two new ones above \u2014 already only ever sees rows AFTER the Date Range filter (report-level or visual-level) has narrowed them, the same as every other filter. There's no separate fix needed there; it was already correct.",
+      "Combo charts: Values (Line) can now use a Custom Measure too, not just a built-in one \u2014 that restriction from v1.99 is lifted now that Count-of-field needed the same capability anyway.",
+    ]},
   { v:"2.02", date:"2026-07", title:"Critical fix: the v2.01 memory fix itself caused an out-of-memory crash — corrected",
     changes:[
       "The Render logs told the story directly: \u201cClassif cache: 269438 charities.\u201d The v2.01 fix (caching Who/What/How/Area of Operation instead of re-downloading them on every render) was solving a real problem, but it cached the ENTIRE country's classification and area data \u2014 269,000+ charities \u2014 when Custom Report only ever needs data for the charities you've actually called. That's almost certainly what pushed the instance over Render's 512MB limit and crashed it, which also explains the timezone save failing with \u201cUnexpected end of JSON input\u201d \u2014 that's what a browser sees when the server dies mid-request, not a bug in saving the setting itself.",
