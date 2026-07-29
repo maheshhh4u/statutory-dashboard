@@ -167,6 +167,25 @@ def db_init():
             visibility TEXT DEFAULT 'private',
             allowed_users_json TEXT
         )""")
+        # Data model metadata (Data menu > Browse tables). Column types are
+        # stored separately from the data because every column in this database
+        # was created as TEXT — including timestamps — so a usable type has to
+        # be recorded alongside rather than read from the schema.
+        client.execute("""CREATE TABLE IF NOT EXISTS model_columns (
+            table_name TEXT,
+            column_name TEXT,
+            data_type TEXT,
+            PRIMARY KEY (table_name, column_name)
+        )""")
+        # User-defined calculated columns, evaluated when a table is read.
+        client.execute("""CREATE TABLE IF NOT EXISTS model_calc_columns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            table_name TEXT,
+            name TEXT,
+            expression TEXT,
+            data_type TEXT,
+            created_at TEXT
+        )""")
         # Simple key-value store for app-wide settings (e.g. display timezone)
         client.execute("""CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
@@ -2272,6 +2291,181 @@ def _model_infer_type(values):
     if all(is_num(v) for v in seen): return "number"
     return "text"
 
+# ── Calculated column expressions ──────────────────────────────────────────
+# Expressions are parsed into a syntax tree and walked node by node against a
+# whitelist. Deliberately NOT eval() — these are stored and re-run server
+# side, so anything that could reach imports, attributes, comprehensions or
+# arbitrary calls has to be impossible by construction rather than filtered
+# out by pattern matching.
+import ast as _pyast
+
+_MODEL_TYPES = {"text", "integer", "number", "datetime", "boolean"}
+
+def _model_fn_year(v):  return _model_to_dt(v).year if _model_to_dt(v) else None
+def _model_fn_month(v): return _model_to_dt(v).month if _model_to_dt(v) else None
+def _model_fn_day(v):   return _model_to_dt(v).day if _model_to_dt(v) else None
+def _model_fn_date(v):
+    d = _model_to_dt(v)
+    return d.strftime("%Y-%m-%d") if d else None
+def _model_to_dt(v):
+    if v is None: return None
+    t = str(v).strip()
+    for f in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try: return datetime.strptime(t, f)
+        except Exception: pass
+    return None
+def _model_to_num(v):
+    if v is None or str(v).strip()=="" : return 0
+    try: return float(str(v).strip())
+    except Exception: return 0
+
+_MODEL_FUNCS = {
+    "UPPER":  lambda v: str(v).upper() if v is not None else "",
+    "LOWER":  lambda v: str(v).lower() if v is not None else "",
+    "TRIM":   lambda v: str(v).strip() if v is not None else "",
+    "LEN":    lambda v: len(str(v)) if v is not None else 0,
+    "NUMBER": _model_to_num,
+    "ROUND":  lambda v, n=0: round(_model_to_num(v), int(n)),
+    "ABS":    lambda v: abs(_model_to_num(v)),
+    "YEAR":   _model_fn_year,
+    "MONTH":  _model_fn_month,
+    "DAY":    _model_fn_day,
+    "DATE":   _model_fn_date,
+    "IF":     lambda c, a, b=None: a if c else b,
+    "CONCAT": lambda *a: "".join("" if x is None else str(x) for x in a),
+    "COALESCE": lambda *a: next((x for x in a if x is not None and str(x).strip()!=""), ""),
+}
+
+_MODEL_ALLOWED_NODES = (
+    _pyast.Expression, _pyast.BoolOp, _pyast.BinOp, _pyast.UnaryOp, _pyast.Compare,
+    _pyast.Call, _pyast.Name, _pyast.Load, _pyast.Constant, _pyast.IfExp,
+    _pyast.And, _pyast.Or, _pyast.Not, _pyast.USub, _pyast.UAdd,
+    _pyast.Add, _pyast.Sub, _pyast.Mult, _pyast.Div, _pyast.Mod, _pyast.Pow,
+    _pyast.Eq, _pyast.NotEq, _pyast.Lt, _pyast.LtE, _pyast.Gt, _pyast.GtE,
+)
+
+def _model_validate_expr(expr, allowed_names):
+    """Returns None if the expression is safe and only references known
+    columns/functions, otherwise a human-readable reason."""
+    if not expr or not expr.strip():
+        return "Expression is empty"
+    if len(expr) > 500:
+        return "Expression is too long (max 500 characters)"
+    try:
+        tree = _pyast.parse(expr, mode="eval")
+    except SyntaxError as e:
+        return f"Syntax error: {e.msg}"
+    for node in _pyast.walk(tree):
+        if not isinstance(node, _MODEL_ALLOWED_NODES):
+            return f"{type(node).__name__} isn't allowed in an expression"
+        if isinstance(node, _pyast.Call):
+            if not isinstance(node.func, _pyast.Name):
+                return "Only the built-in functions can be called"
+            if node.func.id not in _MODEL_FUNCS:
+                return f"Unknown function {node.func.id}"
+            if node.keywords:
+                return "Named arguments aren't supported"
+        if isinstance(node, _pyast.Name):
+            if node.id in _MODEL_FUNCS: continue
+            if node.id not in allowed_names:
+                return f"Unknown column '{node.id}'"
+    return None
+
+def _model_eval_expr(expr, row_map):
+    """Evaluates a previously-validated expression for one row. Any failure
+    (bad data, divide by zero) yields an empty cell rather than breaking the
+    whole table."""
+    try:
+        env = dict(_MODEL_FUNCS)
+        env.update(row_map)
+        return eval(compile(_pyast.parse(expr, mode="eval"), "<calc>", "eval"),
+                    {"__builtins__": {}}, env)
+    except Exception:
+        return None
+
+def _model_col_types(table):
+    rows = db_query("SELECT column_name, data_type FROM model_columns WHERE table_name=?", (table,)) or []
+    return {r[0]: r[1] for r in rows}
+
+def _model_calc_cols(table):
+    rows = db_query("SELECT id, name, expression, data_type FROM model_calc_columns WHERE table_name=? ORDER BY id",
+                    (table,)) or []
+    return [{"id": r[0], "name": r[1], "expression": r[2], "data_type": r[3]} for r in rows]
+
+def _model_cast(value, dtype):
+    """Applies a column's chosen type for display. Returns (text, ok) — ok is
+    False when the value couldn't be interpreted as that type, which is what
+    drives the 'N values don't fit this type' warning in the UI."""
+    if value is None or str(value).strip() == "":
+        return "", True
+    raw = str(value).strip()
+    if dtype == "integer":
+        try: return str(int(float(raw))), True
+        except Exception: return raw, False
+    if dtype == "number":
+        try: return str(float(raw)), True
+        except Exception: return raw, False
+    if dtype == "datetime":
+        d = _model_to_dt(raw)
+        return (utc_to_display_str(raw, "%Y-%m-%d %H:%M") or raw, True) if d else (raw, False)
+    if dtype == "boolean":
+        if raw.lower() in ("1","0","true","false","yes","no"):
+            return ("true" if raw.lower() in ("1","true","yes") else "false"), True
+        return raw, False
+    return raw, True
+
+@app.route("/api/model/column_type", methods=["POST"])
+def api_model_set_column_type():
+    d = request.json or {}
+    table = (d.get("table") or "").strip()
+    column = (d.get("column") or "").strip()
+    dtype = (d.get("data_type") or "").strip().lower()
+    if table not in _model_table_names():
+        return jsonify({"ok": False, "error": "Unknown table"}), 400
+    if dtype not in _MODEL_TYPES:
+        return jsonify({"ok": False, "error": "Unknown data type"}), 400
+    cols = [r[1] for r in (db_query(f'PRAGMA table_info("{table}")') or [])]
+    if column not in cols and column not in [c["name"] for c in _model_calc_cols(table)]:
+        return jsonify({"ok": False, "error": "Unknown column"}), 400
+    db_exec("DELETE FROM model_columns WHERE table_name=? AND column_name=?", (table, column))
+    db_exec("INSERT INTO model_columns(table_name, column_name, data_type) VALUES(?,?,?)",
+            (table, column, dtype))
+    return jsonify({"ok": True})
+
+@app.route("/api/model/calc_column", methods=["POST"])
+def api_model_add_calc_column():
+    d = request.json or {}
+    table = (d.get("table") or "").strip()
+    name = (d.get("name") or "").strip()[:40]
+    expression = (d.get("expression") or "").strip()
+    dtype = (d.get("data_type") or "text").strip().lower()
+    if table not in _model_table_names():
+        return jsonify({"ok": False, "error": "Unknown table"}), 400
+    if not name:
+        return jsonify({"ok": False, "error": "Give the column a name"}), 400
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+        return jsonify({"ok": False, "error": "Name must start with a letter and contain only letters, numbers and underscores"}), 400
+    if dtype not in _MODEL_TYPES:
+        dtype = "text"
+    base_cols = [r[1] for r in (db_query(f'PRAGMA table_info("{table}")') or [])]
+    existing = [c["name"] for c in _model_calc_cols(table)]
+    if name in base_cols or name in existing:
+        return jsonify({"ok": False, "error": "A column with that name already exists"}), 400
+    # Calculated columns may reference the real columns only — not each other.
+    # Chained references would need dependency ordering and cycle detection,
+    # which isn't worth it before anyone's asked for it.
+    err = _model_validate_expr(expression, set(base_cols))
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    db_exec("INSERT INTO model_calc_columns(table_name, name, expression, data_type, created_at) VALUES(?,?,?,?,?)",
+            (table, name, expression, dtype, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+    return jsonify({"ok": True})
+
+@app.route("/api/model/calc_column/<int:cid>", methods=["DELETE"])
+def api_model_delete_calc_column(cid):
+    db_exec("DELETE FROM model_calc_columns WHERE id=?", (cid,))
+    return jsonify({"ok": True})
+
 @app.route("/api/model/tables", methods=["GET"])
 def api_model_tables():
     """Every reportable table with its row count — the left-hand list."""
@@ -2306,19 +2500,49 @@ def api_model_table():
     # Type inference samples a bounded slice, never the whole table — these
     # run on a 512MB instance and some tables will grow.
     sample = db_query(f'SELECT * FROM "{name}" LIMIT 200') or []
+    overrides = _model_col_types(name)
+    calc = _model_calc_cols(name)
     col_meta = []
     for i, c in enumerate(cols):
         vals = [r[i] for r in sample]
         filled = sum(1 for v in vals if v is not None and str(v).strip() != "")
+        inferred = _model_infer_type(vals)
         col_meta.append({
             "name": c,
-            "type": _model_infer_type(vals),
+            "type": overrides.get(c, inferred),
+            "inferred": inferred,
+            "is_set": c in overrides,   # explicitly chosen vs guessed from the data
+            "calc": False,
             "fill_pct": round(100.0 * filled / len(vals)) if vals else 0,
+        })
+    for cc in calc:
+        col_meta.append({
+            "name": cc["name"], "type": overrides.get(cc["name"], cc["data_type"]),
+            "inferred": cc["data_type"], "is_set": True, "calc": True,
+            "expression": cc["expression"], "calc_id": cc["id"], "fill_pct": 100,
         })
 
     rows = db_query(f'SELECT * FROM "{name}" LIMIT ? OFFSET ?', (limit, offset)) or []
+    out_rows, bad_counts = [], {c["name"]: 0 for c in col_meta}
+    for r in rows:
+        row_map = {cols[i]: r[i] for i in range(len(cols))}
+        out = []
+        for i, c in enumerate(cols):
+            txt, ok = _model_cast(r[i], col_meta[i]["type"])
+            if not ok: bad_counts[c] += 1
+            out.append(txt)
+        for j, cc in enumerate(calc):
+            val = _model_eval_expr(cc["expression"], row_map)
+            meta = col_meta[len(cols) + j]
+            txt, ok = _model_cast(val, meta["type"])
+            if not ok: bad_counts[cc["name"]] += 1
+            out.append(txt)
+        out_rows.append(out)
+    for c in col_meta:
+        c["bad"] = bad_counts.get(c["name"], 0)
+
     return jsonify({"ok": True, "table": name, "columns": col_meta,
-                    "rows": [[("" if v is None else str(v)) for v in r] for r in rows],
+                    "rows": out_rows, "types": sorted(_MODEL_TYPES),
                     "total": total, "limit": limit, "offset": offset})
 
 @app.route("/api/custom_report/fields", methods=["GET"])

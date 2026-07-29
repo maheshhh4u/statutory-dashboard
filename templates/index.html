@@ -3352,13 +3352,34 @@ function loadModelTablePage(){
     .then(r=>r.json()).then(d=>{
       if(!d.ok){ prev.innerHTML='<div style="padding:10px;font-size:12px;color:var(--red)">'+esc(d.error||'Could not load table')+'</div>'; return; }
       const typeColor={datetime:'#6a4d99', integer:'#1d7a3a', number:'#1d7a3a', text:'#2d5a8f', empty:'#999'};
+      const typeOpts=(sel)=>(d.types||[]).map(t=>`<option value="${t}" ${t===sel?'selected':''}>${t}</option>`).join('');
       document.getElementById('model-columns').innerHTML=
         `<div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:5px">${esc(d.table)} — ${d.columns.length} columns, ${d.total.toLocaleString()} rows</div>
-         <div style="display:flex;flex-wrap:wrap;gap:5px">`+
-        d.columns.map(c=>`<span title="${c.fill_pct}% of sampled rows have a value"
-           style="font-size:11.5px;border:1px solid var(--border);border-radius:12px;padding:2px 9px;background:#fff">
-           ${esc(c.name)} <span style="color:${typeColor[c.type]||'#666'};font-size:10.5px">${esc(c.type)}</span>
-           <span style="color:#bbb;font-size:10px">${c.fill_pct}%</span></span>`).join('')+'</div>';
+         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">`+
+        d.columns.map(c=>{
+          // A count of values that don't fit the chosen type is the useful
+          // signal here — picking "integer" for a column that isn't one should
+          // say so rather than silently showing the raw text.
+          const warn=c.bad ? `<span title="${c.bad} value(s) on this page don't fit this type" style="color:#c0392b;font-size:10px">\u26a0 ${c.bad}</span>` : '';
+          const calcTag=c.calc ? `<span title="${esc(c.expression||'')}" style="color:#6a4d99;font-size:10px">\u0192</span>` : '';
+          const del=c.calc ? `<span onclick="deleteCalcColumn(${c.calc_id})" title="Delete this calculated column" style="cursor:pointer;color:#bbb;font-size:11px">\u2715</span>` : '';
+          return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;border:1px solid var(--border);border-radius:12px;padding:2px 8px;background:${c.calc?'#faf8fd':'#fff'}">
+            ${calcTag}${esc(c.name)}
+            <select onchange="setColumnType('${esc(c.name)}', this.value)" title="${c.is_set?'Type set manually':'Type guessed from the data'}"
+              style="font-size:10.5px;border:1px solid var(--border);border-radius:4px;padding:1px 3px;color:${typeColor[c.type]||'#666'}">${typeOpts(c.type)}</select>
+            ${warn}${del}</span>`;
+        }).join('')+`</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:#faf8fd;border:1px solid #e2dcf0;border-radius:6px;padding:7px 9px">
+          <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Add calculated column</span>
+          <input id="calc-name" placeholder="name" style="width:110px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+          <input id="calc-expr" placeholder="e.g. duration_sec / 60" style="flex:1;min-width:200px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+          <select id="calc-type" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">${typeOpts('number')}</select>
+          <button type="button" class="btn btn-outline btn-sm" onclick="addCalcColumn()">+ Add</button>
+          <span id="calc-status" style="font-size:11px;color:var(--t3);flex-basis:100%"></span>
+          <span style="font-size:10.5px;color:var(--t3);flex-basis:100%">
+            Use the column names above. Available: + - * / , comparisons, and UPPER, LOWER, TRIM, LEN, NUMBER, ROUND, ABS, YEAR, MONTH, DAY, DATE, IF, CONCAT, COALESCE.
+          </span>
+        </div>`;
       prev.innerHTML=
         '<table style="border-collapse:collapse;font-size:11.5px;width:100%"><thead><tr>'+
         d.columns.map(c=>`<th style="position:sticky;top:0;background:#f5f5f7;border-bottom:1px solid var(--border);padding:5px 8px;text-align:left;white-space:nowrap">${esc(c.name)}</th>`).join('')+
@@ -3373,6 +3394,36 @@ function loadModelTablePage(){
          <span>${from.toLocaleString()}–${to.toLocaleString()} of ${d.total.toLocaleString()}</span>
          <button type="button" class="btn btn-outline btn-sm" ${to>=d.total?'disabled':''} onclick="modelPage(1)">Next →</button>`;
     }).catch(e=>{ prev.innerHTML='<div style="padding:10px;font-size:12px;color:var(--red)">'+esc(e.message)+'</div>'; });
+}
+function setColumnType(column, dataType){
+  if(!_modelCurrent) return;
+  fetch('/api/model/column_type',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({table:_modelCurrent, column, data_type:dataType})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ alert('\u26a0 '+(d.error||'Could not set type')); return; }
+      loadModelTablePage();   // re-read so the rows show the new formatting
+    }).catch(e=>alert('\u26a0 '+e.message));
+}
+function addCalcColumn(){
+  if(!_modelCurrent) return;
+  const st=document.getElementById('calc-status');
+  const name=(document.getElementById('calc-name').value||'').trim();
+  const expression=(document.getElementById('calc-expr').value||'').trim();
+  const data_type=document.getElementById('calc-type').value;
+  if(!name || !expression){ st.textContent='\u26a0 Give the column a name and an expression.'; st.style.color='#c0392b'; return; }
+  st.textContent='Checking\u2026'; st.style.color='var(--t3)';
+  fetch('/api/model/calc_column',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({table:_modelCurrent, name, expression, data_type})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ st.textContent='\u26a0 '+(d.error||'Could not add column'); st.style.color='#c0392b'; return; }
+      loadModelTablePage();
+    }).catch(e=>{ st.textContent='\u26a0 '+e.message; st.style.color='#c0392b'; });
+}
+function deleteCalcColumn(id){
+  if(!confirm('Delete this calculated column?')) return;
+  fetch('/api/model/calc_column/'+id,{method:'DELETE'})
+    .then(r=>r.json()).then(()=>loadModelTablePage())
+    .catch(e=>alert('\u26a0 '+e.message));
 }
 function modelPage(dir){
   _modelOffset=Math.max(0, _modelOffset + dir*MODEL_PAGE);
@@ -6292,6 +6343,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.21", date:"2026-07", title:"Data Model \u2014 Stage 2: set column types and add calculated columns",
+    changes:[
+      "Every column in the table browser now has a type dropdown \u2014 text, integer, number, datetime or boolean. The choice is saved and applied whenever that table is read, which is what makes dates and numbers behave properly given everything in this database is stored as text.",
+      "Columns show a \u26a0 count when values don\u2019t fit the type you\u2019ve chosen \u2014 so picking \u201cinteger\u201d for a column that isn\u2019t one tells you straight away rather than quietly showing the raw text.",
+      "Calculated columns: give it a name and a formula and it appears alongside the real columns. Arithmetic, comparisons, and UPPER, LOWER, TRIM, LEN, NUMBER, ROUND, ABS, YEAR, MONTH, DAY, DATE, IF, CONCAT and COALESCE are available \u2014 e.g. duration_sec / 60 for call minutes, or IF(duration_sec > 120, 'Meaningful', 'Short').",
+      "Formulas are checked before being saved, with a plain-English reason when something\u2019s wrong (unknown column, unknown function, syntax error). A formula that fails on a particular row leaves that cell empty rather than breaking the table.",
+      "On safety: these formulas are stored and re-run on the server, so they\u2019re parsed and checked against a strict whitelist rather than simply executed. Anything that could reach outside a calculation \u2014 imports, attributes, arbitrary function calls \u2014 is rejected by the parser, and I tested that directly rather than assuming it.",
+      "A calculated column can reference the real columns but not other calculated columns \u2014 chaining needs dependency ordering and cycle detection, which isn\u2019t worth building until it\u2019s actually wanted.",
+    ]},
   { v:"2.20", date:"2026-07", title:"Data Model \u2014 Stage 1: browse the database tables",
     changes:[
       "New Data menu in the report builder \u2192 \u201cBrowse tables\u2026\u201d. Lists every reportable table with its row count; pick one to see its columns and page through the actual rows.",
