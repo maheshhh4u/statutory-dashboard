@@ -1228,13 +1228,14 @@ select:focus{outline:none;border-color:var(--green)}
              changes when it's deliberately resized — collapsing a panel now
              only changes how much blank canvas space is available, exactly
              as requested. -->
-        <div style="min-width:0">
+        <div id="cr-canvas-col" style="min-width:0;grid-column:1">
           <div id="cr-add-visual-toolbar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
             <button class="btn btn-green btn-sm" onclick="crAddVisual()">➕ Add Visual</button>
             <label style="font-size:11.5px;display:flex;align-items:center;gap:4px;color:var(--t3)">Page Size
               <select id="cr-page-size" onchange="crSetPageSize(this.value)" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
                 <option value="16:9">16:9 (1280 × 720)</option>
                 <option value="4:3">4:3 (960 × 720)</option>
+                <option value="16:9-lg">16:9 Large (1600 × 900)</option>
                 <option value="letter">Letter (850 × 1100)</option>
               </select>
             </label>
@@ -1267,7 +1268,7 @@ select:focus{outline:none;border-color:var(--green)}
              Sticky and independently scrollable, same as columns 3 and 4, so
              each stays fully visible alongside the canvas without dragging
              the others' scroll position along with it. -->
-        <div id="cr-panel-format" style="display:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#faf8fd;border:1px solid #e2dcf0;border-radius:8px;padding:0">
+        <div id="cr-panel-format" style="grid-column:2;display:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#faf8fd;border:1px solid #e2dcf0;border-radius:8px;padding:0">
           <div id="cr-panel-format-header" onclick="crToggleColumnCollapse('format')" style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;cursor:pointer;border-bottom:1px solid #e2dcf0;position:sticky;top:0;background:#faf8fd;border-radius:8px 8px 0 0">
             <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">🎨 Format</span>
             <span style="font-size:13px;color:var(--t3)" title="Collapse">◂</span>
@@ -1341,7 +1342,7 @@ select:focus{outline:none;border-color:var(--green)}
              wells, Filters, and the action buttons. Sits directly next to
              the Fields column (4) so a field/measure chip can be dragged
              straight across without either panel needing to scroll. -->
-        <div id="cr-panel-dragdrop" style="display:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#faf8fd;border:1px solid #e2dcf0;border-radius:8px;padding:0">
+        <div id="cr-panel-dragdrop" style="grid-column:3;display:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#faf8fd;border:1px solid #e2dcf0;border-radius:8px;padding:0">
           <div id="cr-panel-dragdrop-header" onclick="crToggleColumnCollapse('dragdrop')" style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;cursor:pointer;border-bottom:1px solid #e2dcf0;position:sticky;top:0;background:#faf8fd;border-radius:8px 8px 0 0">
             <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">🖱️ Drag &amp; Drop</span>
             <span style="font-size:13px;color:var(--t3)" title="Collapse">◂</span>
@@ -1449,7 +1450,7 @@ select:focus{outline:none;border-color:var(--green)}
         <!-- COLUMN 4: Fields — the drag source, always visible (not gated on
              a visual being selected) so it's ready the moment column 3
              appears next to it. -->
-        <div id="cr-fields-sidebar" style="position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:8px;padding:0">
+        <div id="cr-fields-sidebar" style="grid-column:4;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:8px;padding:0">
           <div id="cr-panel-fields-header" onclick="crToggleColumnCollapse('fields')" style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);position:sticky;top:0;background:#fff;border-radius:8px 8px 0 0">
             <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">📏 Fields</span>
             <span style="font-size:13px;color:var(--t3)" title="Collapse">◂</span>
@@ -2908,7 +2909,7 @@ let _crBuilderMode='edit';    // 'view' (opening a saved report — canvas only)
 // meant. Visuals keep their exact placement/size on this canvas regardless
 // of anything else on screen; the canvas itself scrolls if the browser
 // window is smaller than the chosen page size, rather than shrinking.
-const CR_PAGE_SIZES={'16:9':{w:1280,h:720}, '4:3':{w:960,h:720}, 'letter':{w:850,h:1100}};
+const CR_PAGE_SIZES={'16:9':{w:1280,h:720}, '16:9-lg':{w:1600,h:900}, '4:3':{w:960,h:720}, 'letter':{w:850,h:1100}};
 let _crPageSize='16:9';
 // Multiple renameable pages (tabs), Power BI style — each page is its own
 // canvas of visuals. Only the ACTIVE page's visuals live in the normal
@@ -2999,7 +3000,11 @@ function crApplyCanvasScale(){
     const track=viewport.parentElement;
     const availW=(track && track.clientWidth) || size.w;
     const availH=Math.max(240, window.innerHeight-200);  // room for toolbar + page tabs
-    scale=Math.min(availW/size.w, availH/size.h, 1);     // never enlarge past 100%
+    // Allow a modest enlargement when there's spare room (Power BI's Fit to
+    // page does grow the canvas, not just shrink it), capped at 1.5 — charts
+    // are drawn to a <canvas> at their CSS size, so scaling far past 1:1
+    // would start to look soft.
+    scale=Math.min(availW/size.w, availH/size.h, 1.5);
   } else {
     scale=parseFloat(_crCanvasZoom)||1;
   }
@@ -3264,8 +3269,25 @@ function crUpdateBuilderGridColumns(){
   // visuals" behaviour reported. minmax(0,…) removes that floor so the
   // canvas stays the fixed Page Size width and scrolls instead.
   if(_crBuilderMode!=='edit'){ gridWrap.style.gridTemplateColumns='minmax(0,1fr)'; return; }
-  const w=(col)=> _crColCollapsed[col] ? '40px' : CR_COL_WIDTHS[col]+'px';
-  gridWrap.style.gridTemplateColumns=`minmax(0,1fr) ${w('format')} ${w('dragdrop')} ${w('fields')}`;
+  // Format and Drag & Drop only exist while a visual is selected. Their grid
+  // TRACKS, though, are defined here regardless of whether anything is in
+  // them — so with nothing selected they used to sit on the page as two
+  // empty 240px/280px columns, and (because the remaining panel auto-places
+  // into the first free cell) Fields ended up stranded in the middle with a
+  // large gap to its right. Every panel now has an explicit grid-column so
+  // it always stays in its own lane, and a hidden panel's track collapses to
+  // 0 here so the canvas reclaims the width instead of it going to waste.
+  const shown=(el)=> !!el && el.style.display!=='none';
+  const w=(col, el)=>{
+    if(!shown(el)) return '0px';
+    return _crColCollapsed[col] ? '40px' : CR_COL_WIDTHS[col]+'px';
+  };
+  gridWrap.style.gridTemplateColumns=[
+    'minmax(0,1fr)',
+    w('format',   document.getElementById('cr-panel-format')),
+    w('dragdrop', document.getElementById('cr-panel-dragdrop')),
+    w('fields',   document.getElementById('cr-fields-sidebar')),
+  ].join(' ');
   // Collapsing/expanding a panel changes how much width the canvas has, so
   // the fit-to-page scale needs recomputing. Deferred a frame so the browser
   // has applied the new track widths before we measure them.
@@ -3515,6 +3537,7 @@ function crSelectVisual(id){
   crFilterFieldChanged();
   document.getElementById('cr-panel-format').style.display='block';
   document.getElementById('cr-panel-dragdrop').style.display='block';
+  crUpdateBuilderGridColumns();  // their tracks were collapsed while hidden
   document.getElementById('cr-selected-visual-label').textContent = crChartTypeIsSlicer(v.chart_type)
     ? (v.slicerField ? 'Editing slicer: '+(v.slicerTitle||v.slicerFieldLabel||v.slicerField) : 'Editing a new, unconfigured slicer')
     : (v.measureLabel ? 'Editing: '+v.measureLabel+(v.rowsLabel?' by '+v.rowsLabel:'') : 'Editing a new, unconfigured visual');
@@ -3531,6 +3554,7 @@ function crDeselectVisual(){
   const filtersList=document.getElementById('cr-filters-list'); if(filtersList) filtersList.innerHTML='';
   const fmtCol=document.getElementById('cr-panel-format'); if(fmtCol) fmtCol.style.display='none';
   const ddCol=document.getElementById('cr-panel-dragdrop'); if(ddCol) ddCol.style.display='none';
+  crUpdateBuilderGridColumns();  // collapse their now-empty tracks; canvas takes the width
   const lbl=document.getElementById('cr-selected-visual-label'); if(lbl) lbl.textContent='No visual selected — add one, or click an existing visual below';
   document.querySelectorAll('#cr-gridstack .grid-stack-item').forEach(el=>{ el.style.outline='none'; });
   renderCrMatchSizeOptions();
@@ -5611,6 +5635,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.12", date:"2026-07", title:"Fixed the report builder layout — panels stranded mid-page, and a much bigger canvas",
+    changes:[
+      "Found why the right-hand panels weren't on the right: Format and Drag & Drop only appear once a visual is selected, but their grid columns were always reserved. With nothing selected, those two sat empty and Fields dropped into the first free column \u2014 leaving Fields floating in the middle of the page with a wide blank strip beside it. Each panel is now pinned to its own column, so they always stay in the correct order at the right-hand edge.",
+      "A hidden panel's column now collapses to zero width instead of holding empty space, so the canvas immediately reclaims roughly 500px whenever no visual is selected.",
+      "Fit to page can now enlarge the canvas as well as shrink it (capped at 150%, since charts start to look soft beyond that) \u2014 previously it would only ever scale down, so a wide screen left the canvas small with space going spare.",
+      "Added a bigger \u201c16:9 Large (1600 \u00d7 900)\u201d Page Size for more room to lay visuals out.",
+    ]},
   { v:"2.11", date:"2026-07", title:"Daily Calling: saved searches now give you the NEXT 100, not charities already called",
     changes:[
       "Root cause: saved searches were deliberately exempt from the \u201calready called\u201d exclusion that every other source uses \u2014 the idea being that a saved search should show exactly what the Charity Search page shows. In practice that meant finishing the first 100 of a saved search and being handed those same charities again. Daily Calling is a work queue, not a search result, so the exclusion now applies to saved searches too.",
