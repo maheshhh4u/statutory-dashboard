@@ -1535,6 +1535,50 @@ select:focus{outline:none;border-color:var(--green)}
 
 </main>
 
+<!-- Expression builder (Blue Prism Calculation-stage style) -->
+<div class="modal-bg" id="expr-modal" style="z-index:600">
+  <div class="modal" style="max-width:900px;width:92vw">
+    <h3>&#402; Expression Builder</h3>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <label style="font-size:12px;color:var(--t3)">Name</label>
+      <input id="expr-name" placeholder="column name" style="width:170px;padding:4px 7px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+      <label style="font-size:12px;color:var(--t3)">Result type</label>
+      <select id="expr-type" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px"></select>
+      <span style="flex:1"></span>
+      <span id="expr-table-label" style="font-size:11.5px;color:var(--t3)"></span>
+    </div>
+    <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Expression</div>
+    <textarea id="expr-text" rows="4" spellcheck="false"
+      style="width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--border);border-radius:5px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;resize:vertical"></textarea>
+    <div style="display:flex;gap:6px;align-items:center;margin:7px 0">
+      <button type="button" class="btn btn-outline btn-sm" onclick="exprValidate(false)">Validate</button>
+      <button type="button" class="btn btn-outline btn-sm" onclick="exprValidate(true)">Evaluate Expression</button>
+      <span id="expr-status" style="font-size:11.5px;color:var(--t3)"></span>
+    </div>
+    <div id="expr-results" style="display:none;border:1px solid var(--border);border-radius:5px;margin-bottom:8px;max-height:120px;overflow:auto"></div>
+    <div style="display:grid;grid-template-columns:180px 200px minmax(0,1fr);gap:10px;align-items:start">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Columns</div>
+        <div id="expr-columns" style="border:1px solid var(--border);border-radius:5px;max-height:230px;overflow:auto"></div>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Functions</div>
+        <div id="expr-functions" style="border:1px solid var(--border);border-radius:5px;max-height:230px;overflow:auto"></div>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Function detail</div>
+        <div id="expr-detail" style="border:1px solid var(--border);border-radius:5px;padding:9px 11px;min-height:130px;font-size:12px;color:var(--t3)">
+          Pick a function on the left to see what it does, then use Insert to add it to the expression.
+        </div>
+      </div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-outline btn-sm" onclick="closeExprBuilder()">Cancel</button>
+      <button class="btn btn-green btn-sm" onclick="exprSave()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Data model browser (Stage 1: read-only view of the Turso tables) -->
 <div class="modal-bg" id="model-modal">
   <div class="modal" style="max-width:1100px;width:94vw">
@@ -3383,6 +3427,7 @@ function loadModelTablePage(){
           <input id="calc-expr" placeholder="e.g. duration_sec / 60" style="flex:1;min-width:200px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
           <select id="calc-type" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">${typeOpts('number')}</select>
           <button type="button" class="btn btn-outline btn-sm" onclick="addCalcColumn()">+ Add</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="openExprBuilderForTable()" title="Open the full expression builder">ƒ Builder…</button>
           <span id="calc-status" style="font-size:11px;color:var(--t3);flex-basis:100%"></span>
           <span style="font-size:10.5px;color:var(--t3);flex-basis:100%">
             Use the column names above. Available: + - * / , comparisons, and UPPER, LOWER, TRIM, LEN, NUMBER, ROUND, ABS, YEAR, MONTH, DAY, DATE, IF, CONCAT, COALESCE.
@@ -3579,6 +3624,100 @@ function deleteRelationship(id){
     .then(r=>r.json()).then(()=>loadRelationships())
     .catch(e=>alert('\u26a0 '+e.message));
 }
+// ── Expression builder ─────────────────────────────────────────────────────
+// Modelled on Blue Prism's Calculation stage: expression at the top, a
+// browsable function list by category with a detail pane, and Validate /
+// Evaluate against real rows before saving.
+let _exprCatalogue=[], _exprColumns=[], _exprTable=null, _exprTypes=[];
+function openExprBuilder(table, columns, types){
+  _exprTable=table; _exprColumns=columns||[]; _exprTypes=types||['text','integer','number','datetime','boolean'];
+  document.getElementById('expr-modal').style.display='flex';
+  document.getElementById('expr-name').value='';
+  document.getElementById('expr-text').value='';
+  document.getElementById('expr-status').textContent='';
+  document.getElementById('expr-results').style.display='none';
+  document.getElementById('expr-table-label').textContent='Table: '+table;
+  document.getElementById('expr-type').innerHTML=_exprTypes.map(t=>`<option value="${t}" ${t==='number'?'selected':''}>${t}</option>`).join('');
+  document.getElementById('expr-columns').innerHTML=_exprColumns.map(c=>
+    `<div onclick="exprInsert('${esc(c)}')" title="Insert this column"
+       style="padding:5px 9px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border)">${esc(c)}</div>`).join('')
+    || '<div style="padding:8px;font-size:12px;color:var(--t3)">No columns</div>';
+  if(_exprCatalogue.length){ renderExprFunctions(); }
+  else fetch('/api/model/functions').then(r=>r.json()).then(d=>{
+    if(d.ok){ _exprCatalogue=d.categories||[]; renderExprFunctions(); }
+  }).catch(()=>{});
+}
+function closeExprBuilder(){ document.getElementById('expr-modal').style.display='none'; }
+function renderExprFunctions(){
+  document.getElementById('expr-functions').innerHTML=_exprCatalogue.map(cat=>
+    `<div style="padding:4px 8px;background:#f5f5f7;font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;position:sticky;top:0">${esc(cat.name)}</div>`+
+    cat.functions.map(f=>`<div onclick="exprShowFn('${esc(cat.name)}','${esc(f.name)}')"
+       style="padding:4px 10px;font-size:12px;cursor:pointer;border-bottom:1px solid #f0f0f0">${esc(f.name)}</div>`).join('')
+  ).join('');
+}
+function exprShowFn(catName, fnName){
+  const cat=_exprCatalogue.find(c=>c.name===catName);
+  const f=cat && cat.functions.find(x=>x.name===fnName);
+  if(!f) return;
+  document.getElementById('expr-detail').innerHTML=
+    `<div style="font-family:ui-monospace,Consolas,monospace;font-size:12.5px;color:#1e3a5f;margin-bottom:6px">${esc(f.signature)}</div>
+     <div style="margin-bottom:9px">${esc(f.description)}</div>
+     <button type="button" class="btn btn-outline btn-sm" onclick="exprInsertFn('${esc(f.name)}','${esc(f.signature)}')">Insert</button>`;
+}
+// Inserts at the caret rather than appending, so a function can be dropped
+// into the middle of an expression that's already being written.
+function exprInsertAtCaret(text){
+  const ta=document.getElementById('expr-text');
+  const start=ta.selectionStart||0, end=ta.selectionEnd||0;
+  ta.value=ta.value.slice(0,start)+text+ta.value.slice(end);
+  const pos=start+text.length;
+  ta.focus(); ta.setSelectionRange(pos,pos);
+}
+function exprInsert(t){ exprInsertAtCaret(t); }
+function exprInsertFn(name, signature){
+  // Insert with the brackets, leaving the caret inside ready for arguments.
+  const hasArgs=!/\(\s*\)$/.test(signature);
+  exprInsertAtCaret(name+'()');
+  if(hasArgs){
+    const ta=document.getElementById('expr-text');
+    const pos=ta.selectionStart-1;
+    ta.setSelectionRange(pos,pos);
+  }
+}
+function exprValidate(evaluate){
+  const st=document.getElementById('expr-status'), box=document.getElementById('expr-results');
+  const expression=(document.getElementById('expr-text').value||'').trim();
+  if(!expression){ st.textContent='\u26a0 Nothing to check yet.'; st.style.color='#c0392b'; return; }
+  st.textContent='Checking\u2026'; st.style.color='var(--t3)'; box.style.display='none';
+  fetch('/api/model/test_expression',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({table:_exprTable, expression})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ st.textContent='\u26a0 '+(d.error||'Invalid expression'); st.style.color='#c0392b'; return; }
+      if(!evaluate){ st.textContent='\u2713 Expression is valid.'; st.style.color='var(--green)'; return; }
+      st.textContent=d.note ? ('\u26a0 '+d.note) : ('\u2713 Valid \u2014 evaluated against '+d.sampled+' sample row(s).');
+      st.style.color=d.note ? '#c0392b' : 'var(--green)';
+      box.style.display='block';
+      box.innerHTML='<table style="border-collapse:collapse;font-size:12px;width:100%">'+
+        (d.results||[]).map((r,i)=>`<tr>
+          <td style="border-bottom:1px solid #eee;padding:3px 8px;color:var(--t3);width:70px">Row ${i+1}</td>
+          <td style="border-bottom:1px solid #eee;padding:3px 8px;font-family:ui-monospace,Consolas,monospace">${r.failed?'<span style="color:#c0392b">(no result)</span>':esc(r.value)}</td>
+          <td style="border-bottom:1px solid #eee;padding:3px 8px;color:#bbb;font-size:11px">${esc(r.type)}</td></tr>`).join('')+'</table>';
+    }).catch(e=>{ st.textContent='\u26a0 '+e.message; st.style.color='#c0392b'; });
+}
+function exprSave(){
+  const st=document.getElementById('expr-status');
+  const name=(document.getElementById('expr-name').value||'').trim();
+  const expression=(document.getElementById('expr-text').value||'').trim();
+  const data_type=document.getElementById('expr-type').value;
+  if(!name || !expression){ st.textContent='\u26a0 Give it a name and an expression.'; st.style.color='#c0392b'; return; }
+  fetch('/api/model/calc_column',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({table:_exprTable, name, expression, data_type})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ st.textContent='\u26a0 '+(d.error||'Could not save'); st.style.color='#c0392b'; return; }
+      closeExprBuilder();
+      loadModelTablePage();
+    }).catch(e=>{ st.textContent='\u26a0 '+e.message; st.style.color='#c0392b'; });
+}
 function setColumnType(column, dataType){
   if(!_modelCurrent) return;
   fetch('/api/model/column_type',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -3587,6 +3726,17 @@ function setColumnType(column, dataType){
       if(!d.ok){ alert('\u26a0 '+(d.error||'Could not set type')); return; }
       loadModelTablePage();   // re-read so the rows show the new formatting
     }).catch(e=>alert('\u26a0 '+e.message));
+}
+// Opens the builder for whichever table is being viewed, passing its real
+// column names so they can be inserted rather than typed from memory.
+function openExprBuilderForTable(){
+  if(!_modelCurrent) return;
+  fetch(`/api/model/table?table=${encodeURIComponent(_modelCurrent)}&limit=1&offset=0`)
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok) return;
+      const cols=(d.columns||[]).filter(c=>!c.calc).map(c=>c.name);
+      openExprBuilder(_modelCurrent, cols, d.types||[]);
+    }).catch(()=>{});
 }
 function addCalcColumn(){
   if(!_modelCurrent) return;
@@ -6527,6 +6677,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.24", date:"2026-07", title:"Expression Builder \u2014 Blue Prism Calculation-stage style, with 47 functions",
+    changes:[
+      "New \u0192 Builder\u2026 button next to Add calculated column opens a proper expression builder: name and result type at the top, the expression itself, then a browsable list of columns and functions with a detail pane \u2014 the same layout as Blue Prism\u2019s Calculation stage.",
+      "Validate checks the expression and says exactly what\u2019s wrong; Evaluate Expression runs it against five real rows and shows the actual results, which catches what validation alone can\u2019t \u2014 like a column holding text where a number was assumed.",
+      "47 functions across five categories. Text: UPPER, LOWER, PROPER, TRIM, LEN, LEFT, RIGHT, MID, REPLACE, CONTAINS, STARTSWITH, ENDSWITH, CONCAT, SPLITPART. Number: NUMBER, ROUND, ABS, CEILING, FLOOR, MAXOF, MINOF, SIGN, POWER, SQRT. Date: YEAR, MONTH, DAY, HOUR, MINUTE, DATE, WEEKDAY, WEEKNUM, DATEDIFF, DATEADD, FORMATDATE, NOW, TODAY. Logic: IF, AND, OR, NOT, ISBLANK, COALESCE. Conversion: TEXT, INT, BOOL, TODATE.",
+      "Clicking a column or a function inserts it at the cursor rather than at the end, so functions can be dropped into the middle of an expression that\u2019s already being written, with the caret left inside the brackets ready for arguments.",
+      "Every function was tested against real data before release rather than just added to a list.",
+      "One deliberate difference from Blue Prism: no File, Environment or Exception functions. Those reach outside the calculation \u2014 the file system, the running process, the session \u2014 and these expressions are stored and re-run on the server against the database. Keeping the surface to data functions is what makes the sandbox defensible; the data categories are the ones that matter for a column or a measure anyway.",
+    ]},
   { v:"2.23", date:"2026-07", title:"Data Model \u2014 Stage 4: measures across the model",
     changes:[
       "New Measures tab in the Data Model browser. Pick a table, a field to group by, and an aggregation (count, sum, average, min, max) \u2014 and get results back, with a bar alongside each row to make the shape obvious.",

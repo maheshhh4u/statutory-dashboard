@@ -2305,6 +2305,7 @@ def _model_infer_type(values):
 # arbitrary calls has to be impossible by construction rather than filtered
 # out by pattern matching.
 import ast as _pyast
+import math as _pymath
 
 _MODEL_TYPES = {"text", "integer", "number", "datetime", "boolean"}
 
@@ -2326,22 +2327,110 @@ def _model_to_num(v):
     try: return float(str(v).strip())
     except Exception: return 0
 
-_MODEL_FUNCS = {
-    "UPPER":  lambda v: str(v).upper() if v is not None else "",
-    "LOWER":  lambda v: str(v).lower() if v is not None else "",
-    "TRIM":   lambda v: str(v).strip() if v is not None else "",
-    "LEN":    lambda v: len(str(v)) if v is not None else 0,
-    "NUMBER": _model_to_num,
-    "ROUND":  lambda v, n=0: round(_model_to_num(v), int(n)),
-    "ABS":    lambda v: abs(_model_to_num(v)),
-    "YEAR":   _model_fn_year,
-    "MONTH":  _model_fn_month,
-    "DAY":    _model_fn_day,
-    "DATE":   _model_fn_date,
-    "IF":     lambda c, a, b=None: a if c else b,
-    "CONCAT": lambda *a: "".join("" if x is None else str(x) for x in a),
-    "COALESCE": lambda *a: next((x for x in a if x is not None and str(x).strip()!=""), ""),
-}
+# Function catalogue, in the spirit of Blue Prism's Calculation stage: grouped
+# by category, each with a signature and description so the builder UI can
+# show what a function does before it's used.
+#
+# Blue Prism's File, Environment and Exception categories are deliberately not
+# here. Those reach outside the calculation — the file system, the running
+# process, the session — and these expressions are stored and re-run on the
+# server against the database. Data functions (Text, Number, Date, Logic,
+# Conversion) are the ones that make sense for a column or a measure, and
+# keeping the surface to those is what makes the sandbox defensible.
+def _m_str(v): return "" if v is None else str(v)
+def _m_int(v):
+    try: return int(float(str(v).strip()))
+    except Exception: return 0
+def _m_mid(v, start, length=None):
+    t=_m_str(v); i=max(0,_m_int(start)-1)
+    return t[i:i+_m_int(length)] if length is not None else t[i:]
+def _m_replace(v, old, new): return _m_str(v).replace(_m_str(old), _m_str(new))
+def _m_split_part(v, sep, idx):
+    parts=_m_str(v).split(_m_str(sep))
+    i=_m_int(idx)-1
+    return parts[i] if 0 <= i < len(parts) else ""
+def _m_datediff(unit, a, b):
+    da, db_ = _model_to_dt(a), _model_to_dt(b)
+    if not da or not db_: return None
+    delta = db_ - da
+    u=_m_str(unit).lower()
+    if u.startswith("day"):    return delta.days
+    if u.startswith("hour"):   return round(delta.total_seconds()/3600, 2)
+    if u.startswith("min"):    return round(delta.total_seconds()/60, 2)
+    if u.startswith("sec"):    return round(delta.total_seconds(), 2)
+    if u.startswith("week"):   return round(delta.days/7, 2)
+    return delta.days
+def _m_dateadd(unit, n, v):
+    d=_model_to_dt(v)
+    if not d: return None
+    u=_m_str(unit).lower(); k=_m_int(n)
+    if u.startswith("day"):  d=d+timedelta(days=k)
+    elif u.startswith("hour"): d=d+timedelta(hours=k)
+    elif u.startswith("min"):  d=d+timedelta(minutes=k)
+    elif u.startswith("week"): d=d+timedelta(weeks=k)
+    else: d=d+timedelta(days=k)
+    return d.strftime("%Y-%m-%d %H:%M:%S")
+def _m_formatdate(v, fmt="%Y-%m-%d"):
+    d=_model_to_dt(v)
+    try: return d.strftime(_m_str(fmt)) if d else ""
+    except Exception: return ""
+
+_MODEL_FUNC_CATALOGUE = [
+  # (name, category, signature, description, callable)
+  ("UPPER",    "Text", "UPPER(text)", "Converts text to upper case.", lambda v: _m_str(v).upper()),
+  ("LOWER",    "Text", "LOWER(text)", "Converts text to lower case.", lambda v: _m_str(v).lower()),
+  ("TRIM",     "Text", "TRIM(text)", "Removes spaces from both ends of the text.", lambda v: _m_str(v).strip()),
+  ("LEN",      "Text", "LEN(text)", "Number of characters in the text.", lambda v: len(_m_str(v))),
+  ("LEFT",     "Text", "LEFT(text, count)", "First count characters.", lambda v,n: _m_str(v)[:max(0,_m_int(n))]),
+  ("RIGHT",    "Text", "RIGHT(text, count)", "Last count characters.", lambda v,n: _m_str(v)[-max(0,_m_int(n)):] if _m_int(n)>0 else ""),
+  ("MID",      "Text", "MID(text, start, [length])", "Characters from start (1-based), optionally limited to length.", _m_mid),
+  ("REPLACE",  "Text", "REPLACE(text, find, replaceWith)", "Replaces every occurrence of find.", _m_replace),
+  ("CONTAINS", "Text", "CONTAINS(text, find)", "True when text contains find.", lambda v,f: _m_str(f) in _m_str(v)),
+  ("STARTSWITH","Text","STARTSWITH(text, prefix)", "True when text starts with prefix.", lambda v,f: _m_str(v).startswith(_m_str(f))),
+  ("ENDSWITH", "Text", "ENDSWITH(text, suffix)", "True when text ends with suffix.", lambda v,f: _m_str(v).endswith(_m_str(f))),
+  ("CONCAT",   "Text", "CONCAT(a, b, ...)", "Joins all the values into one piece of text.", lambda *a: "".join(_m_str(x) for x in a)),
+  ("SPLITPART","Text", "SPLITPART(text, separator, index)", "The index-th piece after splitting on separator (1-based).", _m_split_part),
+  ("PROPER",   "Text", "PROPER(text)", "Capitalises the first letter of each word.", lambda v: _m_str(v).title()),
+
+  ("NUMBER",   "Number", "NUMBER(value)", "Reads the value as a number; 0 when it isn't one.", _model_to_num),
+  ("ROUND",    "Number", "ROUND(number, [decimals])", "Rounds to the given number of decimal places.", lambda v,n=0: round(_model_to_num(v), _m_int(n))),
+  ("ABS",      "Number", "ABS(number)", "Absolute (unsigned) value.", lambda v: abs(_model_to_num(v))),
+  ("CEILING",  "Number", "CEILING(number)", "Rounds up to a whole number.", lambda v: _pymath.ceil(_model_to_num(v))),
+  ("FLOOR",    "Number", "FLOOR(number)", "Rounds down to a whole number.", lambda v: _pymath.floor(_model_to_num(v))),
+  ("MAXOF",    "Number", "MAXOF(a, b, ...)", "Largest of the values given.", lambda *a: max([_model_to_num(x) for x in a] or [0])),
+  ("MINOF",    "Number", "MINOF(a, b, ...)", "Smallest of the values given.", lambda *a: min([_model_to_num(x) for x in a] or [0])),
+  ("SIGN",     "Number", "SIGN(number)", "-1, 0 or 1 depending on the sign.", lambda v: (_model_to_num(v)>0)-(_model_to_num(v)<0)),
+  ("POWER",    "Number", "POWER(number, exponent)", "Raises number to the given power.", lambda v,e: _model_to_num(v)**_model_to_num(e)),
+  ("SQRT",     "Number", "SQRT(number)", "Square root; 0 for negatives.", lambda v: _pymath.sqrt(_model_to_num(v)) if _model_to_num(v)>=0 else 0),
+
+  ("YEAR",     "Date", "YEAR(date)", "Year part of a date.", _model_fn_year),
+  ("MONTH",    "Date", "MONTH(date)", "Month number (1-12).", _model_fn_month),
+  ("DAY",      "Date", "DAY(date)", "Day of the month.", _model_fn_day),
+  ("HOUR",     "Date", "HOUR(date)", "Hour (0-23).", lambda v: (_model_to_dt(v).hour if _model_to_dt(v) else None)),
+  ("MINUTE",   "Date", "MINUTE(date)", "Minute (0-59).", lambda v: (_model_to_dt(v).minute if _model_to_dt(v) else None)),
+  ("DATE",     "Date", "DATE(value)", "The date part only, as YYYY-MM-DD.", _model_fn_date),
+  ("WEEKDAY",  "Date", "WEEKDAY(date)", "Day name, e.g. Monday.", lambda v: (_model_to_dt(v).strftime("%A") if _model_to_dt(v) else "")),
+  ("WEEKNUM",  "Date", "WEEKNUM(date)", "ISO week number.", lambda v: (int(_model_to_dt(v).strftime("%V")) if _model_to_dt(v) else None)),
+  ("DATEDIFF", "Date", "DATEDIFF(unit, startDate, endDate)", "Difference between two dates. Unit: days, hours, minutes, seconds or weeks.", _m_datediff),
+  ("DATEADD",  "Date", "DATEADD(unit, amount, date)", "Adds an amount to a date. Unit: days, hours, minutes or weeks.", _m_dateadd),
+  ("FORMATDATE","Date","FORMATDATE(date, [format])", "Formats a date, e.g. FORMATDATE(timestamp, '%d/%m/%Y').", _m_formatdate),
+  ("NOW",      "Date", "NOW()", "The current date and time.", lambda: datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")),
+  ("TODAY",    "Date", "TODAY()", "Today's date.", lambda: datetime.utcnow().strftime("%Y-%m-%d")),
+
+  ("IF",       "Logic", "IF(condition, valueIfTrue, [valueIfFalse])", "Chooses between two values based on a condition.", lambda c,a,b=None: a if c else b),
+  ("AND",      "Logic", "AND(a, b, ...)", "True when every value is true.", lambda *a: all(bool(x) for x in a)),
+  ("OR",       "Logic", "OR(a, b, ...)", "True when any value is true.", lambda *a: any(bool(x) for x in a)),
+  ("NOT",      "Logic", "NOT(value)", "Reverses true and false.", lambda v: not bool(v)),
+  ("ISBLANK",  "Logic", "ISBLANK(value)", "True when the value is empty or missing.", lambda v: v is None or _m_str(v).strip()==""),
+  ("COALESCE", "Logic", "COALESCE(a, b, ...)", "The first value that isn't empty.", lambda *a: next((x for x in a if x is not None and _m_str(x).strip()!=""), "")),
+
+  ("TEXT",     "Conversion", "TEXT(value)", "Converts any value to text.", _m_str),
+  ("INT",      "Conversion", "INT(value)", "Converts to a whole number.", _m_int),
+  ("BOOL",     "Conversion", "BOOL(value)", "Converts to true/false.", lambda v: _m_str(v).strip().lower() in ("1","true","yes","y")),
+  ("TODATE",   "Conversion", "TODATE(value)", "Reads text as a date; empty when it isn't one.", lambda v: (_model_to_dt(v).strftime("%Y-%m-%d %H:%M:%S") if _model_to_dt(v) else "")),
+]
+
+_MODEL_FUNCS = {name: fn for (name, _cat, _sig, _desc, fn) in _MODEL_FUNC_CATALOGUE}
 
 _MODEL_ALLOWED_NODES = (
     _pyast.Expression, _pyast.BoolOp, _pyast.BinOp, _pyast.UnaryOp, _pyast.Compare,
@@ -2629,6 +2718,49 @@ def api_model_query_fields():
             fields.append({"ref": other + "." + cc["name"], "label": other + "." + cc["name"] + " (calculated)",
                            "type": otypes.get(cc["name"], cc["data_type"]), "source": other})
     return jsonify({"ok": True, "fields": fields, "related": related})
+
+@app.route("/api/model/functions", methods=["GET"])
+def api_model_functions():
+    """The function catalogue for the expression builder, grouped by category."""
+    cats = {}
+    for name, cat, sig, desc, _fn in _MODEL_FUNC_CATALOGUE:
+        cats.setdefault(cat, []).append({"name": name, "signature": sig, "description": desc})
+    for c in cats: cats[c].sort(key=lambda f: f["name"])
+    order = ["Text", "Number", "Date", "Logic", "Conversion"]
+    return jsonify({"ok": True,
+                    "categories": [{"name": c, "functions": cats[c]} for c in order if c in cats]})
+
+@app.route("/api/model/test_expression", methods=["POST"])
+def api_model_test_expression():
+    """Validate, and where possible evaluate against a real row — the
+    equivalent of Blue Prism's Validate / Evaluate Expression buttons. Showing
+    the result against actual data catches the mistakes validation alone
+    can't, like a column holding text where a number was assumed."""
+    d = request.json or {}
+    table = (d.get("table") or "").strip()
+    expression = (d.get("expression") or "").strip()
+    if table not in _model_table_names():
+        return jsonify({"ok": False, "error": "Unknown table"}), 400
+    cols = _model_table_columns(table)
+    err = _model_validate_expr(expression, set(cols))
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+
+    sample = db_query(f'SELECT * FROM "{table}" LIMIT 5') or []
+    results = []
+    for r in sample:
+        row_map = {cols[i]: r[i] for i in range(len(cols))}
+        val = _model_eval_expr(expression, row_map)
+        results.append({
+            "value": "" if val is None else str(val),
+            "failed": val is None,
+            "type": type(val).__name__ if val is not None else "none",
+        })
+    return jsonify({"ok": True, "valid": True, "results": results,
+                    "sampled": len(sample),
+                    "note": ("Every sampled row returned nothing — check the columns used really hold the "
+                             "kind of data this expression expects.")
+                            if results and all(x["failed"] for x in results) else None})
 
 @app.route("/api/model/relationships", methods=["GET"])
 def api_model_relationships():
