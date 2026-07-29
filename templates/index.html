@@ -4242,17 +4242,94 @@ function crCombinedFilters(v, forId){
 }
 // Applies (or toggles off) a cross-filter selection and refreshes everything
 // else on the canvas.
+// Chart.js works out which element you clicked from the canvas rectangle, but
+// the canvas sits inside a CSS-zoomed container. Chart.js has no idea about
+// that zoom, so its maths was compressed toward the left edge and only the
+// first bar ever registered a hit. Doing the hit test ourselves fixes it:
+// divide the pointer offset by the current zoom to get true canvas
+// coordinates, then ask each rendered element whether the point is inside it.
+// inRange() is implemented by every Chart.js element type, so this works for
+// bars, arcs (pie/donut/polar), line and area points, and radar alike.
+function crAttachCrossFilterClick(canvasEl, chart, vid, field, fieldLabel, labels){
+  canvasEl.style.cursor='pointer';
+  canvasEl.onclick=function(e){
+    const rect=canvasEl.getBoundingClientRect();
+    const z=crCurrentScale()||1;
+    const x=(e.clientX-rect.left)/z;
+    const y=(e.clientY-rect.top)/z;
+    let hitIndex=-1;
+    (chart.getSortedVisibleDatasetMetas()||[]).some(meta=>{
+      return (meta.data||[]).some((el,i)=>{
+        if(el && typeof el.inRange==='function' && el.inRange(x, y, false)){ hitIndex=i; return true; }
+        return false;
+      });
+    });
+    if(hitIndex<0){ crClearCrossFilter(); return; }   // clicked empty space
+    const label=(labels||[])[hitIndex];
+    if(label===undefined) return;
+    crSetCrossFilter(vid, field, fieldLabel, label);
+  };
+}
+// Greys out everything except the selected point on the visual that was
+// clicked, the way Power BI dims the unselected parts instead of hiding them.
+function crFadeColor(c){
+  if(typeof c!=='string') return c;
+  const m=/^#([0-9a-f]{6})$/i.exec(c.trim());
+  if(m){
+    const n=parseInt(m[1],16);
+    return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},0.22)`;
+  }
+  const rgb=/^rgba?\(([^)]+)\)$/i.exec(c.trim());
+  if(rgb){
+    const parts=rgb[1].split(',').map(x=>x.trim());
+    return `rgba(${parts[0]},${parts[1]},${parts[2]},0.22)`;
+  }
+  return c;
+}
+function crApplyCrossFilterDimming(chart, vid, labels){
+  if(!_crCrossFilter || _crCrossFilter.sourceId!==vid) return;
+  const selIdx=(labels||[]).indexOf(_crCrossFilter.value);
+  if(selIdx<0) return;
+  (chart.data.datasets||[]).forEach(ds=>{
+    const n=(ds.data||[]).length;
+    const base=ds.backgroundColor;
+    const baseAt=(i)=> Array.isArray(base) ? base[i % base.length] : base;
+    ds._crBaseBg = ds._crBaseBg || base;
+    ds.backgroundColor=Array.from({length:n}, (_,i)=> i===selIdx ? baseAt(i) : crFadeColor(baseAt(i)));
+    if(typeof ds.borderColor==='string' && ds.type!=='line'){
+      const bc=ds.borderColor;
+      ds.borderColor=Array.from({length:n}, (_,i)=> i===selIdx ? bc : crFadeColor(bc));
+    }
+  });
+  chart.update('none');
+}
+// Redraws a visual from the data already fetched for it, with no server call.
+// Used for the visual that was clicked: its own data doesn't change (a
+// cross-filter never applies to its source), only its colours do.
+function crRerenderFromCache(id){
+  const c=_crVisualDataCache[id], v=_crVisuals[id];
+  if(!v) return;
+  if(!c){ crRenderVisual(id); return; }
+  if(c.kind==='combo') renderCrComboResult(c.d1, c.d2, v, 'cr-visual-chart-'+id);
+  else renderCrResult(c.d, v.chart_type, 'cr-visual-chart-'+id, 'cr-visual-table-'+id, true, v.format, 'cr-visual-card-'+id);
+}
 function crSetCrossFilter(sourceId, field, fieldLabel, value){
   const same=_crCrossFilter && _crCrossFilter.sourceId===sourceId
           && _crCrossFilter.field===field && _crCrossFilter.value===value;
   _crCrossFilter = same ? null : {sourceId, field, fieldLabel, value};
-  crRefreshDependentsOfSlicer(null);   // re-run every non-slicer visual
+  // Only the OTHER visuals need new data. Re-querying the clicked one as well
+  // (which is what made this feel slow) achieves nothing — its result is
+  // unchanged by its own selection — so it just gets redrawn from cache.
+  crRefreshDependentsOfSlicer(sourceId);
+  crRerenderFromCache(sourceId);
   crRenderCrossFilterBar();
 }
 function crClearCrossFilter(){
   if(!_crCrossFilter) return;
+  const prevSource=_crCrossFilter.sourceId;
   _crCrossFilter=null;
-  crRefreshDependentsOfSlicer(null);
+  crRefreshDependentsOfSlicer(prevSource);
+  crRerenderFromCache(prevSource);   // drops the dimming
   crRenderCrossFilterBar();
 }
 // Small banner so an active cross-filter is obvious and easy to undo — without
@@ -5101,26 +5178,21 @@ function renderCrResult(d, chartType, chartId, tableWrapId, isTile, format, card
   // canvas by that category. Only on canvas tiles (not the standalone preview
   // chart), and only where the visual is actually grouped by a field — a Card
   // has no category to filter by.
+  canvasEl._chartInst = new Chart(canvasEl, chartOpts);
+  // Cross-filtering: clicking a bar / slice / point filters the rest of the
+  // canvas by that category. Attached after the chart exists, because the hit
+  // test reads the rendered elements (see crAttachCrossFilterClick).
   if(isTile){
     const vid=chartId.replace('cr-visual-chart-','');
     const vv=_crVisuals[vid];
-    if(vv && vv.rows){
-      chartOpts.options=Object.assign({}, chartOpts.options, {
-        onClick:function(evt, elements){
-          if(!crFieldIsCrossFilterable(vv.rows)) return;
-          if(!elements || !elements.length){ crClearCrossFilter(); return; }
-          const label=(d.row_labels||[])[elements[0].index];
-          if(label===undefined) return;
-          crSetCrossFilter(vid, vv.rows, vv.rowsLabel||vv.rows, label);
-        },
-        onHover:function(evt, elements){
-          const t=evt && evt.native && evt.native.target;
-          if(t) t.style.cursor = (crFieldIsCrossFilterable(vv.rows) && elements && elements.length) ? 'pointer' : 'default';
-        },
-      });
+    if(vv && vv.rows && crFieldIsCrossFilterable(vv.rows)){
+      crAttachCrossFilterClick(canvasEl, canvasEl._chartInst, vid, vv.rows, vv.rowsLabel||vv.rows, d.row_labels||[]);
+      crApplyCrossFilterDimming(canvasEl._chartInst, vid, d.row_labels||[]);
+    } else {
+      canvasEl.onclick=null;
+      canvasEl.style.cursor='default';
     }
   }
-  canvasEl._chartInst = new Chart(canvasEl, chartOpts);
 }
 // Combo charts (Excel/Power BI style: two independent measures sharing one
 // category axis, one plotted as columns and one as a line) are built from
@@ -5185,21 +5257,17 @@ function renderCrComboResult(d1, d2, v, chartId){
         title:{display:!!fmt.title, text:fmt.title||'', color:fmt.titleColor||undefined},
       },
       scales,
-      // Same cross-filtering as every other chart type — clicking a column or
-      // a point on the line filters the rest of the canvas by that category.
-      onClick:function(evt, elements){
-        if(!v.rows || !crFieldIsCrossFilterable(v.rows)) return;
-        if(!elements || !elements.length){ crClearCrossFilter(); return; }
-        const label=labels[elements[0].index];
-        if(label===undefined) return;
-        crSetCrossFilter(id, v.rows, v.rowsLabel||v.rows, label);
-      },
-      onHover:function(evt, elements){
-        const t=evt && evt.native && evt.native.target;
-        if(t) t.style.cursor=(v.rows && crFieldIsCrossFilterable(v.rows) && elements && elements.length) ? 'pointer' : 'default';
-      },
     },
   });
+  // Same cross-filtering as every other chart type — clicking a column or a
+  // point on the line filters the rest of the canvas by that category.
+  if(v.rows && crFieldIsCrossFilterable(v.rows)){
+    crAttachCrossFilterClick(canvasEl, canvasEl._chartInst, id, v.rows, v.rowsLabel||v.rows, labels);
+    crApplyCrossFilterDimming(canvasEl._chartInst, id, labels);
+  } else {
+    canvasEl.onclick=null;
+    canvasEl.style.cursor='default';
+  }
 
   const legendEl=document.getElementById('cr-visual-combo-legend-'+id);
   if(legendEl){
@@ -6124,6 +6192,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.19", date:"2026-07", title:"Cross-filtering: every bar is clickable now, selection dims the rest, and it's faster",
+    changes:[
+      "Fixed only the first bar responding to clicks. Chart.js works out which element you clicked from the canvas rectangle, but the canvas sits inside a CSS-zoomed container that Chart.js knows nothing about \u2014 so its maths was compressed toward the left edge and only the leftmost bar ever registered. The hit test is now done directly against the rendered chart elements, with the zoom divided out, so it's accurate at any zoom level. It also covers every chart type properly \u2014 bars, columns, pie and donut slices, line and area points, radar and polar.",
+      "Selecting a point now dims the rest of that visual instead of leaving it unchanged, so it's obvious what's selected \u2014 the same highlight-and-fade Power BI uses. Clicking the point again, clicking empty space, or Clear restores it.",
+      "Faster: clicking used to re-query the server for every visual including the one you clicked, which was pointless \u2014 a cross-filter never applies to its own source, so that result can't change. The clicked visual is now redrawn from data already in hand, and only the other visuals are refreshed.",
+    ]},
   { v:"2.18", date:"2026-07", title:"Cross-filtering: click a bar, slice or point to filter the rest of the report",
     changes:[
       "Clicking a data point in any chart \u2014 a bar, a column, a pie or donut slice, a line or area point, radar, polar, or either series of a combo chart \u2014 now filters every other visual on the page by that value, the way Power BI does. Click the same point again, click an empty part of the chart, or use the Clear button to remove it.",
