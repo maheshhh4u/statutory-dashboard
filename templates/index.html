@@ -2674,14 +2674,38 @@ function crChartTypeNeedsRows(chartType){ return chartType!=='card' && !crChartT
 // One definition of a visual's displayed title, so the canvas tile, the
 // "Editing:" label and a reloaded report can't drift apart. A user-supplied
 // name always wins; otherwise it's derived from the measure and field.
-function crVisualTitleText(v){
+function crVisualBaseTitle(v){
   if(!v) return '';
-  if(v.customTitle) return v.customTitle;
   if(v.isSlicer) return '\u{1F527} '+(v.slicerTitle||v.slicerFieldLabel||'Slicer');
   const base = crChartTypeIsCombo(v.chart_type)
     ? (v.measureLabel||'')+' + '+(v.measure2Label||'')
     : (v.measureLabel||'');
   return base+(v.rowsLabel?' by '+v.rowsLabel:'');
+}
+function crVisualTitleText(v){
+  if(!v) return '';
+  return v.customTitle || crVisualBaseTitle(v);
+}
+// Two visuals built the same way would otherwise carry identical titles, which
+// makes them impossible to tell apart in the "Match Size" dropdown or when
+// looking at a saved report. The first keeps the plain name; each later
+// duplicate of that same name gets _1, _2, … appended. Only ever applied to
+// auto-generated names — a name typed into "Visual name" is left exactly as
+// entered, even if it repeats.
+function crUniqueVisualTitle(v, forId, baseOverride){
+  const base=baseOverride || crVisualBaseTitle(v);
+  if(!base) return base;
+  const taken=new Set();
+  Object.keys(_crVisuals).forEach(vid=>{
+    if(vid===forId) return;
+    const other=_crVisuals[vid];
+    if(!other) return;
+    taken.add(other.customTitle || crVisualBaseTitle(other));
+  });
+  if(!taken.has(base)) return base;
+  let n=1;
+  while(taken.has(base+'_'+n)) n++;
+  return base+'_'+n;
 }
 function crChartTypeIsCombo(chartType){ return chartType==='combo_col_line' || chartType==='combo_col_line_dual'; }
 const CR_PALETTES={
@@ -2979,7 +3003,12 @@ const CR_PAGE_SIZES={'16:9':{w:1280,h:720}, '16:9-lg':{w:1600,h:900}, '4:3':{w:9
 // Stamped into every saved report so we can tell which grid units its
 // coordinates are in. Reports without it were saved on the original coarser
 // 12-column/70px grid and are scaled up by this factor when loaded.
-const CR_GRID_SCALE=4;
+// Horizontal resolution. Raised 4 -> 8 (48 -> 96 columns) because a 48-column
+// page still meant ~27px horizontal steps, which is what "resizing isn't
+// precise" was about — vertical was already fine at 8.75px. The migration on
+// load reads whichever value a report was saved with, so this change costs
+// nothing for existing reports.
+const CR_GRID_SCALE=8;
 // Vertical resolution is tracked separately from horizontal: the first pass
 // at this (v2.13) scaled both by 4, but a 17.5px row step was still coarse
 // enough that dragging a bottom edge visibly jumped. Rows are now 8× finer
@@ -3049,7 +3078,7 @@ let _crCanvasZoom='fit';   // 'fit' (Power BI's default — scale so the whole p
 // Pixel <-> grid-unit conversion for the Size & Position boxes. GridStack
 // stores whole cells, so a pixel value is rounded to the nearest cell — the
 // note under the inputs says so rather than silently changing what was typed.
-const CR_CELL_H=CR_CELL_H_PX, CR_CELL_MARGIN=CR_CELL_MARGIN_PX, CR_GRID_COLS=48;
+const CR_CELL_H=CR_CELL_H_PX, CR_CELL_MARGIN=CR_CELL_MARGIN_PX, CR_GRID_COLS=96;
 function crCellW(){
   const size=CR_PAGE_SIZES[_crPageSize]||CR_PAGE_SIZES['16:9'];
   return size.w/CR_GRID_COLS;
@@ -3198,7 +3227,12 @@ function crSetPageSize(preset){
 // if it exceeds the page. New visuals still can't push past the page size.
 function crComputeMaxRow(floorRows){
   const size=CR_PAGE_SIZES[_crPageSize]||CR_PAGE_SIZES['16:9'];
-  const pageRows=Math.max(8, Math.floor(size.h/(CR_CELL_H_PX+CR_CELL_MARGIN_PX)));  // matches GridStack.init
+  // GridStack sizes each row as exactly cellHeight (the margin sits inside the
+  // item, it isn't extra pitch between rows). Dividing by cellHeight+margin
+  // therefore under-counted the rows that fit and left a dead strip along the
+  // bottom of the page that nothing could be dragged into. ceil so the last
+  // partial row is still reachable.
+  const pageRows=Math.max(8, Math.ceil(size.h/CR_CELL_H_PX));
   return Math.max(pageRows, floorRows||0);
 }
 // Deepest row a layout occupies (y+h of its lowest widget) — used above so
@@ -3497,7 +3531,7 @@ function crInitGridIfNeeded(){
   // dragged into empty space lower down springs back, and resizing one
   // re-flows (and can shrink) the ones around it. float:true turns that off —
   // a visual stays exactly where it's put, which is how Power BI behaves.
-  _crGrid=GridStack.init({column:48, cellHeight:CR_CELL_H_PX, margin:CR_CELL_MARGIN_PX, minRow:8,
+  _crGrid=GridStack.init({column:96, cellHeight:CR_CELL_H_PX, margin:CR_CELL_MARGIN_PX, minRow:8,
     float:true, maxRow:crComputeMaxRow(),
     resizable:{handles:'e, se, s, sw, w, n, ne, nw'}}, document.getElementById('cr-gridstack'));
   // Re-render a visual's chart after it's resized, so Chart.js redraws to fit
@@ -3797,7 +3831,7 @@ function crAddVisual(){
   crInitGridIfNeeded();
   const id='v'+(++_crVisualSeq);
   _crVisuals[id]={measure:'',measureLabel:'',rows:'',rowsLabel:'',columns:'',columnsLabel:'',chart_type:'col_clustered',format:{},filters:[],showTitleBar:true};
-  crAddWidgetWithHtml({w:16,h:32,id:id}, crVisualWidgetHtml(id));  // 4×4 on the original grid
+  crAddWidgetWithHtml({w:32,h:32,id:id}, crVisualWidgetHtml(id));  // 4×4 on the original grid
   crSelectVisual(id);
 }
 function crSelectVisual(id){
@@ -4729,7 +4763,11 @@ function crApplyToSelectedVisual(){
       : {field:f.field, fieldLabel:f.fieldLabel, values:f.values.slice()}),
   };
   const nameEl=document.getElementById('cr-visual-name');
-  _crVisuals[id].customTitle=(nameEl && nameEl.value.trim()) || '';
+  const typedName=(nameEl && nameEl.value.trim()) || '';
+  // A typed name is used verbatim. Otherwise fall back to the generated name,
+  // de-duplicated against the other visuals on this page.
+  _crVisuals[id].customTitle = typedName || crUniqueVisualTitle(_crVisuals[id], id);
+  if(nameEl) nameEl.value=_crVisuals[id].customTitle;   // show what it resolved to
   const titleEl=document.getElementById('cr-visual-title-'+id);
   const titleText=crVisualTitleText(_crVisuals[id]);
   if(titleEl) titleEl.textContent=titleText;
@@ -4782,9 +4820,10 @@ function crDuplicateSelectedVisual(){
   crAddWidgetWithHtml({w, h, x:srcX+w, y:srcY, id:newId}, crVisualWidgetHtml(newId));
   const titleEl=document.getElementById('cr-visual-title-'+newId);
   const dup=_crVisuals[newId];
-  if(titleEl) titleEl.textContent=dup.isSlicer
-    ? '🔧 '+(dup.slicerTitle||dup.slicerFieldLabel||'Slicer')
-    : (dup.measureLabel||'')+(dup.rowsLabel?' by '+dup.rowsLabel:'');
+  // A copy would otherwise carry the original's exact name — give it the next
+  // free _N so the two can be told apart.
+  dup.customTitle=crUniqueVisualTitle(dup, newId, crVisualTitleText(_crVisuals[id]));
+  if(titleEl) titleEl.textContent=crVisualTitleText(dup);
   crApplyTitleBarVisibility(newId);
   if(dup.isSlicer) crRenderSlicerVisual(newId); else crRenderVisual(newId);
   crSelectVisual(newId);
@@ -6002,6 +6041,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.17", date:"2026-07", title:"Bottom of the canvas is reachable, finer horizontal resizing, and automatic unique visual names",
+    changes:[
+      "Found why nothing could be moved to the very bottom of the page: the row cap was calculated by dividing the page height by cellHeight PLUS margin, but GridStack sizes each row as exactly cellHeight (the margin sits inside the item, it isn't extra spacing between rows). That under-counted the rows that fit and left roughly 80px along the bottom edge that no visual could enter. Corrected \u2014 the full page is usable now.",
+      "Horizontal resizing is twice as fine: 48 \u2192 96 columns, so steps are about 13px instead of 27px. Vertical was already at 8.75px, so it was specifically horizontal that still felt coarse. Saved reports carry a marker for the grid they were built on and convert exactly, as before.",
+      "Visual names are now unique automatically: the first keeps its generated name (e.g. \u201cCalls Made by Caller\u201d) and each later visual with that same name gets _1, _2, \u2026 appended. Duplicating a visual does the same, so a copy is never indistinguishable from its original. A name you type yourself is always used exactly as entered.",
+      "Confirmed while checking: the \u201cVisual name\u201d box already applies to every visual type, slicers included \u2014 it sits outside the sections that get hidden for slicers.",
+    ]},
   { v:"2.16", date:"2026-07", title:"Real fix for imprecise dragging (it was the zoom, not the grid), and a File/Edit/Insert/View menu bar",
     changes:[
       "The dragging problem was never gravity or grid size \u2014 it was how the canvas was being scaled to fit. CSS transform:scale only changes how the canvas is PAINTED: the element still occupies its full unscaled layout box, and mouse coordinates during a drag aren\u2019t scaled to match. So GridStack\u2019s hit maths was off by the zoom factor, and a visual didn\u2019t follow the cursor \u2014 it landed on whichever cell the mismatched maths worked out, which is exactly the \u201csticks to some positions, can\u2019t move it freely\u201d in the video. Switched to CSS zoom, which scales real layout, so element rectangles and pointer coordinates stay in the same space and dragging is accurate at any zoom.",
