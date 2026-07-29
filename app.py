@@ -2451,6 +2451,185 @@ def _model_relationships():
     return [{"id": r[0], "from_table": r[1], "from_column": r[2],
              "to_table": r[3], "to_column": r[4]} for r in rows]
 
+# ── Model query engine (Stage 4) ───────────────────────────────────────────
+# Aggregation is done in Python over a bounded fetch rather than by generating
+# SQL. Deliberate: column types are overrides held outside the schema,
+# calculated columns don't exist in SQL at all, and joins here are lookups
+# across user-defined relationships. Doing it in one place keeps types,
+# calculated columns and joins behaving identically instead of half in SQL and
+# half out. The row cap keeps it safe on a 512MB instance; the response says
+# when it was hit rather than silently reporting a partial answer.
+MODEL_QUERY_ROW_CAP = 20000
+
+def _model_related_lookup(base_table, other_table):
+    """The relationship joining two tables, from base's point of view.
+    Returns (base_column, other_column) or None."""
+    for r in _model_relationships():
+        if r["from_table"] == base_table and r["to_table"] == other_table:
+            return (r["from_column"], r["to_column"])
+        if r["to_table"] == base_table and r["from_table"] == other_table:
+            return (r["to_column"], r["from_column"])
+    return None
+
+def _model_rows_for_query(base_table, needed_other):
+    """Rows of base_table as dicts, with calculated columns evaluated and any
+    related table's columns attached under 'other.column'. Related rows are
+    looked up many-to-one (the first match wins), which is the right shape for
+    'describe this row' joins — it never multiplies rows, so a count of calls
+    stays a count of calls."""
+    cols = _model_table_columns(base_table)
+    raw = db_query(f'SELECT * FROM "{base_table}" LIMIT {MODEL_QUERY_ROW_CAP + 1}') or []
+    truncated = len(raw) > MODEL_QUERY_ROW_CAP
+    raw = raw[:MODEL_QUERY_ROW_CAP]
+    calc = _model_calc_cols(base_table)
+    rows = []
+    for r in raw:
+        d = {cols[i]: r[i] for i in range(len(cols))}
+        for cc in calc:
+            d[cc["name"]] = _model_eval_expr(cc["expression"], dict(d))
+        rows.append(d)
+
+    if needed_other and needed_other != base_table:
+        link = _model_related_lookup(base_table, needed_other)
+        if not link:
+            return rows, truncated, f"No relationship defined between {base_table} and {needed_other}"
+        base_col, other_col = link
+        ocols = _model_table_columns(needed_other)
+        ocalc = _model_calc_cols(needed_other)
+        orows = db_query(f'SELECT * FROM "{needed_other}" LIMIT {MODEL_QUERY_ROW_CAP}') or []
+        index = {}
+        for orow in orows:
+            od = {ocols[i]: orow[i] for i in range(len(ocols))}
+            for cc in ocalc:
+                od[cc["name"]] = _model_eval_expr(cc["expression"], dict(od))
+            key = str(od.get(other_col, "")).strip()
+            if key and key not in index:
+                index[key] = od
+        for d in rows:
+            match = index.get(str(d.get(base_col, "")).strip())
+            for c in (ocols + [cc["name"] for cc in ocalc]):
+                d[needed_other + "." + c] = (match or {}).get(c)
+    return rows, truncated, None
+
+def _model_group_value(value, dtype):
+    """How a value is labelled when grouping. Datetimes group by day —
+    grouping by a raw timestamp would give one group per row, which is never
+    what's wanted."""
+    if value is None or str(value).strip() == "":
+        return "(blank)"
+    if dtype == "datetime":
+        return _model_fn_date(value) or str(value)
+    if dtype == "boolean":
+        return "true" if str(value).strip().lower() in ("1", "true", "yes") else "false"
+    return str(value)
+
+@app.route("/api/model/query", methods=["POST"])
+def api_model_query():
+    d = request.json or {}
+    table = (d.get("table") or "").strip()
+    group_by = (d.get("group_by") or "").strip()      # "column" or "other_table.column"
+    agg = (d.get("agg") or "count").strip().lower()
+    agg_col = (d.get("agg_column") or "").strip()
+    if table not in _model_table_names():
+        return jsonify({"ok": False, "error": "Unknown table"}), 400
+    if agg not in ("count", "sum", "avg", "min", "max"):
+        return jsonify({"ok": False, "error": "Unknown aggregation"}), 400
+    if not group_by:
+        return jsonify({"ok": False, "error": "Choose a field to group by"}), 400
+
+    def split_ref(ref):
+        if "." in ref:
+            t, c = ref.split(".", 1)
+            return (t, c) if t in _model_table_names() else (None, ref)
+        return (None, ref)
+
+    g_table, g_col = split_ref(group_by)
+    a_table, a_col = split_ref(agg_col) if agg_col else (None, "")
+    other = g_table or a_table
+    if g_table and a_table and g_table != a_table:
+        return jsonify({"ok": False, "error": "Group-by and the aggregated column can't come from two different related tables in one query"}), 400
+
+    rows, truncated, err = _model_rows_for_query(table, other)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+
+    types = _model_col_types(table)
+    if other:
+        for c, t in _model_col_types(other).items():
+            types[other + "." + c] = t
+    g_key = group_by if g_table else g_col
+    a_key = (agg_col if a_table else a_col) if agg_col else ""
+    if rows and g_key not in rows[0]:
+        return jsonify({"ok": False, "error": f"Unknown field '{group_by}'"}), 400
+    if agg != "count" and rows and a_key not in rows[0]:
+        return jsonify({"ok": False, "error": f"Unknown field '{agg_col}'"}), 400
+
+    buckets = {}
+    for r in rows:
+        label = _model_group_value(r.get(g_key), types.get(g_key, "text"))
+        buckets.setdefault(label, []).append(r)
+
+    out = []
+    for label, sub in buckets.items():
+        if agg == "count":
+            val = len(sub)
+        else:
+            nums = []
+            for r in sub:
+                v = r.get(a_key)
+                if v is None or str(v).strip() == "": continue
+                try: nums.append(float(str(v).strip()))
+                except Exception: pass
+            if not nums:
+                val = 0
+            elif agg == "sum": val = sum(nums)
+            elif agg == "avg": val = sum(nums) / len(nums)
+            elif agg == "min": val = min(nums)
+            else:              val = max(nums)
+        out.append((label, round(val, 2) if isinstance(val, float) else val))
+
+    is_date = types.get(g_key) == "datetime"
+    out.sort(key=(lambda x: x[0]) if is_date else (lambda x: -x[1]))
+    out = out[:200]   # a chart or table beyond this isn't readable anyway
+
+    agg_label = {"count": "Count", "sum": "Sum", "avg": "Average", "min": "Min", "max": "Max"}[agg]
+    measure_label = agg_label if agg == "count" else f"{agg_label} of {agg_col}"
+    note = (f"Showing the first {MODEL_QUERY_ROW_CAP:,} rows of {table} — this table is larger than that, "
+            f"so these totals are partial.") if truncated else None
+    return jsonify({"ok": True,
+                    "row_labels": [o[0] for o in out],
+                    "data": [o[1] for o in out],
+                    "measure_label": measure_label,
+                    "row_field_label": group_by,
+                    "note": note})
+
+@app.route("/api/model/query_fields", methods=["GET"])
+def api_model_query_fields():
+    """Fields available for a base table: its own columns, its calculated
+    columns, and the columns of anything related to it."""
+    table = (request.args.get("table") or "").strip()
+    if table not in _model_table_names():
+        return jsonify({"ok": False, "error": "Unknown table"}), 400
+    types = _model_col_types(table)
+    fields = [{"ref": c, "label": c, "type": types.get(c, "text"), "source": table}
+              for c in _model_table_columns(table)]
+    for cc in _model_calc_cols(table):
+        fields.append({"ref": cc["name"], "label": cc["name"] + " (calculated)",
+                       "type": types.get(cc["name"], cc["data_type"]), "source": table})
+    related = []
+    for r in _model_relationships():
+        other = r["to_table"] if r["from_table"] == table else (r["from_table"] if r["to_table"] == table else None)
+        if not other or other == table or other in related: continue
+        related.append(other)
+        otypes = _model_col_types(other)
+        for c in _model_table_columns(other):
+            fields.append({"ref": other + "." + c, "label": other + "." + c,
+                           "type": otypes.get(c, "text"), "source": other})
+        for cc in _model_calc_cols(other):
+            fields.append({"ref": other + "." + cc["name"], "label": other + "." + cc["name"] + " (calculated)",
+                           "type": otypes.get(cc["name"], cc["data_type"]), "source": other})
+    return jsonify({"ok": True, "fields": fields, "related": related})
+
 @app.route("/api/model/relationships", methods=["GET"])
 def api_model_relationships():
     tables = _model_table_names()

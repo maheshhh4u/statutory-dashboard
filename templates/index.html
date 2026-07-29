@@ -1547,8 +1547,10 @@ select:focus{outline:none;border-color:var(--green)}
     <div id="model-tabs" style="display:flex;gap:4px;margin-bottom:10px;border-bottom:1px solid var(--border)">
       <button type="button" id="model-tab-tables" onclick="modelSetTab('tables')" style="font-size:12.5px;padding:6px 12px;border:none;background:none;cursor:pointer;border-bottom:2px solid #1e3a5f;font-weight:700">Tables</button>
       <button type="button" id="model-tab-rels" onclick="modelSetTab('rels')" style="font-size:12.5px;padding:6px 12px;border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;color:var(--t3)">Relationships</button>
+      <button type="button" id="model-tab-query" onclick="modelSetTab('query')" style="font-size:12.5px;padding:6px 12px;border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;color:var(--t3)">Measures</button>
     </div>
     <div id="model-pane-rels" style="display:none"></div>
+    <div id="model-pane-query" style="display:none"></div>
     <div id="model-pane-tables" style="display:grid;grid-template-columns:220px minmax(0,1fr);gap:14px;align-items:start">
       <div id="model-table-list" style="border:1px solid var(--border);border-radius:6px;max-height:60vh;overflow:auto"></div>
       <div style="min-width:0">
@@ -3402,15 +3404,98 @@ function loadModelTablePage(){
     }).catch(e=>{ prev.innerHTML='<div style="padding:10px;font-size:12px;color:var(--red)">'+esc(e.message)+'</div>'; });
 }
 function modelSetTab(tab){
-  const isRels=tab==='rels';
-  document.getElementById('model-pane-tables').style.display=isRels?'none':'grid';
-  document.getElementById('model-pane-rels').style.display=isRels?'block':'none';
-  const t=document.getElementById('model-tab-tables'), r=document.getElementById('model-tab-rels');
-  t.style.borderBottom=isRels?'2px solid transparent':'2px solid #1e3a5f';
-  t.style.fontWeight=isRels?'400':'700'; t.style.color=isRels?'var(--t3)':'';
-  r.style.borderBottom=isRels?'2px solid #1e3a5f':'2px solid transparent';
-  r.style.fontWeight=isRels?'700':'400'; r.style.color=isRels?'':'var(--t3)';
-  if(isRels) loadRelationships();
+  const panes={tables:'model-pane-tables', rels:'model-pane-rels', query:'model-pane-query'};
+  const tabs={tables:'model-tab-tables', rels:'model-tab-rels', query:'model-tab-query'};
+  Object.keys(panes).forEach(k=>{
+    const p=document.getElementById(panes[k]);
+    if(p) p.style.display = (k===tab) ? (k==='tables'?'grid':'block') : 'none';
+    const b=document.getElementById(tabs[k]);
+    if(b){
+      const on=(k===tab);
+      b.style.borderBottom=on?'2px solid #1e3a5f':'2px solid transparent';
+      b.style.fontWeight=on?'700':'400';
+      b.style.color=on?'':'var(--t3)';
+    }
+  });
+  if(tab==='rels') loadRelationships();
+  if(tab==='query') loadQueryBuilder();
+}
+// ── Measures across the model (Stage 4) ────────────────────────────────────
+// Pick a base table, a field to group by, and an aggregation. Fields from
+// related tables appear alongside the base table's own, so a measure can span
+// a relationship without anyone writing SQL.
+let _queryFields=[];
+function loadQueryBuilder(){
+  const pane=document.getElementById('model-pane-query');
+  if(!_modelTables.length){ pane.innerHTML='<div style="padding:10px;font-size:12px;color:var(--t3)">Open the Tables tab first.</div>'; return; }
+  const tableOpts=_modelTables.map(t=>`<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
+  pane.innerHTML=`
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:#faf8fd;border:1px solid #e2dcf0;border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:12px">
+      <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">From</span>
+      <select id="q-table" onchange="loadQueryFields()" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">${tableOpts}</select>
+      <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Group by</span>
+      <select id="q-group" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px;max-width:230px"></select>
+      <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Measure</span>
+      <select id="q-agg" onchange="qAggChanged()" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+        <option value="count">Count of rows</option>
+        <option value="sum">Sum</option><option value="avg">Average</option>
+        <option value="min">Min</option><option value="max">Max</option>
+      </select>
+      <select id="q-agg-col" style="display:none;padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px;max-width:230px"></select>
+      <button type="button" class="btn btn-green btn-sm" onclick="runModelQuery()">\u25b6 Run</button>
+      <span id="q-status" style="font-size:11px;color:var(--t3);flex-basis:100%"></span>
+    </div>
+    <div id="q-result" style="border:1px solid var(--border);border-radius:6px;overflow:auto;max-height:46vh"></div>`;
+  loadQueryFields();
+}
+function loadQueryFields(){
+  const t=document.getElementById('q-table').value;
+  fetch('/api/model/query_fields?table='+encodeURIComponent(t)).then(r=>r.json()).then(d=>{
+    if(!d.ok) return;
+    _queryFields=d.fields||[];
+    const g=document.getElementById('q-group'), a=document.getElementById('q-agg-col');
+    g.innerHTML=_queryFields.map(f=>`<option value="${esc(f.ref)}">${esc(f.label)}${f.source!==t?'':''}</option>`).join('');
+    // Only numeric-ish fields make sense to sum or average — but the type is
+    // whatever was set on the Tables tab, which is exactly why setting types
+    // there matters.
+    const nums=_queryFields.filter(f=>f.type==='integer'||f.type==='number');
+    a.innerHTML=nums.length ? nums.map(f=>`<option value="${esc(f.ref)}">${esc(f.label)}</option>`).join('')
+                            : '<option value="">(no numeric columns — set a column\u2019s type on the Tables tab)</option>';
+    const st=document.getElementById('q-status');
+    if(st) st.textContent=(d.related||[]).length
+      ? 'Fields from related tables are included: '+d.related.join(', ')
+      : 'No relationships defined from this table yet \u2014 only its own fields are available.';
+  }).catch(()=>{});
+}
+function qAggChanged(){
+  const agg=document.getElementById('q-agg').value;
+  document.getElementById('q-agg-col').style.display=(agg==='count')?'none':'inline-block';
+}
+function runModelQuery(){
+  const st=document.getElementById('q-status'), res=document.getElementById('q-result');
+  const body={table:document.getElementById('q-table').value,
+              group_by:document.getElementById('q-group').value,
+              agg:document.getElementById('q-agg').value,
+              agg_column:document.getElementById('q-agg-col').value};
+  st.textContent='Running\u2026'; st.style.color='var(--t3)';
+  res.innerHTML='';
+  fetch('/api/model/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ st.textContent='\u26a0 '+(d.error||'Query failed'); st.style.color='#c0392b'; return; }
+      st.textContent=d.note ? '\u26a0 '+d.note : ('\u2713 '+d.row_labels.length+' group(s)');
+      st.style.color=d.note ? '#c0392b' : 'var(--green)';
+      const max=Math.max(1, ...d.data.map(v=>Math.abs(Number(v)||0)));
+      res.innerHTML='<table style="border-collapse:collapse;font-size:12px;width:100%"><thead><tr>'+
+        `<th style="position:sticky;top:0;background:#f5f5f7;border-bottom:1px solid var(--border);padding:5px 8px;text-align:left">${esc(d.row_field_label)}</th>`+
+        `<th style="position:sticky;top:0;background:#f5f5f7;border-bottom:1px solid var(--border);padding:5px 8px;text-align:right">${esc(d.measure_label)}</th>`+
+        '<th style="position:sticky;top:0;background:#f5f5f7;border-bottom:1px solid var(--border);padding:5px 8px;width:40%"></th></tr></thead><tbody>'+
+        d.row_labels.map((l,i)=>{
+          const v=Number(d.data[i])||0, pct=Math.round(100*Math.abs(v)/max);
+          return `<tr><td style="border-bottom:1px solid #eee;padding:4px 8px">${esc(l)}</td>
+            <td style="border-bottom:1px solid #eee;padding:4px 8px;text-align:right">${v.toLocaleString()}</td>
+            <td style="border-bottom:1px solid #eee;padding:4px 8px"><div style="height:9px;border-radius:3px;background:#1e3a5f;width:${pct}%"></div></td></tr>`;
+        }).join('')+'</tbody></table>';
+    }).catch(e=>{ st.textContent='\u26a0 '+e.message; st.style.color='#c0392b'; });
 }
 let _modelRelTables=[];
 function loadRelationships(){
@@ -6442,6 +6527,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.23", date:"2026-07", title:"Data Model \u2014 Stage 4: measures across the model",
+    changes:[
+      "New Measures tab in the Data Model browser. Pick a table, a field to group by, and an aggregation (count, sum, average, min, max) \u2014 and get results back, with a bar alongside each row to make the shape obvious.",
+      "Fields from related tables appear in the same list as the base table\u2019s own, so a measure can span a relationship without anyone writing SQL. It says which related tables are contributing, or tells you when none are joined yet.",
+      "Calculated columns and the types set on the Tables tab are honoured throughout \u2014 only columns typed as integer or number can be summed or averaged, which is the practical reason setting types matters. Dates group by day rather than by exact timestamp, which would otherwise give one group per row.",
+      "Joins look up one matching row on the far side rather than multiplying rows out, so a count of calls stays a count of calls even when grouping by a field from a related table.",
+      "Aggregation runs over a bounded 20,000-row fetch, and if a table exceeds that the result says so plainly instead of quietly reporting a partial total.",
+      "Honest scope note: this is a working query layer over the model, reachable from the Measures tab. It is NOT yet wired into the report canvas \u2014 canvas visuals still use the original call-log engine. That last step means changing how every existing visual runs, so it deserves its own release rather than being bolted on at the end of this one.",
+    ]},
   { v:"2.22", date:"2026-07", title:"Data Model \u2014 Stage 3: relationships between tables",
     changes:[
       "New Relationships tab in the Data Model browser. Define how tables join \u2014 e.g. call_log.reg_number to follow_ups.reg_number, or call_log.caller to users.name \u2014 and they\u2019re saved with the model.",
