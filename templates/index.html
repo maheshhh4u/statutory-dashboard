@@ -1207,7 +1207,7 @@ select:focus{outline:none;border-color:var(--green)}
         </div>
       </div>
 
-      <div id="cr-builder-grid" style="display:grid;grid-template-columns:1fr 240px 280px 200px;gap:14px;align-items:start">
+      <div id="cr-builder-grid" style="display:grid;grid-template-columns:minmax(0,1fr) 240px 280px 200px;gap:14px;align-items:start">
         <!-- COLUMN 1: canvas — the dominant area, Power BI style. Deliberately
              NOT stretched to fill this column's available width: GridStack
              computes each grid cell's pixel size as (its own width) ÷ (column
@@ -1218,7 +1218,7 @@ select:focus{outline:none;border-color:var(--green)}
              changes when it's deliberately resized — collapsing a panel now
              only changes how much blank canvas space is available, exactly
              as requested. -->
-        <div>
+        <div style="min-width:0">
           <div id="cr-add-visual-toolbar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
             <button class="btn btn-green btn-sm" onclick="crAddVisual()">➕ Add Visual</button>
             <label style="font-size:11.5px;display:flex;align-items:center;gap:4px;color:var(--t3)">Page Size
@@ -1230,8 +1230,8 @@ select:focus{outline:none;border-color:var(--green)}
             </label>
             <span id="cr-selected-visual-label" style="font-size:12px;color:var(--t3)">No visual selected — add one, or click an existing visual below</span>
           </div>
-          <div style="overflow:auto;padding-bottom:4px;max-height:calc(100vh - 24px)">
-            <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;width:1280px;height:720px"></div>
+          <div style="overflow:auto;padding-bottom:4px;max-height:calc(100vh - 24px);min-width:0">
+            <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;width:1280px;height:720px;flex-shrink:0"></div>
           </div>
           <div id="cr-page-tabs" style="display:flex;align-items:flex-end;gap:4px;margin-top:6px;flex-wrap:wrap"></div>
         </div>
@@ -1265,22 +1265,6 @@ select:focus{outline:none;border-color:var(--green)}
           <label id="cr-combo-secondary-axis-wrap" style="display:none;font-size:11.5px;align-items:center;gap:5px;margin-bottom:10px"><input type="checkbox" id="cr-combo-secondary-axis" onchange="crPreviewFormatChanges()"> Secondary axis for Line (own scale on the right, separate from the columns)</label>
 
           <label style="font-size:11.5px;display:flex;align-items:center;gap:5px;margin-bottom:10px"><input type="checkbox" id="cr-tile-titlebar" checked> Show tile title bar (name + drag handle)</label>
-
-          <div id="cr-slicer-config" style="display:none;margin-bottom:10px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px">
-            <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Slicer Field</div>
-            <div id="cr-well-slicer_field" data-well="slicer_field" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:38px;border:2px dashed #eee0c9;border-radius:6px;padding:6px 10px;background:#fffaf0;display:flex;align-items:center;gap:6px;margin-bottom:8px">
-              <span style="font-size:10px;font-weight:700;color:#8a6d1a;text-transform:uppercase;flex-shrink:0">Field</span>
-              <span id="cr-well-slicer_field-content" style="color:var(--t3);font-size:11.5px">Drag a field here, or pick below</span>
-            </div>
-            <div style="display:flex;flex-direction:column;gap:8px">
-              <select id="cr-slicer-field" onchange="crSlicerFieldSelectChanged()" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
-              <label id="cr-slicer-multi-wrap" style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-slicer-multi" checked> Allow multiple selections</label>
-              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Label
-                <input id="cr-slicer-title" placeholder="optional, defaults to the field name" style="flex:1;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
-              </label>
-            </div>
-            <p style="font-size:10.5px;color:var(--t3);margin:6px 0 0">A slicer filters every other visual on the canvas live as it's used — including in the read-only view, not just while editing. It ignores Measures/Fields, Formatting, and its own Filters section (Drag & Drop column).</p>
-          </div>
 
           <div id="cr-fmt-section" style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Formatting</div>
           <div id="cr-fmt-box" style="display:flex;flex-direction:column;gap:8px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px">
@@ -1338,6 +1322,27 @@ select:focus{outline:none;border-color:var(--green)}
             <span style="font-size:16px">🖱️</span>
           </div>
           <div id="cr-panel-dragdrop-body" style="padding:10px 12px">
+          <!-- Slicer Field belongs in THIS column, not Format: it's what the
+               slicer is built from (the data question), exactly like
+               Values/Rows/Columns are for a chart — Format is for how a
+               visual looks, not what it's made of. It was originally put in
+               the Format column by mistake, which is why selecting a Slicer
+               left the Drag & Drop column showing nothing but the buttons. -->
+          <div id="cr-slicer-config" style="display:none;margin-bottom:10px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px">
+            <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Slicer Field</div>
+            <div id="cr-well-slicer_field" data-well="slicer_field" ondragover="crWellDragOver(event)" ondrop="crWellDrop(event)" style="min-height:38px;border:2px dashed #eee0c9;border-radius:6px;padding:6px 10px;background:#fffaf0;display:flex;align-items:center;gap:6px;margin-bottom:8px">
+              <span style="font-size:10px;font-weight:700;color:#8a6d1a;text-transform:uppercase;flex-shrink:0">Field</span>
+              <span id="cr-well-slicer_field-content" style="color:var(--t3);font-size:11.5px">Drag a field here, or pick below</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <select id="cr-slicer-field" onchange="crSlicerFieldSelectChanged()" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
+              <label id="cr-slicer-multi-wrap" style="font-size:11.5px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="cr-slicer-multi" checked> Allow multiple selections</label>
+              <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">Label
+                <input id="cr-slicer-title" placeholder="optional, defaults to the field name" style="flex:1;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+              </label>
+            </div>
+            <p style="font-size:10.5px;color:var(--t3);margin:6px 0 0">A slicer filters every other visual on the canvas live as it's used — including in the read-only view, not just while editing. It ignores Measures, Formatting, and its own Filters section.</p>
+          </div>
           <div id="cr-measure-builder" style="background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
             <label style="font-size:11.5px;font-weight:700;display:flex;align-items:center;gap:5px"><input type="checkbox" id="cr-cm-enable" onchange="crToggleCustomMeasureBuilder()"> 🧮 Custom Measure</label>
             <div id="cr-cm-body" style="display:none;margin-top:8px">
@@ -3150,9 +3155,15 @@ function crSetBuilderMode(mode){
 function crUpdateBuilderGridColumns(){
   const gridWrap=document.getElementById('cr-builder-grid');
   if(!gridWrap) return;
-  if(_crBuilderMode!=='edit'){ gridWrap.style.gridTemplateColumns='1fr'; return; }
+  // minmax(0,1fr) rather than a plain 1fr: a bare "1fr" track has an
+  // implicit min-content floor, so a visual with wide content (long axis
+  // labels, a big table) forces the whole canvas column wider — which is
+  // exactly the "canvas expands and shrinks based on the size of the
+  // visuals" behaviour reported. minmax(0,…) removes that floor so the
+  // canvas stays the fixed Page Size width and scrolls instead.
+  if(_crBuilderMode!=='edit'){ gridWrap.style.gridTemplateColumns='minmax(0,1fr)'; return; }
   const w=(col)=> _crColCollapsed[col] ? '40px' : CR_COL_WIDTHS[col]+'px';
-  gridWrap.style.gridTemplateColumns=`1fr ${w('format')} ${w('dragdrop')} ${w('fields')}`;
+  gridWrap.style.gridTemplateColumns=`minmax(0,1fr) ${w('format')} ${w('dragdrop')} ${w('fields')}`;
 }
 function crToggleColumnCollapse(col){
   _crColCollapsed[col]=!_crColCollapsed[col];
@@ -5494,6 +5505,11 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.07", date:"2026-07", title:"Slicer Field moved to the Drag & Drop column where it belongs, and the canvas really is a fixed width now",
+    changes:[
+      "Selecting a Slicer left the Drag & Drop column showing nothing but buttons \u2014 because the Slicer Field config had been put in the Format column by mistake. Format is for how a visual looks; Drag & Drop is for what it's built from, which is exactly what a slicer's field is (its equivalent of Values/Rows). It now sits at the top of Drag & Drop, so selecting a Slicer shows its field picker right where every other visual type shows its data configuration \u2014 both the drag-and-drop well and the dropdown, whichever you prefer.",
+      "Fixed the canvas still stretching horizontally: the canvas column was sized with a plain \u201c1fr\u201d, which carries an implicit \u201cnever narrower than its content\u201d floor \u2014 so a visual with wide content (long axis labels, a big table) quietly forced the whole canvas wider, regardless of the fixed Page Size width. Switched to minmax(0,1fr), which removes that floor. The canvas now genuinely holds the Page Size dimensions and scrolls when content exceeds them, rather than growing to fit.",
+    ]},
   { v:"2.06", date:"2026-07", title:"Custom Report: multiple renameable pages (tabs), and the actual fix for Slicer Field",
     changes:[
       "Found the real Slicer Field bug: a function (crResetCustomMeasureBuilder) was unconditionally re-showing the Values well every time it ran \u2014 including right after Slicer mode had correctly hidden it moments earlier, in the same click. Fixed to respect whichever chart type is actually selected instead of always showing Values.",
