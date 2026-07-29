@@ -1229,9 +1229,26 @@ select:focus{outline:none;border-color:var(--green)}
               </select>
             </label>
             <span id="cr-selected-visual-label" style="font-size:12px;color:var(--t3)">No visual selected — add one, or click an existing visual below</span>
+            <label style="font-size:11.5px;display:flex;align-items:center;gap:4px;color:var(--t3);margin-left:auto">Zoom
+              <select id="cr-canvas-zoom" onchange="crSetCanvasZoom(this.value)" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+                <option value="fit">Fit to page</option>
+                <option value="1">100%</option>
+                <option value="0.75">75%</option>
+                <option value="0.5">50%</option>
+              </select>
+            </label>
           </div>
-          <div style="overflow:auto;padding-bottom:4px;max-height:calc(100vh - 24px);min-width:0">
-            <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;width:1280px;height:720px;flex-shrink:0"></div>
+          <!-- Two nested wrappers so the canvas can be visually scaled to fit
+               without changing its real dimensions: #cr-canvas-viewport is
+               what the layout sees (sized to the SCALED canvas, so no dead
+               space or scrollbars), and #cr-canvas-scaler carries the CSS
+               transform. The grid itself stays at its true Page Size in px,
+               so every stored x/y/w/h stays in exactly the same units and
+               already-saved reports are unaffected. -->
+          <div id="cr-canvas-viewport" style="min-width:0;overflow:hidden">
+            <div id="cr-canvas-scaler" style="transform-origin:top left">
+              <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;width:1280px;height:720px"></div>
+            </div>
           </div>
           <div id="cr-page-tabs" style="display:flex;align-items:flex-end;gap:4px;margin-top:6px;flex-wrap:wrap"></div>
         </div>
@@ -1245,8 +1262,9 @@ select:focus{outline:none;border-color:var(--green)}
             <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">🎨 Format</span>
             <span style="font-size:13px;color:var(--t3)" title="Collapse">◂</span>
           </div>
-          <div id="cr-panel-format-collapsed" onclick="crToggleColumnCollapse('format')" title="Expand Format" style="display:none;flex-direction:column;align-items:center;padding:12px 0;cursor:pointer">
-            <span style="font-size:16px">🎨</span>
+          <div id="cr-panel-format-collapsed" onclick="crToggleColumnCollapse('format')" title="Expand Format" style="display:none;flex-direction:column;align-items:center;gap:10px;padding:10px 0;cursor:pointer;height:100%;min-height:220px">
+            <span style="font-size:13px;color:var(--t3)">›</span>
+            <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;writing-mode:vertical-rl;white-space:nowrap">🎨 Format</span>
           </div>
           <div id="cr-panel-format-body" style="padding:10px 12px">
           <div id="cr-ai-visual" style="background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
@@ -1318,8 +1336,9 @@ select:focus{outline:none;border-color:var(--green)}
             <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">🖱️ Drag &amp; Drop</span>
             <span style="font-size:13px;color:var(--t3)" title="Collapse">◂</span>
           </div>
-          <div id="cr-panel-dragdrop-collapsed" onclick="crToggleColumnCollapse('dragdrop')" title="Expand Drag &amp; Drop" style="display:none;flex-direction:column;align-items:center;padding:12px 0;cursor:pointer">
-            <span style="font-size:16px">🖱️</span>
+          <div id="cr-panel-dragdrop-collapsed" onclick="crToggleColumnCollapse('dragdrop')" title="Expand Drag &amp; Drop" style="display:none;flex-direction:column;align-items:center;gap:10px;padding:10px 0;cursor:pointer;height:100%;min-height:220px">
+            <span style="font-size:13px;color:var(--t3)">›</span>
+            <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;writing-mode:vertical-rl;white-space:nowrap">🖱️ Drag &amp; Drop</span>
           </div>
           <div id="cr-panel-dragdrop-body" style="padding:10px 12px">
           <!-- Slicer Field belongs in THIS column, not Format: it's what the
@@ -1425,8 +1444,9 @@ select:focus{outline:none;border-color:var(--green)}
             <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">📏 Fields</span>
             <span style="font-size:13px;color:var(--t3)" title="Collapse">◂</span>
           </div>
-          <div id="cr-panel-fields-collapsed" onclick="crToggleColumnCollapse('fields')" title="Expand Fields" style="display:none;flex-direction:column;align-items:center;padding:12px 0;cursor:pointer">
-            <span style="font-size:16px">📏</span>
+          <div id="cr-panel-fields-collapsed" onclick="crToggleColumnCollapse('fields')" title="Expand Fields" style="display:none;flex-direction:column;align-items:center;gap:10px;padding:10px 0;cursor:pointer;height:100%;min-height:220px">
+            <span style="font-size:13px;color:var(--t3)">›</span>
+            <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;writing-mode:vertical-rl;white-space:nowrap">📏 Fields</span>
           </div>
           <div id="cr-panel-fields-body" style="padding:10px 12px">
           <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">📏 Measures</div>
@@ -2936,6 +2956,43 @@ function initCustomReport(){
   renderCrReportFiltersList();
   loadCustomReportTiles();
 }
+let _crCanvasZoom='fit';   // 'fit' (Power BI's default — scale so the whole page is visible) or a fixed scale like '1'
+function crSetCanvasZoom(mode){
+  _crCanvasZoom=mode;
+  const sel=document.getElementById('cr-canvas-zoom');
+  if(sel) sel.value=mode;
+  crApplyCanvasScale();
+}
+// Scales the canvas visually so the entire page is always on screen, the way
+// Power BI's "Fit to page" does, instead of making you scroll to reach the
+// right-hand edge. Only a CSS transform — the grid keeps its true pixel size
+// and its stored coordinates, so nothing about saved layouts changes.
+function crApplyCanvasScale(){
+  const viewport=document.getElementById('cr-canvas-viewport');
+  const scaler=document.getElementById('cr-canvas-scaler');
+  const canvas=document.getElementById('cr-gridstack');
+  if(!viewport || !scaler || !canvas) return;
+  const size=CR_PAGE_SIZES[_crPageSize]||CR_PAGE_SIZES['16:9'];
+  // The grid can be taller than the page when a saved report needs the extra
+  // rows (see crComputeMaxRow) — scale against its real height so nothing
+  // ends up clipped.
+  const realH=Math.max(size.h, canvas.offsetHeight||size.h);
+  let scale;
+  if(_crCanvasZoom==='fit'){
+    const availW=viewport.clientWidth||size.w;
+    // Leave a little vertical room for the toolbar and page tabs.
+    const availH=Math.max(240, window.innerHeight-200);
+    scale=Math.min(availW/size.w, availH/realH, 1);  // never enlarge past 100%
+  } else {
+    scale=parseFloat(_crCanvasZoom)||1;
+  }
+  if(!isFinite(scale) || scale<=0) scale=1;
+  scaler.style.transform='scale('+scale+')';
+  // Size the viewport to the SCALED canvas so the surrounding layout doesn't
+  // reserve space for the unscaled size (a transform doesn't affect layout).
+  viewport.style.height=(realH*scale)+'px';
+  viewport.style.width=(size.w*scale)+'px';
+}
 function crSetPageSize(preset){
   const size=CR_PAGE_SIZES[preset] || CR_PAGE_SIZES['16:9'];
   _crPageSize = CR_PAGE_SIZES[preset] ? preset : '16:9';
@@ -2944,6 +3001,7 @@ function crSetPageSize(preset){
   const sel=document.getElementById('cr-page-size');
   if(sel) sel.value=_crPageSize;
   if(_crGrid) _crGrid.opts.maxRow=crComputeMaxRow(crLayoutRequiredRows(_crGrid.save(false)));
+  crApplyCanvasScale();
 }
 // maxRow is what stops the canvas growing forever (v2.05) — but GridStack
 // enforces it by silently REFUSING to add any widget that would fall past
@@ -3029,7 +3087,13 @@ function crLoadPageSnapshot(id){
     if(_crVisuals[vid].isSlicer) crRenderSlicerVisual(vid); else crRenderVisual(vid);
   });
   renderCrPageTabs();
+  crApplyCanvasScale();  // grid height may have changed now the widgets are in
 }
+// Keep "Fit to page" honest as the browser window is resized.
+window.addEventListener('resize', function(){
+  const build=document.getElementById('cr-view-builder');
+  if(build && build.style.display!=='none') crApplyCanvasScale();
+});
 function crSwitchToPage(id){
   if(id===_crActivePageId) return;
   crSnapshotCurrentPage();
@@ -3181,6 +3245,10 @@ function crUpdateBuilderGridColumns(){
   if(_crBuilderMode!=='edit'){ gridWrap.style.gridTemplateColumns='minmax(0,1fr)'; return; }
   const w=(col)=> _crColCollapsed[col] ? '40px' : CR_COL_WIDTHS[col]+'px';
   gridWrap.style.gridTemplateColumns=`minmax(0,1fr) ${w('format')} ${w('dragdrop')} ${w('fields')}`;
+  // Collapsing/expanding a panel changes how much width the canvas has, so
+  // the fit-to-page scale needs recomputing. Deferred a frame so the browser
+  // has applied the new track widths before we measure them.
+  requestAnimationFrame(crApplyCanvasScale);
 }
 function crToggleColumnCollapse(col){
   _crColCollapsed[col]=!_crColCollapsed[col];
@@ -5522,6 +5590,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.09", date:"2026-07", title:"Canvas now fits the screen like Power BI, and the side panels collapse the way Power BI's do",
+    changes:[
+      "The whole canvas is visible at once now, no horizontal scrollbar \u2014 it scales to fit the available space, exactly like Power BI's \"Fit to page\". A Zoom control next to Page Size lets you switch between Fit to page (default), 100%, 75%, and 50% if you'd rather work at a fixed magnification.",
+      "This is purely a visual scale \u2014 the canvas keeps its true Page Size in pixels underneath, so every visual's stored position and size is completely unchanged and existing saved reports are unaffected.",
+      "The fit recalculates automatically when you resize the browser, collapse or expand a side panel, or switch Page Size, so the full page stays in view.",
+      "Collapsed side panels now behave like Power BI Desktop's panes: a full-height narrow strip down the side with the panel name running vertically and a \u203a chevron, instead of shrinking to a small icon floating at the top. Click anywhere on the strip to expand it again.",
+    ]},
   { v:"2.08", date:"2026-07", title:"Fix: saved reports appearing empty — my v2.05 canvas-height cap was silently dropping visuals",
     changes:[
       "My fault, and I'm sorry for the scare. To stop the canvas growing taller forever (v2.05), I capped the grid at however many rows fit the page height \u2014 for a 16:9 page that's only 9 rows. GridStack enforces that cap by refusing to add any visual that would sit past it, so opening a report whose visuals were positioned lower down silently dropped them, and the report looked empty.",
