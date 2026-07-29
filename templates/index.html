@@ -1184,6 +1184,28 @@ select:focus{outline:none;border-color:var(--green)}
 
     <!-- BUILDER VIEW: the drag-and-drop canvas, opened via "+ Create New Report" or editing a tile -->
     <div id="cr-view-builder" style="display:none">
+      <!-- Menu bar. Everything the builder can do is reachable from here, so
+           nothing depends on spotting a small icon somewhere on the page.
+           Items that don't apply right now are disabled rather than hidden,
+           so the menus stay in the same place every time. -->
+      <div id="cr-menubar" style="display:flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:6px;background:#fff;padding:2px 4px;margin-bottom:10px;position:relative;z-index:50">
+        <div class="cr-menu" data-menu="file" style="position:relative">
+          <button type="button" onclick="crToggleMenu('file')" class="cr-menu-btn" style="background:none;border:none;font-size:12.5px;padding:5px 10px;cursor:pointer;border-radius:4px">File</button>
+          <div id="cr-menu-file" class="cr-menu-panel" style="display:none;position:absolute;top:100%;left:0;min-width:230px;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.12);padding:4px;z-index:60"></div>
+        </div>
+        <div class="cr-menu" data-menu="edit" style="position:relative">
+          <button type="button" onclick="crToggleMenu('edit')" class="cr-menu-btn" style="background:none;border:none;font-size:12.5px;padding:5px 10px;cursor:pointer;border-radius:4px">Edit</button>
+          <div id="cr-menu-edit" class="cr-menu-panel" style="display:none;position:absolute;top:100%;left:0;min-width:250px;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.12);padding:4px;z-index:60"></div>
+        </div>
+        <div class="cr-menu" data-menu="insert" style="position:relative">
+          <button type="button" onclick="crToggleMenu('insert')" class="cr-menu-btn" style="background:none;border:none;font-size:12.5px;padding:5px 10px;cursor:pointer;border-radius:4px">Insert</button>
+          <div id="cr-menu-insert" class="cr-menu-panel" style="display:none;position:absolute;top:100%;left:0;min-width:230px;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.12);padding:4px;z-index:60"></div>
+        </div>
+        <div class="cr-menu" data-menu="view" style="position:relative">
+          <button type="button" onclick="crToggleMenu('view')" class="cr-menu-btn" style="background:none;border:none;font-size:12.5px;padding:5px 10px;cursor:pointer;border-radius:4px">View</button>
+          <div id="cr-menu-view" class="cr-menu-panel" style="display:none;position:absolute;top:100%;left:0;min-width:250px;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.12);padding:4px;z-index:60"></div>
+        </div>
+      </div>
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
         <button class="btn btn-outline btn-sm" onclick="crBackToGallery()">← Back to Reports</button>
         <div id="cr-builder-title-view" style="display:none;font-size:15px;font-weight:700;color:#1e3a5f"></div>
@@ -1231,6 +1253,8 @@ select:focus{outline:none;border-color:var(--green)}
         <div id="cr-canvas-col" style="min-width:0;grid-column:1">
           <div id="cr-add-visual-toolbar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
             <button class="btn btn-green btn-sm" onclick="crAddVisual()">➕ Add Visual</button>
+            <button type="button" id="cr-undo-btn" onclick="crUndo()" title="Undo (Ctrl+Z)" disabled style="opacity:.4;width:28px;height:26px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">↶</button>
+            <button type="button" id="cr-redo-btn" onclick="crRedo()" title="Redo (Ctrl+Y)" disabled style="opacity:.4;width:28px;height:26px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">↷</button>
             <label style="font-size:11.5px;display:flex;align-items:center;gap:4px;color:var(--t3)">Page Size
               <select id="cr-page-size" onchange="crSetPageSize(this.value)" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
                 <option value="16:9">16:9 (1280 × 720)</option>
@@ -1266,7 +1290,7 @@ select:focus{outline:none;border-color:var(--green)}
                so every stored x/y/w/h stays in exactly the same units and
                already-saved reports are unaffected. -->
           <div id="cr-canvas-viewport" style="min-width:0;overflow:hidden">
-            <div id="cr-canvas-scaler" style="transform-origin:top left">
+            <div id="cr-canvas-scaler">
               <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;width:1280px;height:720px"></div>
             </div>
           </div>
@@ -3087,8 +3111,8 @@ function crNudgeZoom(dir){
 // The scale currently applied to the canvas, read back from the transform.
 function crCurrentScale(){
   const scaler=document.getElementById('cr-canvas-scaler');
-  const m=scaler && /scale\(([\d.]+)\)/.exec(scaler.style.transform||'');
-  return m ? parseFloat(m[1]) : 1;
+  const z=scaler && parseFloat(scaler.style.zoom);
+  return (z && isFinite(z)) ? z : 1;
 }
 function crSetCanvasZoom(mode){
   _crCanvasZoom=mode;
@@ -3135,16 +3159,19 @@ function crApplyCanvasScale(){
     scale=parseFloat(_crCanvasZoom)||1;
   }
   if(!isFinite(scale) || scale<=0) scale=1;
-  scaler.style.transform='scale('+scale+')';
-  // Size the viewport to the SCALED page (a transform doesn't affect layout,
-  // so without this the surrounding page would reserve the unscaled size).
-  // Fixed to the page dimensions, so this box never moves with content.
-  viewport.style.width=(size.w*scale)+'px';
-  // Ceil + 1px of slack: the scaled height is fractional, and a sub-pixel
-  // overflow was enough to make the browser show a scrollbar even though the
-  // page fitted. Letter is genuinely taller than the space available, so it's
-  // the one size that legitimately scrolls.
-  viewport.style.height=(Math.ceil(size.h*scale)+1)+'px';
+  // CSS zoom, NOT transform:scale. A transform only changes how the canvas is
+  // PAINTED — the element still occupies its unscaled layout box, and pointer
+  // coordinates during a drag aren't scaled to match, so GridStack's hit
+  // maths was off by the zoom factor: visuals didn't track the cursor and
+  // landed on cells that felt arbitrary ("sticks to some positions, can't
+  // move it freely"). zoom scales the actual layout, so element rectangles
+  // and mouse coordinates stay in the same space and dragging is accurate at
+  // any zoom level.
+  scaler.style.zoom=scale;
+  // With zoom the element genuinely occupies its scaled size, so the viewport
+  // no longer needs a hand-computed box — just cap it so a tall page scrolls.
+  viewport.style.width='';
+  viewport.style.height='';
   viewport.style.overflowY=(_crPageSize==='letter') ? 'auto' : 'hidden';
   const pct=document.getElementById('cr-zoom-pct');
   if(pct) pct.textContent=Math.round(scale*100)+'%';
@@ -3219,21 +3246,149 @@ function crSnapshotCurrentPage(){
 // crSnapshotCurrentPage. Reuses the exact same widget-creation path
 // (crAddWidgetWithHtml + crRenderVisual/crRenderSlicerVisual) every other
 // "load visuals onto the canvas" flow already uses.
-function crLoadPageSnapshot(id){
+// ── Menu bar ───────────────────────────────────────────────────────────────
+// Menus are rebuilt each time they're opened so enabled/disabled state and
+// the current zoom / page size always reflect reality.
+const CR_MENUS={
+  file: ()=>[
+    {label:'\u2190 Back to Reports', fn:'crBackToGallery()'},
+    {label:'\u{1F4BE} Save Report', fn:'saveCustomReportCanvas()', disabled:_crBuilderMode!=='edit'},
+    {sep:true},
+    {label:'\u270F\uFE0F Edit this report', fn:'crEnterEditMode()', disabled:_crBuilderMode==='edit'},
+  ],
+  edit: ()=>[
+    {label:'\u21B6 Undo', hint:'Ctrl+Z', fn:'crUndo()', disabled:_crBuilderMode!=='edit' || !_crUndo.length},
+    {label:'\u21B7 Redo', hint:'Ctrl+Y', fn:'crRedo()', disabled:_crBuilderMode!=='edit' || !_crRedo.length},
+    {sep:true},
+    {label:'\u29C9 Duplicate visual', fn:'crDuplicateSelectedVisual()', disabled:!_crSelectedVisualId},
+    {label:'\u{1F5D1} Delete visual', hint:'Del', fn:'crRemoveSelectedVisual()', disabled:!_crSelectedVisualId},
+    {sep:true},
+    {label:'\u25B6 Apply to this visual', fn:'crApplyToSelectedVisual()', disabled:!_crSelectedVisualId},
+    {label:'\u21BB Refresh all visuals', fn:'crRefreshAllVisuals()'},
+  ],
+  insert: ()=>[
+    {label:'\u2795 Add visual', fn:'crAddVisual()', disabled:_crBuilderMode!=='edit'},
+    {label:'\u{1F5C2} Add page', fn:'crAddPage()', disabled:_crBuilderMode!=='edit'},
+    {sep:true},
+    {label:'\u270F\uFE0F Rename current page', fn:"crRenamePage(_crActivePageId)", disabled:_crBuilderMode!=='edit'},
+    {label:'\u{1F5D1} Delete current page', fn:"crDeletePage(_crActivePageId)", disabled:_crBuilderMode!=='edit' || _crPageList.length<=1},
+  ],
+  view: ()=>[
+    {label:'Zoom in', hint:'+', fn:'crNudgeZoom(1)'},
+    {label:'Zoom out', hint:'\u2212', fn:'crNudgeZoom(-1)'},
+    {label:'Fit to page', fn:"crSetCanvasZoom('fit')", check:_crCanvasZoom==='fit'},
+    {label:'100%', fn:"crSetCanvasZoom('1')", check:_crCanvasZoom==='1'},
+    {sep:true},
+    {label:'Page size: 16:9 (1280\u00d7720)', fn:"crSetPageSize('16:9')", check:_crPageSize==='16:9', disabled:_crBuilderMode!=='edit'},
+    {label:'Page size: 16:9 Large (1600\u00d7900)', fn:"crSetPageSize('16:9-lg')", check:_crPageSize==='16:9-lg', disabled:_crBuilderMode!=='edit'},
+    {label:'Page size: 4:3 (960\u00d7720)', fn:"crSetPageSize('4:3')", check:_crPageSize==='4:3', disabled:_crBuilderMode!=='edit'},
+    {label:'Page size: Letter (850\u00d71100)', fn:"crSetPageSize('letter')", check:_crPageSize==='letter', disabled:_crBuilderMode!=='edit'},
+    {sep:true},
+    {label:'Panel: Format', fn:"crToggleColumnCollapse('format')", check:!_crColCollapsed.format, disabled:_crBuilderMode!=='edit'},
+    {label:'Panel: Drag & Drop', fn:"crToggleColumnCollapse('dragdrop')", check:!_crColCollapsed.dragdrop, disabled:_crBuilderMode!=='edit'},
+    {label:'Panel: Fields', fn:"crToggleColumnCollapse('fields')", check:!_crColCollapsed.fields, disabled:_crBuilderMode!=='edit'},
+  ],
+};
+function crCloseAllMenus(){
+  document.querySelectorAll('.cr-menu-panel').forEach(p=>{ p.style.display='none'; });
+}
+function crToggleMenu(name){
+  const panel=document.getElementById('cr-menu-'+name);
+  if(!panel) return;
+  const wasOpen=panel.style.display==='block';
+  crCloseAllMenus();
+  if(wasOpen) return;
+  const items=(CR_MENUS[name]||(()=>[]))();
+  panel.innerHTML=items.map(it=>{
+    if(it.sep) return '<div style="height:1px;background:var(--border);margin:4px 6px"></div>';
+    const dis=!!it.disabled;
+    const tick=it.check ? '\u2713' : '';
+    return `<div ${dis?'':`onclick="crCloseAllMenus();${it.fn}"`}
+      style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:4px;font-size:12.5px;white-space:nowrap;${dis?'color:#bbb;cursor:default':'cursor:pointer'}"
+      ${dis?'':`onmouseover="this.style.background='#f2f4f8'" onmouseout="this.style.background='none'"`}>
+      <span style="width:12px;display:inline-block;color:#1e3a5f">${tick}</span>
+      <span style="flex:1">${it.label}</span>
+      ${it.hint?`<span style="color:#aaa;font-size:11px">${it.hint}</span>`:''}
+    </div>`;
+  }).join('');
+  panel.style.display='block';
+}
+// Clicking anywhere else closes an open menu.
+document.addEventListener('click', function(e){
+  if(!e.target.closest || !e.target.closest('.cr-menu')) crCloseAllMenus();
+});
+// ── Undo / Redo ────────────────────────────────────────────────────────────
+// Snapshot-based: before anything that changes the canvas, the whole current
+// state is captured. Simpler and far more reliable than tracking individual
+// operations, and cheap here because a page holds a handful of visuals.
+// History is per-page and resets when you switch pages or open a report.
+let _crUndo=[], _crRedo=[];
+const CR_UNDO_LIMIT=40;
+function crCaptureState(){
+  if(!_crGrid) return null;
+  return {visuals:JSON.parse(JSON.stringify(_crVisuals)), layout:_crGrid.save(false)};
+}
+function crPushUndo(){
+  const st=crCaptureState();
+  if(!st) return;
+  _crUndo.push(st);
+  if(_crUndo.length>CR_UNDO_LIMIT) _crUndo.shift();
+  _crRedo=[];            // a new action invalidates the redo branch
+  crUpdateUndoButtons();
+}
+function crResetUndo(){ _crUndo=[]; _crRedo=[]; crUpdateUndoButtons(); }
+function crUndo(){
+  if(!_crUndo.length) return;
+  const cur=crCaptureState();
+  const prev=_crUndo.pop();
+  if(cur) _crRedo.push(cur);
+  crRebuildCanvasFrom(prev);
+  crUpdateUndoButtons();
+}
+function crRedo(){
+  if(!_crRedo.length) return;
+  const cur=crCaptureState();
+  const next=_crRedo.pop();
+  if(cur) _crUndo.push(cur);
+  crRebuildCanvasFrom(next);
+  crUpdateUndoButtons();
+}
+function crUpdateUndoButtons(){
+  const u=document.getElementById('cr-undo-btn'), r=document.getElementById('cr-redo-btn');
+  if(u){ u.disabled=!_crUndo.length; u.style.opacity=_crUndo.length?'1':'.4'; }
+  if(r){ r.disabled=!_crRedo.length; r.style.opacity=_crRedo.length?'1':'.4'; }
+}
+// Delete removes the selected visual; Ctrl/Cmd+Z undoes, Ctrl/Cmd+Y (or
+// Ctrl/Cmd+Shift+Z) redoes. Ignored while typing in a field, so Delete in a
+// text box still deletes text rather than the visual.
+document.addEventListener('keydown', function(e){
+  const build=document.getElementById('cr-view-builder');
+  if(!build || build.style.display==='none') return;
+  if(_crBuilderMode!=='edit') return;
+  const t=e.target, tag=(t && t.tagName||'').toLowerCase();
+  if(tag==='input' || tag==='textarea' || tag==='select' || (t && t.isContentEditable)) return;
+  const ctrl=e.ctrlKey||e.metaKey;
+  if(ctrl && e.key.toLowerCase()==='z' && !e.shiftKey){ e.preventDefault(); crUndo(); return; }
+  if(ctrl && (e.key.toLowerCase()==='y' || (e.key.toLowerCase()==='z' && e.shiftKey))){ e.preventDefault(); crRedo(); return; }
+  if((e.key==='Delete'||e.key==='Backspace') && _crSelectedVisualId){
+    e.preventDefault();
+    crRemoveSelectedVisual(true);   // skip the confirm — undo covers a mistake
+  }
+});
+// Wipes the canvas and rebuilds it from a {visuals, layout} snapshot. Shared
+// by page switching and by undo/redo, so there's exactly one definition of
+// "put this state on screen".
+function crRebuildCanvasFrom(snap){
   _crGrid.removeAll();
   _crVisuals={};
   _crVisualDataCache={};
   crDeselectVisual();
-  const snap=_crPageSnapshots[id] || {visuals:{}, layout:[], pageSize:'16:9'};
-  delete _crPageSnapshots[id];  // becomes "live" again
-  _crActivePageId=id;
-  crSetPageSize(snap.pageSize||'16:9');
   // Raise the row cap (if needed) BEFORE adding anything — GridStack drops
   // widgets that don't fit within maxRow, so this must happen first or the
-  // lower visuals in a saved report are lost.
+  // lower visuals are lost.
   if(_crGrid) _crGrid.opts.maxRow=crComputeMaxRow(crLayoutRequiredRows(snap.layout));
   (snap.layout||[]).forEach(p=>{
-    const v=snap.visuals[p.id];
+    const v=(snap.visuals||{})[p.id];
     if(!v) return;
     _crVisuals[p.id]=v;
     crAddWidgetWithHtml({w:p.w||4, h:p.h||4, x:p.x, y:p.y, id:p.id}, crVisualWidgetHtml(p.id));
@@ -3244,8 +3399,16 @@ function crLoadPageSnapshot(id){
   Object.keys(_crVisuals).forEach(vid=>{
     if(_crVisuals[vid].isSlicer) crRenderSlicerVisual(vid); else crRenderVisual(vid);
   });
-  renderCrPageTabs();
   crApplyCanvasScale();  // grid height may have changed now the widgets are in
+}
+function crLoadPageSnapshot(id){
+  const snap=_crPageSnapshots[id] || {visuals:{}, layout:[], pageSize:'16:9'};
+  delete _crPageSnapshots[id];  // becomes "live" again
+  _crActivePageId=id;
+  crSetPageSize(snap.pageSize||'16:9');
+  crRebuildCanvasFrom(snap);
+  crResetUndo();          // undo history is per-page
+  renderCrPageTabs();
 }
 // Keep "Fit to page" honest as the browser window is resized.
 window.addEventListener('resize', function(){
@@ -3329,7 +3492,13 @@ function crInitGridIfNeeded(){
   // in big jumps. Because the factor is a clean ×4, layouts saved in the old
   // units convert exactly (see CR_GRID_SCALE / the migration on load) with no
   // rounding drift.
-  _crGrid=GridStack.init({column:48, cellHeight:CR_CELL_H_PX, margin:CR_CELL_MARGIN_PX, minRow:8, maxRow:crComputeMaxRow(),
+  // float:true is the important one here. By default GridStack applies
+  // "gravity": widgets are pulled up to fill any gap above them, so a visual
+  // dragged into empty space lower down springs back, and resizing one
+  // re-flows (and can shrink) the ones around it. float:true turns that off —
+  // a visual stays exactly where it's put, which is how Power BI behaves.
+  _crGrid=GridStack.init({column:48, cellHeight:CR_CELL_H_PX, margin:CR_CELL_MARGIN_PX, minRow:8,
+    float:true, maxRow:crComputeMaxRow(),
     resizable:{handles:'e, se, s, sw, w, n, ne, nw'}}, document.getElementById('cr-gridstack'));
   // Re-render a visual's chart after it's resized, so Chart.js redraws to fit
   // the new box instead of staying the old size.
@@ -3340,6 +3509,8 @@ function crInitGridIfNeeded(){
     crHideSizeBadge();
     crRefreshSizePosInputs();
   });
+  _crGrid.on('resizestart', function(){ crPushUndo(); });
+  _crGrid.on('dragstart', function(){ crPushUndo(); });
   _crGrid.on('resize', function(event, el){ crShowSizeBadge(el); crCloseSlicerDropdown(); });
   _crGrid.on('dragstop', function(event, el){ crHideSizeBadge(); crRefreshSizePosInputs(); });
   _crGrid.on('drag', function(event, el){ crCloseSlicerDropdown(); });
@@ -3622,6 +3793,7 @@ function crAddWidgetWithHtml(opts, html){
   return el;
 }
 function crAddVisual(){
+  crPushUndo();
   crInitGridIfNeeded();
   const id='v'+(++_crVisualSeq);
   _crVisuals[id]={measure:'',measureLabel:'',rows:'',rowsLabel:'',columns:'',columnsLabel:'',chart_type:'col_clustered',format:{},filters:[],showTitleBar:true};
@@ -4529,6 +4701,7 @@ function crApplyToSelectedVisual(){
     status.style.color='#c0392b';
     return;
   }
+  crPushUndo();   // validation passed — this will change the canvas
   _crVisuals[id]={
     measure:_crCanvas.values.value, measureLabel:_crCanvas.values.label, measureDef:customDef,
     measure2: isCombo ? _crCanvas.values_line.value : '', measure2Label: isCombo ? _crCanvas.values_line.label : '', measure2Def: customDef2,
@@ -4574,10 +4747,13 @@ function crApplyTitleBarVisibility(id){
   const bar=document.getElementById('cr-visual-titlebar-'+id);
   if(bar) bar.style.display = (v && v.showTitleBar===false) ? 'none' : 'flex';
 }
-function crRemoveSelectedVisual(){
+function crRemoveSelectedVisual(skipConfirm){
   const id=_crSelectedVisualId;
   if(!id) return;
-  if(!confirm('Remove this visual from the canvas?')) return;
+  // The Delete key passes skipConfirm — a confirm dialog on every keypress
+  // would be tiresome, and undo (Ctrl+Z) makes it recoverable anyway.
+  if(!skipConfirm && !confirm('Remove this visual from the canvas?')) return;
+  crPushUndo();
   const el=document.querySelector(`#cr-gridstack [gs-id="${id}"]`);
   if(el) _crGrid.removeWidget(el);
   delete _crVisuals[id];
@@ -4589,6 +4765,7 @@ function crRemoveSelectedVisual(){
 // immediately to its right — the reliable, one-click way to get two visuals
 // the same size, rather than eyeballing a manual resize.
 function crDuplicateSelectedVisual(){
+  crPushUndo();
   const id=_crSelectedVisualId;
   const status=document.getElementById('cr-result-status');
   if(!id || !_crVisuals[id]){ if(status){ status.textContent='⚠ Select a visual first.'; status.style.color='#c0392b'; } return; }
@@ -4630,6 +4807,7 @@ function renderCrMatchSizeOptions(){
   }).join('');
 }
 function crMatchSizeToSelected(){
+  crPushUndo();
   const id=_crSelectedVisualId;
   const status=document.getElementById('cr-result-status');
   const targetId=document.getElementById('cr-match-size-target').value;
@@ -5824,6 +6002,19 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.16", date:"2026-07", title:"Real fix for imprecise dragging (it was the zoom, not the grid), and a File/Edit/Insert/View menu bar",
+    changes:[
+      "The dragging problem was never gravity or grid size \u2014 it was how the canvas was being scaled to fit. CSS transform:scale only changes how the canvas is PAINTED: the element still occupies its full unscaled layout box, and mouse coordinates during a drag aren\u2019t scaled to match. So GridStack\u2019s hit maths was off by the zoom factor, and a visual didn\u2019t follow the cursor \u2014 it landed on whichever cell the mismatched maths worked out, which is exactly the \u201csticks to some positions, can\u2019t move it freely\u201d in the video. Switched to CSS zoom, which scales real layout, so element rectangles and pointer coordinates stay in the same space and dragging is accurate at any zoom.",
+      "New menu bar \u2014 File, Edit, Insert, View \u2014 across the top of the report builder. Undo and Redo live under Edit (with their shortcuts shown), which also solves not being able to find them: the toolbar buttons added last release were easy to miss.",
+      "Everything the builder can do is now reachable from the menus: save, back to reports, edit mode, undo/redo, duplicate/delete/apply, refresh all visuals, add visual, add/rename/delete page, zoom in/out/fit/100%, all four page sizes, and showing or hiding each side panel.",
+      "Menu items that don\u2019t apply right now are greyed out rather than hidden, so each item stays in the same place every time, and current settings (zoom, page size, which panels are open) show a tick.",
+    ]},
+  { v:"2.15", date:"2026-07", title:"Visuals stay where you put them, plus Undo/Redo and Delete-key removal",
+    changes:[
+      "Found the cause of \u201cvisuals stick to a position\u201d and \u201cresizing one shrinks another\u201d: GridStack applies \u201cgravity\u201d by default \u2014 widgets are pulled upward to close any gap above them, and re-flowed (sometimes shrunk) around whatever you\u2019re resizing. That\u2019s now switched off, so a visual stays exactly where you drop it, including in empty space lower down the page, and resizing one leaves its neighbours alone \u2014 the way Power BI behaves.",
+      "Undo and Redo: buttons in the toolbar, or Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z also works; \u2318 on a Mac). Covers adding, deleting, duplicating, applying changes, matching size, and every drag or resize. History holds the last 40 actions and resets when you switch page or open a different report.",
+      "Press Delete (or Backspace) with a visual selected to remove it \u2014 no confirmation prompt, since Ctrl+Z brings it straight back. Typing in a text box is unaffected.",
+    ]},
   { v:"2.14", date:"2026-07", title:"Precise vertical resizing, named visuals, tidier slicers, and zoom in the report view",
     changes:[
       "Vertical resizing is much finer: rows went from 17.5px to 8.75px \u2014 8\u00d7 the original grid rather than the 4\u00d7 of last release. Horizontal was already fine at 4\u00d7; it was specifically the vertical steps that were still jumping. Saved reports carry a marker for each axis, so whichever grid a report was saved on it converts exactly, once.",
