@@ -1201,6 +1201,10 @@ select:focus{outline:none;border-color:var(--green)}
           <button type="button" onclick="crToggleMenu('insert')" class="cr-menu-btn" style="background:none;border:none;font-size:12.5px;padding:5px 10px;cursor:pointer;border-radius:4px">Insert</button>
           <div id="cr-menu-insert" class="cr-menu-panel" style="display:none;position:absolute;top:100%;left:0;min-width:230px;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.12);padding:4px;z-index:60"></div>
         </div>
+        <div class="cr-menu" data-menu="data" style="position:relative">
+          <button type="button" onclick="crToggleMenu('data')" class="cr-menu-btn" style="background:none;border:none;font-size:12.5px;padding:5px 10px;cursor:pointer;border-radius:4px">Data</button>
+          <div id="cr-menu-data" class="cr-menu-panel" style="display:none;position:absolute;top:100%;left:0;min-width:240px;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.12);padding:4px;z-index:60"></div>
+        </div>
         <div class="cr-menu" data-menu="view" style="position:relative">
           <button type="button" onclick="crToggleMenu('view')" class="cr-menu-btn" style="background:none;border:none;font-size:12.5px;padding:5px 10px;cursor:pointer;border-radius:4px">View</button>
           <div id="cr-menu-view" class="cr-menu-panel" style="display:none;position:absolute;top:100%;left:0;min-width:250px;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.12);padding:4px;z-index:60"></div>
@@ -1530,6 +1534,29 @@ select:focus{outline:none;border-color:var(--green)}
 </section>
 
 </main>
+
+<!-- Data model browser (Stage 1: read-only view of the Turso tables) -->
+<div class="modal-bg" id="model-modal">
+  <div class="modal" style="max-width:1100px;width:94vw">
+    <h3>&#128451;&#65039; Data Model &mdash; Tables</h3>
+    <p style="font-size:12px;color:var(--t3);margin:0 0 10px">
+      Read-only view of the tables in the database, with the type of each column worked out from the data actually in it.
+      Types are inferred rather than declared &mdash; every column in this database was created as text, timestamps included &mdash;
+      which is why setting real types is the next step rather than something that already exists.
+    </p>
+    <div style="display:grid;grid-template-columns:220px minmax(0,1fr);gap:14px;align-items:start">
+      <div id="model-table-list" style="border:1px solid var(--border);border-radius:6px;max-height:60vh;overflow:auto"></div>
+      <div style="min-width:0">
+        <div id="model-columns" style="margin-bottom:10px"></div>
+        <div id="model-preview" style="border:1px solid var(--border);border-radius:6px;overflow:auto;max-height:42vh"></div>
+        <div id="model-pager" style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--t3)"></div>
+      </div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-outline btn-sm" onclick="closeModelBrowser()">Close</button>
+    </div>
+  </div>
+</div>
 
 <!-- Save search modal -->
 <div class="modal-bg" id="save-modal">
@@ -3281,6 +3308,76 @@ function crSnapshotCurrentPage(){
 // crSnapshotCurrentPage. Reuses the exact same widget-creation path
 // (crAddWidgetWithHtml + crRenderVisual/crRenderSlicerVisual) every other
 // "load visuals onto the canvas" flow already uses.
+// ── Data model browser (Stage 1) ───────────────────────────────────────────
+// Read-only. Lists the database tables, and for the selected one shows its
+// columns (with a type inferred from the data, since the declared types here
+// are all TEXT) plus a page of rows.
+let _modelTables=[], _modelCurrent=null, _modelOffset=0;
+const MODEL_PAGE=50;
+function openModelBrowser(){
+  document.getElementById('model-modal').style.display='flex';
+  const list=document.getElementById('model-table-list');
+  list.innerHTML='<div style="padding:10px;font-size:12px;color:var(--t3)">Loading…</div>';
+  document.getElementById('model-columns').innerHTML='';
+  document.getElementById('model-preview').innerHTML='';
+  document.getElementById('model-pager').innerHTML='';
+  fetch('/api/model/tables').then(r=>r.json()).then(d=>{
+    if(!d.ok){ list.innerHTML='<div style="padding:10px;font-size:12px;color:var(--red)">'+esc(d.error||'Could not load tables')+'</div>'; return; }
+    _modelTables=d.tables||[];
+    if(!_modelTables.length){ list.innerHTML='<div style="padding:10px;font-size:12px;color:var(--t3)">No tables found.</div>'; return; }
+    list.innerHTML=_modelTables.map(t=>
+      `<div class="model-tbl" data-tbl="${esc(t.name)}" onclick="selectModelTable('${esc(t.name)}')"
+         style="padding:7px 10px;font-size:12.5px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:8px">
+        <span style="overflow:hidden;text-overflow:ellipsis">${esc(t.name)}</span>
+        <span style="color:var(--t3);font-size:11px;flex-shrink:0">${t.rows.toLocaleString()}</span>
+      </div>`).join('');
+    selectModelTable(_modelTables[0].name);
+  }).catch(e=>{ list.innerHTML='<div style="padding:10px;font-size:12px;color:var(--red)">'+esc(e.message)+'</div>'; });
+}
+function closeModelBrowser(){ document.getElementById('model-modal').style.display='none'; }
+function selectModelTable(name){
+  _modelCurrent=name; _modelOffset=0;
+  document.querySelectorAll('.model-tbl').forEach(el=>{
+    const on=el.dataset.tbl===name;
+    el.style.background=on?'#eef2fa':'transparent';
+    el.style.fontWeight=on?'700':'400';
+  });
+  loadModelTablePage();
+}
+function loadModelTablePage(){
+  if(!_modelCurrent) return;
+  const prev=document.getElementById('model-preview');
+  prev.innerHTML='<div style="padding:10px;font-size:12px;color:var(--t3)">Loading…</div>';
+  fetch(`/api/model/table?table=${encodeURIComponent(_modelCurrent)}&limit=${MODEL_PAGE}&offset=${_modelOffset}`)
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ prev.innerHTML='<div style="padding:10px;font-size:12px;color:var(--red)">'+esc(d.error||'Could not load table')+'</div>'; return; }
+      const typeColor={datetime:'#6a4d99', integer:'#1d7a3a', number:'#1d7a3a', text:'#2d5a8f', empty:'#999'};
+      document.getElementById('model-columns').innerHTML=
+        `<div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:5px">${esc(d.table)} — ${d.columns.length} columns, ${d.total.toLocaleString()} rows</div>
+         <div style="display:flex;flex-wrap:wrap;gap:5px">`+
+        d.columns.map(c=>`<span title="${c.fill_pct}% of sampled rows have a value"
+           style="font-size:11.5px;border:1px solid var(--border);border-radius:12px;padding:2px 9px;background:#fff">
+           ${esc(c.name)} <span style="color:${typeColor[c.type]||'#666'};font-size:10.5px">${esc(c.type)}</span>
+           <span style="color:#bbb;font-size:10px">${c.fill_pct}%</span></span>`).join('')+'</div>';
+      prev.innerHTML=
+        '<table style="border-collapse:collapse;font-size:11.5px;width:100%"><thead><tr>'+
+        d.columns.map(c=>`<th style="position:sticky;top:0;background:#f5f5f7;border-bottom:1px solid var(--border);padding:5px 8px;text-align:left;white-space:nowrap">${esc(c.name)}</th>`).join('')+
+        '</tr></thead><tbody>'+
+        (d.rows.length ? d.rows.map(r=>'<tr>'+r.map(cell=>
+            `<td style="border-bottom:1px solid #eee;padding:4px 8px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(cell)}">${esc(cell)}</td>`).join('')+'</tr>').join('')
+          : `<tr><td colspan="${d.columns.length}" style="padding:10px;color:var(--t3)">No rows.</td></tr>`)+
+        '</tbody></table>';
+      const from=d.total ? d.offset+1 : 0, to=Math.min(d.offset+d.limit, d.total);
+      document.getElementById('model-pager').innerHTML=
+        `<button type="button" class="btn btn-outline btn-sm" ${d.offset<=0?'disabled':''} onclick="modelPage(-1)">← Prev</button>
+         <span>${from.toLocaleString()}–${to.toLocaleString()} of ${d.total.toLocaleString()}</span>
+         <button type="button" class="btn btn-outline btn-sm" ${to>=d.total?'disabled':''} onclick="modelPage(1)">Next →</button>`;
+    }).catch(e=>{ prev.innerHTML='<div style="padding:10px;font-size:12px;color:var(--red)">'+esc(e.message)+'</div>'; });
+}
+function modelPage(dir){
+  _modelOffset=Math.max(0, _modelOffset + dir*MODEL_PAGE);
+  loadModelTablePage();
+}
 // ── Menu bar ───────────────────────────────────────────────────────────────
 // Menus are rebuilt each time they're opened so enabled/disabled state and
 // the current zoom / page size always reflect reality.
@@ -3307,6 +3404,9 @@ const CR_MENUS={
     {sep:true},
     {label:'\u270F\uFE0F Rename current page', fn:"crRenamePage(_crActivePageId)", disabled:_crBuilderMode!=='edit'},
     {label:'\u{1F5D1} Delete current page', fn:"crDeletePage(_crActivePageId)", disabled:_crBuilderMode!=='edit' || _crPageList.length<=1},
+  ],
+  data: ()=>[
+    {label:'\u{1F5C3}\uFE0F Browse tables\u2026', fn:'openModelBrowser()'},
   ],
   view: ()=>[
     {label:'Zoom in', hint:'+', fn:'crNudgeZoom(1)'},
@@ -6192,6 +6292,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.20", date:"2026-07", title:"Data Model \u2014 Stage 1: browse the database tables",
+    changes:[
+      "New Data menu in the report builder \u2192 \u201cBrowse tables\u2026\u201d. Lists every reportable table with its row count; pick one to see its columns and page through the actual rows.",
+      "Each column shows a type worked out from the data in it \u2014 datetime, integer, number or text \u2014 plus how much of the sampled data is actually filled in. Worth knowing why: every column in this database was created as text, timestamps included, so the declared types are no use for reporting. That\u2019s exactly why Stage 2 (setting real types and adding calculated columns) is the next step rather than something that already works.",
+      "Read-only by design at this stage \u2014 nothing here changes any data.",
+      "Config tables (app settings, saved column presets) are hidden, since they hold plumbing rather than anything you\u2019d report on.",
+      "Built to stay within Render\u2019s memory limit: rows are paged 50 at a time and type inference samples a bounded slice rather than reading whole tables.",
+      "Note for the wider plan: this covers the Turso tables only. The charity details themselves \u2014 name, income, expenditure, area, classification \u2014 aren\u2019t stored here; they\u2019re read live from the Charity Commission files. Worth confirming with Nick whether the model needs to reach those too, as that changes the shape of the later stages.",
+    ]},
   { v:"2.19", date:"2026-07", title:"Cross-filtering: every bar is clickable now, selection dims the rest, and it's faster",
     changes:[
       "Fixed only the first bar responding to clicks. Chart.js works out which element you clicked from the canvas rectangle, but the canvas sits inside a CSS-zoomed container that Chart.js knows nothing about \u2014 so its maths was compressed toward the left edge and only the leftmost bar ever registered. The hit test is now done directly against the rendered chart elements, with the zoom divided out, so it's accurate at any zoom level. It also covers every chart type properly \u2014 bars, columns, pie and donut slices, line and area points, radar and polar.",

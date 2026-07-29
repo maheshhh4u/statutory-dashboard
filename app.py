@@ -2237,6 +2237,90 @@ def custom_report_run():
             "column_field_label": REPORT_DIMENSIONS[cols_dim]["label"],
             "note": _charity_note})
 
+# ── Data model browser (Stage 1: read-only) ────────────────────────────────
+# Config/plumbing tables are hidden: they hold app settings rather than
+# anything you'd report on, and listing them just adds noise.
+_MODEL_HIDDEN_TABLES = {"app_settings", "column_presets", "sqlite_sequence"}
+
+def _model_table_names():
+    rows = db_query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name") or []
+    return [r[0] for r in rows
+            if r[0] and not r[0].startswith("sqlite_") and r[0] not in _MODEL_HIDDEN_TABLES]
+
+def _model_infer_type(values):
+    """SQLite here is effectively untyped — every column was created TEXT, and
+    timestamps are stored as strings. The declared type is therefore useless
+    for reporting, so infer a practical one from actual values instead. This
+    is what Stage 2 (typed/calculated columns) will build on."""
+    seen = [v for v in values if v is not None and str(v).strip() != ""]
+    if not seen:
+        return "empty"
+    def is_int(v):
+        try: int(str(v).strip()); return True
+        except Exception: return False
+    def is_num(v):
+        try: float(str(v).strip()); return True
+        except Exception: return False
+    def is_dt(v):
+        t = str(v).strip()
+        for f in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try: datetime.strptime(t, f); return True
+            except Exception: pass
+        return False
+    if all(is_dt(v) for v in seen):  return "datetime"
+    if all(is_int(v) for v in seen): return "integer"
+    if all(is_num(v) for v in seen): return "number"
+    return "text"
+
+@app.route("/api/model/tables", methods=["GET"])
+def api_model_tables():
+    """Every reportable table with its row count — the left-hand list."""
+    out = []
+    for t in _model_table_names():
+        cnt = db_query(f'SELECT COUNT(*) FROM "{t}"')  # name comes from sqlite_master, not user input
+        out.append({"name": t, "rows": (cnt[0][0] if cnt else 0)})
+    return jsonify({"ok": True, "tables": out})
+
+@app.route("/api/model/table", methods=["GET"])
+def api_model_table():
+    """Columns (with inferred types and a fill rate) plus a page of rows."""
+    name = (request.args.get("table") or "").strip()
+    # Validated against the real table list rather than escaped — the table
+    # name goes into the SQL text (it can't be a bound parameter), so it must
+    # only ever be a value we produced ourselves.
+    if name not in _model_table_names():
+        return jsonify({"ok": False, "error": "Unknown table"}), 400
+    try:
+        limit = max(1, min(200, int(request.args.get("limit", 50))))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except Exception:
+        limit, offset = 50, 0
+
+    cols = [r[1] for r in (db_query(f'PRAGMA table_info("{name}")') or [])]
+    if not cols:
+        return jsonify({"ok": False, "error": "Table has no columns"}), 400
+
+    total_row = db_query(f'SELECT COUNT(*) FROM "{name}"')
+    total = total_row[0][0] if total_row else 0
+
+    # Type inference samples a bounded slice, never the whole table — these
+    # run on a 512MB instance and some tables will grow.
+    sample = db_query(f'SELECT * FROM "{name}" LIMIT 200') or []
+    col_meta = []
+    for i, c in enumerate(cols):
+        vals = [r[i] for r in sample]
+        filled = sum(1 for v in vals if v is not None and str(v).strip() != "")
+        col_meta.append({
+            "name": c,
+            "type": _model_infer_type(vals),
+            "fill_pct": round(100.0 * filled / len(vals)) if vals else 0,
+        })
+
+    rows = db_query(f'SELECT * FROM "{name}" LIMIT ? OFFSET ?', (limit, offset)) or []
+    return jsonify({"ok": True, "table": name, "columns": col_meta,
+                    "rows": [[("" if v is None else str(v)) for v in r] for r in rows],
+                    "total": total, "limit": limit, "offset": offset})
+
 @app.route("/api/custom_report/fields", methods=["GET"])
 def custom_report_fields():
     # Outcome/Stage options come from the same admin-editable dropdown lists
