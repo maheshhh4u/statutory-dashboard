@@ -186,6 +186,13 @@ def db_init():
             data_type TEXT,
             created_at TEXT
         )""")
+        # Relationships between tables (Data menu > Relationships).
+        client.execute("""CREATE TABLE IF NOT EXISTS model_relationships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_table TEXT, from_column TEXT,
+            to_table TEXT, to_column TEXT,
+            created_at TEXT
+        )""")
         # Simple key-value store for app-wide settings (e.g. display timezone)
         client.execute("""CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
@@ -2413,6 +2420,89 @@ def _model_cast(value, dtype):
             return ("true" if raw.lower() in ("1","true","yes") else "false"), True
         return raw, False
     return raw, True
+
+# ── Relationships ──────────────────────────────────────────────────────────
+# Join keys the app already uses in practice. Suggestions are only offered
+# where both sides genuinely exist, and every suggestion is measured against
+# real data before being presented (see _model_join_quality) — a join that
+# looks plausible by name but matches nothing is worse than no suggestion.
+_MODEL_JOIN_HINTS = ["reg_number", "caller", "name", "page"]
+
+def _model_table_columns(table):
+    return [r[1] for r in (db_query(f'PRAGMA table_info("{table}")') or [])]
+
+def _model_join_quality(from_table, from_col, to_table, to_col):
+    """What proportion of a sample of left-hand values actually find a match on
+    the right. Bounded sampling — this runs on a 512MB instance and some of
+    these tables will grow."""
+    left = db_query(f'SELECT DISTINCT "{from_col}" FROM "{from_table}" '
+                    f'WHERE "{from_col}" IS NOT NULL AND TRIM("{from_col}")<>"" LIMIT 200') or []
+    if not left:
+        return {"sampled": 0, "matched": 0, "pct": 0}
+    right = db_query(f'SELECT DISTINCT "{to_col}" FROM "{to_table}" '
+                     f'WHERE "{to_col}" IS NOT NULL AND TRIM("{to_col}")<>"" LIMIT 5000') or []
+    right_set = {str(r[0]).strip() for r in right}
+    matched = sum(1 for r in left if str(r[0]).strip() in right_set)
+    return {"sampled": len(left), "matched": matched,
+            "pct": round(100.0 * matched / len(left)) if left else 0}
+
+def _model_relationships():
+    rows = db_query("SELECT id, from_table, from_column, to_table, to_column FROM model_relationships ORDER BY id") or []
+    return [{"id": r[0], "from_table": r[1], "from_column": r[2],
+             "to_table": r[3], "to_column": r[4]} for r in rows]
+
+@app.route("/api/model/relationships", methods=["GET"])
+def api_model_relationships():
+    tables = _model_table_names()
+    cols_by_table = {t: _model_table_columns(t) for t in tables}
+    existing = _model_relationships()
+    have = {(r["from_table"], r["from_column"], r["to_table"], r["to_column"]) for r in existing}
+    for r in existing:
+        r["quality"] = _model_join_quality(r["from_table"], r["from_column"], r["to_table"], r["to_column"])
+
+    # Suggest joins on shared, meaningful column names — but only surface ones
+    # that actually match data, so a suggestion is worth acting on.
+    suggestions = []
+    for i, t1 in enumerate(tables):
+        for t2 in tables:
+            if t1 >= t2: continue
+            for col in _MODEL_JOIN_HINTS:
+                if col in cols_by_table.get(t1, []) and col in cols_by_table.get(t2, []):
+                    if (t1, col, t2, col) in have or (t2, col, t1, col) in have: continue
+                    q = _model_join_quality(t1, col, t2, col)
+                    if q["pct"] >= 20:
+                        suggestions.append({"from_table": t1, "from_column": col,
+                                            "to_table": t2, "to_column": col, "quality": q})
+    suggestions.sort(key=lambda x: -x["quality"]["pct"])
+    return jsonify({"ok": True, "relationships": existing,
+                    "suggestions": suggestions[:12],
+                    "tables": [{"name": t, "columns": cols_by_table.get(t, [])} for t in tables]})
+
+@app.route("/api/model/relationship", methods=["POST"])
+def api_model_add_relationship():
+    d = request.json or {}
+    ft, fc = (d.get("from_table") or "").strip(), (d.get("from_column") or "").strip()
+    tt, tc = (d.get("to_table") or "").strip(), (d.get("to_column") or "").strip()
+    tables = _model_table_names()
+    if ft not in tables or tt not in tables:
+        return jsonify({"ok": False, "error": "Unknown table"}), 400
+    if fc not in _model_table_columns(ft) or tc not in _model_table_columns(tt):
+        return jsonify({"ok": False, "error": "Unknown column"}), 400
+    if ft == tt and fc == tc:
+        return jsonify({"ok": False, "error": "A column can't be joined to itself"}), 400
+    for r in _model_relationships():
+        if (r["from_table"], r["from_column"], r["to_table"], r["to_column"]) == (ft, fc, tt, tc) or \
+           (r["from_table"], r["from_column"], r["to_table"], r["to_column"]) == (tt, tc, ft, fc):
+            return jsonify({"ok": False, "error": "That relationship already exists"}), 400
+    q = _model_join_quality(ft, fc, tt, tc)
+    db_exec("INSERT INTO model_relationships(from_table, from_column, to_table, to_column, created_at) VALUES(?,?,?,?,?)",
+            (ft, fc, tt, tc, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+    return jsonify({"ok": True, "quality": q})
+
+@app.route("/api/model/relationship/<int:rid>", methods=["DELETE"])
+def api_model_delete_relationship(rid):
+    db_exec("DELETE FROM model_relationships WHERE id=?", (rid,))
+    return jsonify({"ok": True})
 
 @app.route("/api/model/column_type", methods=["POST"])
 def api_model_set_column_type():

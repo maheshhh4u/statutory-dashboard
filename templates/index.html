@@ -1544,7 +1544,12 @@ select:focus{outline:none;border-color:var(--green)}
       Types are inferred rather than declared &mdash; every column in this database was created as text, timestamps included &mdash;
       which is why setting real types is the next step rather than something that already exists.
     </p>
-    <div style="display:grid;grid-template-columns:220px minmax(0,1fr);gap:14px;align-items:start">
+    <div id="model-tabs" style="display:flex;gap:4px;margin-bottom:10px;border-bottom:1px solid var(--border)">
+      <button type="button" id="model-tab-tables" onclick="modelSetTab('tables')" style="font-size:12.5px;padding:6px 12px;border:none;background:none;cursor:pointer;border-bottom:2px solid #1e3a5f;font-weight:700">Tables</button>
+      <button type="button" id="model-tab-rels" onclick="modelSetTab('rels')" style="font-size:12.5px;padding:6px 12px;border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;color:var(--t3)">Relationships</button>
+    </div>
+    <div id="model-pane-rels" style="display:none"></div>
+    <div id="model-pane-tables" style="display:grid;grid-template-columns:220px minmax(0,1fr);gap:14px;align-items:start">
       <div id="model-table-list" style="border:1px solid var(--border);border-radius:6px;max-height:60vh;overflow:auto"></div>
       <div style="min-width:0">
         <div id="model-columns" style="margin-bottom:10px"></div>
@@ -3316,6 +3321,7 @@ let _modelTables=[], _modelCurrent=null, _modelOffset=0;
 const MODEL_PAGE=50;
 function openModelBrowser(){
   document.getElementById('model-modal').style.display='flex';
+  modelSetTab('tables');   // always open on Tables, whatever was last viewed
   const list=document.getElementById('model-table-list');
   list.innerHTML='<div style="padding:10px;font-size:12px;color:var(--t3)">Loading…</div>';
   document.getElementById('model-columns').innerHTML='';
@@ -3394,6 +3400,99 @@ function loadModelTablePage(){
          <span>${from.toLocaleString()}–${to.toLocaleString()} of ${d.total.toLocaleString()}</span>
          <button type="button" class="btn btn-outline btn-sm" ${to>=d.total?'disabled':''} onclick="modelPage(1)">Next →</button>`;
     }).catch(e=>{ prev.innerHTML='<div style="padding:10px;font-size:12px;color:var(--red)">'+esc(e.message)+'</div>'; });
+}
+function modelSetTab(tab){
+  const isRels=tab==='rels';
+  document.getElementById('model-pane-tables').style.display=isRels?'none':'grid';
+  document.getElementById('model-pane-rels').style.display=isRels?'block':'none';
+  const t=document.getElementById('model-tab-tables'), r=document.getElementById('model-tab-rels');
+  t.style.borderBottom=isRels?'2px solid transparent':'2px solid #1e3a5f';
+  t.style.fontWeight=isRels?'400':'700'; t.style.color=isRels?'var(--t3)':'';
+  r.style.borderBottom=isRels?'2px solid #1e3a5f':'2px solid transparent';
+  r.style.fontWeight=isRels?'700':'400'; r.style.color=isRels?'':'var(--t3)';
+  if(isRels) loadRelationships();
+}
+let _modelRelTables=[];
+function loadRelationships(){
+  const pane=document.getElementById('model-pane-rels');
+  pane.innerHTML='<div style="padding:10px;font-size:12px;color:var(--t3)">Loading…</div>';
+  fetch('/api/model/relationships').then(r=>r.json()).then(d=>{
+    if(!d.ok){ pane.innerHTML='<div style="padding:10px;font-size:12px;color:var(--red)">'+esc(d.error||'Could not load')+'</div>'; return; }
+    _modelRelTables=d.tables||[];
+    // The match percentage is the useful part: it's measured against real data,
+    // so a join that looks sensible by name but matches nothing says so.
+    const q=(x)=>{
+      const c=x.pct>=80?'#1d7a3a':(x.pct>=40?'#8a6d1a':'#c0392b');
+      return `<span style="color:${c};font-size:11px" title="${x.matched} of ${x.sampled} sampled values found a match">${x.pct}% match</span>`;
+    };
+    const relRow=(r)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:#fff;font-size:12px">
+        <span><strong>${esc(r.from_table)}</strong>.${esc(r.from_column)}</span>
+        <span style="color:var(--t3)">&rarr;</span>
+        <span><strong>${esc(r.to_table)}</strong>.${esc(r.to_column)}</span>
+        ${q(r.quality)}
+        <span style="flex:1"></span>
+        <span onclick="deleteRelationship(${r.id})" title="Delete" style="cursor:pointer;color:#bbb">&#10005;</span>
+      </div>`;
+    const sugRow=(x,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px dashed var(--border);border-radius:6px;background:#faf8fd;font-size:12px">
+        <span><strong>${esc(x.from_table)}</strong>.${esc(x.from_column)}</span>
+        <span style="color:var(--t3)">&rarr;</span>
+        <span><strong>${esc(x.to_table)}</strong>.${esc(x.to_column)}</span>
+        ${q(x.quality)}
+        <span style="flex:1"></span>
+        <button type="button" class="btn btn-outline btn-sm" onclick="addRelationship('${esc(x.from_table)}','${esc(x.from_column)}','${esc(x.to_table)}','${esc(x.to_column)}')">+ Add</button>
+      </div>`;
+    const tableOpts=(sel)=>_modelRelTables.map(t=>`<option value="${esc(t.name)}" ${t.name===sel?'selected':''}>${esc(t.name)}</option>`).join('');
+    pane.innerHTML=`
+      <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">Relationships</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+        ${(d.relationships||[]).length ? d.relationships.map(relRow).join('') :
+          '<div style="font-size:12px;color:var(--t3)">None defined yet.</div>'}
+      </div>
+      <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">Suggested</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+        ${(d.suggestions||[]).length ? d.suggestions.map(sugRow).join('') :
+          '<div style="font-size:12px;color:var(--t3)">No suggestions — either everything sensible is already defined, or no shared key columns actually match on data.</div>'}
+      </div>
+      <div style="background:#faf8fd;border:1px solid #e2dcf0;border-radius:6px;padding:8px 10px">
+        <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">Add manually</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px">
+          <select id="rel-from-table" onchange="relSyncCols('from')" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">${tableOpts()}</select>
+          <select id="rel-from-col" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
+          <span style="color:var(--t3)">&rarr;</span>
+          <select id="rel-to-table" onchange="relSyncCols('to')" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">${tableOpts()}</select>
+          <select id="rel-to-col" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px"></select>
+          <button type="button" class="btn btn-outline btn-sm" onclick="addRelationshipFromForm()">+ Add</button>
+          <span id="rel-status" style="font-size:11px;color:var(--t3);flex-basis:100%"></span>
+        </div>
+      </div>`;
+    relSyncCols('from'); relSyncCols('to');
+  }).catch(e=>{ pane.innerHTML='<div style="padding:10px;font-size:12px;color:var(--red)">'+esc(e.message)+'</div>'; });
+}
+function relSyncCols(side){
+  const tSel=document.getElementById('rel-'+side+'-table'), cSel=document.getElementById('rel-'+side+'-col');
+  if(!tSel||!cSel) return;
+  const t=_modelRelTables.find(x=>x.name===tSel.value);
+  cSel.innerHTML=((t&&t.columns)||[]).map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+}
+function addRelationshipFromForm(){
+  addRelationship(document.getElementById('rel-from-table').value, document.getElementById('rel-from-col').value,
+                  document.getElementById('rel-to-table').value, document.getElementById('rel-to-col').value);
+}
+function addRelationship(ft, fc, tt, tc){
+  const st=document.getElementById('rel-status');
+  if(st){ st.textContent='Checking…'; st.style.color='var(--t3)'; }
+  fetch('/api/model/relationship',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({from_table:ft, from_column:fc, to_table:tt, to_column:tc})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ if(st){ st.textContent='\u26a0 '+(d.error||'Could not add'); st.style.color='#c0392b'; } return; }
+      loadRelationships();
+    }).catch(e=>{ if(st){ st.textContent='\u26a0 '+e.message; st.style.color='#c0392b'; } });
+}
+function deleteRelationship(id){
+  if(!confirm('Delete this relationship?')) return;
+  fetch('/api/model/relationship/'+id,{method:'DELETE'})
+    .then(r=>r.json()).then(()=>loadRelationships())
+    .catch(e=>alert('\u26a0 '+e.message));
 }
 function setColumnType(column, dataType){
   if(!_modelCurrent) return;
@@ -6343,6 +6442,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.22", date:"2026-07", title:"Data Model \u2014 Stage 3: relationships between tables",
+    changes:[
+      "New Relationships tab in the Data Model browser. Define how tables join \u2014 e.g. call_log.reg_number to follow_ups.reg_number, or call_log.caller to users.name \u2014 and they\u2019re saved with the model.",
+      "Every relationship shows a match percentage measured against your actual data: how many sampled values on the left actually find a match on the right. Green above 80%, amber above 40%, red below. A join that looks sensible by name but matches nothing tells you so immediately, which is the thing that usually goes unnoticed until a report shows wrong numbers.",
+      "Suggested relationships are offered automatically for shared key columns (reg_number, caller, name, page) \u2014 but only where the data genuinely matches, so a suggestion is always worth acting on rather than something to check by hand.",
+      "Anything can also be defined manually from dropdowns, with duplicates and self-joins rejected.",
+      "Sampling is bounded, as with the rest of the model browser, so this stays within the memory limit as the tables grow.",
+      "Note on what this does NOT yet do: relationships are defined and validated here, but visuals can\u2019t pull fields across them yet \u2014 that\u2019s Stage 4, where the report query layer changes to work across the model rather than call_log alone. Defining them first means Stage 4 has something real to build on, and lets you check now whether the joins are actually sound.",
+    ]},
   { v:"2.21", date:"2026-07", title:"Data Model \u2014 Stage 2: set column types and add calculated columns",
     changes:[
       "Every column in the table browser now has a type dropdown \u2014 text, integer, number, datetime or boolean. The choice is saved and applied whenever that table is read, which is what makes dates and numbers behave properly given everything in this database is stored as text.",
