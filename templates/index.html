@@ -2943,11 +2943,24 @@ function crSetPageSize(preset){
   if(canvas){ canvas.style.width=size.w+'px'; canvas.style.height=size.h+'px'; }
   const sel=document.getElementById('cr-page-size');
   if(sel) sel.value=_crPageSize;
-  if(_crGrid) _crGrid.opts.maxRow=crComputeMaxRow();
+  if(_crGrid) _crGrid.opts.maxRow=crComputeMaxRow(crLayoutRequiredRows(_crGrid.save(false)));
 }
-function crComputeMaxRow(){
+// maxRow is what stops the canvas growing forever (v2.05) — but GridStack
+// enforces it by silently REFUSING to add any widget that would fall past
+// it, which meant a saved report whose visuals sat lower than the page
+// height simply lost them on load. So the cap is never allowed to be
+// smaller than the layout currently being restored: pass the layout's
+// deepest row as `floorRows` and the canvas will hold everything, scrolling
+// if it exceeds the page. New visuals still can't push past the page size.
+function crComputeMaxRow(floorRows){
   const size=CR_PAGE_SIZES[_crPageSize]||CR_PAGE_SIZES['16:9'];
-  return Math.max(2, Math.floor(size.h/(70+8)));  // 70=cellHeight, 8=margin, matching GridStack.init below
+  const pageRows=Math.max(2, Math.floor(size.h/(70+8)));  // 70=cellHeight, 8=margin, matching GridStack.init
+  return Math.max(pageRows, floorRows||0);
+}
+// Deepest row a layout occupies (y+h of its lowest widget) — used above so
+// restoring a report never truncates it.
+function crLayoutRequiredRows(layout){
+  return (layout||[]).reduce((mx,p)=>Math.max(mx, (p.y||0)+(p.h||4)), 0);
 }
 // Serializes the current page's live visuals+layout into the shape saved
 // reports use — shared by both "save the report" (every page, via
@@ -2997,6 +3010,10 @@ function crLoadPageSnapshot(id){
   delete _crPageSnapshots[id];  // becomes "live" again
   _crActivePageId=id;
   crSetPageSize(snap.pageSize||'16:9');
+  // Raise the row cap (if needed) BEFORE adding anything — GridStack drops
+  // widgets that don't fit within maxRow, so this must happen first or the
+  // lower visuals in a saved report are lost.
+  if(_crGrid) _crGrid.opts.maxRow=crComputeMaxRow(crLayoutRequiredRows(snap.layout));
   (snap.layout||[]).forEach(p=>{
     const v=snap.visuals[p.id];
     if(!v) return;
@@ -5505,6 +5522,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.08", date:"2026-07", title:"Fix: saved reports appearing empty — my v2.05 canvas-height cap was silently dropping visuals",
+    changes:[
+      "My fault, and I'm sorry for the scare. To stop the canvas growing taller forever (v2.05), I capped the grid at however many rows fit the page height \u2014 for a 16:9 page that's only 9 rows. GridStack enforces that cap by refusing to add any visual that would sit past it, so opening a report whose visuals were positioned lower down silently dropped them, and the report looked empty.",
+      "Nothing was ever deleted \u2014 your saved reports were intact in the database the whole time; they just weren't all being drawn. Opening one now restores every visual.",
+      "The cap is now never allowed to be shorter than the layout being restored: the canvas grows to hold whatever a saved report actually contains (scrolling if it exceeds the page), while newly added visuals still can't push past the chosen Page Size. Changing Page Size on an existing report can't truncate it either.",
+    ]},
   { v:"2.07", date:"2026-07", title:"Slicer Field moved to the Drag & Drop column where it belongs, and the canvas really is a fixed width now",
     changes:[
       "Selecting a Slicer left the Drag & Drop column showing nothing but buttons \u2014 because the Slicer Field config had been put in the Format column by mistake. Format is for how a visual looks; Drag & Drop is for what it's built from, which is exactly what a slicer's field is (its equivalent of Values/Rows). It now sits at the top of Drag & Drop, so selecting a Slicer shows its field picker right where every other visual type shows its data configuration \u2014 both the drag-and-drop well and the dropdown, whichever you prefer.",
