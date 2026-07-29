@@ -1289,6 +1289,7 @@ select:focus{outline:none;border-color:var(--green)}
                transform. The grid itself stays at its true Page Size in px,
                so every stored x/y/w/h stays in exactly the same units and
                already-saved reports are unaffected. -->
+          <div id="cr-crossfilter-bar" style="display:none;align-items:center;gap:10px;justify-content:space-between;background:#f3efff;border:1px solid #e2dcf0;border-radius:6px;padding:5px 10px;margin-bottom:8px"></div>
           <div id="cr-canvas-viewport" style="min-width:0;overflow:hidden">
             <div id="cr-canvas-scaler">
               <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;width:1280px;height:720px"></div>
@@ -3441,6 +3442,8 @@ function crLoadPageSnapshot(id){
   _crActivePageId=id;
   crSetPageSize(snap.pageSize||'16:9');
   crRebuildCanvasFrom(snap);
+  _crCrossFilter=null;    // a selection from another page shouldn't carry over
+  crRenderCrossFilterBar();
   crResetUndo();          // undo history is per-page
   renderCrPageTabs();
 }
@@ -4208,15 +4211,59 @@ function crActiveSlicerFilters(){
 // Filter on that field — a manual override on one visual should always beat
 // a global control, and a slicer (live, interactive) should beat a static
 // Report Filter someone set once and might have forgotten about.
-function crCombinedFilters(v){
+// Cross-filter: clicking a bar/slice/point in one visual filters every OTHER
+// visual by that value, Power BI style. Held as a single active selection —
+// clicking elsewhere, or the same point again, clears it. Deliberately NOT
+// applied to the visual that was clicked, so it keeps showing its full
+// context (again matching Power BI, where the source stays visible with the
+// unselected parts dimmed).
+let _crCrossFilter=null;   // {sourceId, field, fieldLabel, value}
+// Only fields the backend can actually filter on (_CR_FILTERABLE_DIMS in
+// app.py). This guard matters: the date/hour groupings aren't real row
+// columns, so sending one as a filter would match nothing and blank every
+// visual on the canvas. Charts grouped by those simply aren't clickable.
+const CR_CROSSFILTERABLE=new Set(['caller','outcome','stage','source_list',
+  'charity_who','charity_what','charity_how','charity_area']);
+function crFieldIsCrossFilterable(field){ return CR_CROSSFILTERABLE.has(field); }
+function crCombinedFilters(v, forId){
   const visualFilters=v.filters||[];
   const overriddenFields=new Set(visualFilters.map(f=>f.field));
   const slicerFilters=crActiveSlicerFilters().filter(f=>!overriddenFields.has(f.field));
   const slicerFields=new Set(slicerFilters.map(f=>f.field));
   const reportPart=_crReportFilters.filter(f=>!overriddenFields.has(f.field) && !slicerFields.has(f.field));
-  return reportPart.concat(slicerFilters).concat(visualFilters).map(f=> f.field==='date_range'
+  let crossPart=[];
+  if(_crCrossFilter && forId && forId!==_crCrossFilter.sourceId
+     && !overriddenFields.has(_crCrossFilter.field) && !slicerFields.has(_crCrossFilter.field)){
+    crossPart=[{field:_crCrossFilter.field, values:[_crCrossFilter.value]}];
+  }
+  return reportPart.concat(slicerFilters).concat(crossPart).concat(visualFilters).map(f=> f.field==='date_range'
     ? {field:'date_range', from:f.from, to:f.to}
     : {field:f.field, values:f.values});
+}
+// Applies (or toggles off) a cross-filter selection and refreshes everything
+// else on the canvas.
+function crSetCrossFilter(sourceId, field, fieldLabel, value){
+  const same=_crCrossFilter && _crCrossFilter.sourceId===sourceId
+          && _crCrossFilter.field===field && _crCrossFilter.value===value;
+  _crCrossFilter = same ? null : {sourceId, field, fieldLabel, value};
+  crRefreshDependentsOfSlicer(null);   // re-run every non-slicer visual
+  crRenderCrossFilterBar();
+}
+function crClearCrossFilter(){
+  if(!_crCrossFilter) return;
+  _crCrossFilter=null;
+  crRefreshDependentsOfSlicer(null);
+  crRenderCrossFilterBar();
+}
+// Small banner so an active cross-filter is obvious and easy to undo — without
+// it, a filtered canvas just looks like wrong numbers.
+function crRenderCrossFilterBar(){
+  const bar=document.getElementById('cr-crossfilter-bar');
+  if(!bar) return;
+  if(!_crCrossFilter){ bar.style.display='none'; bar.innerHTML=''; return; }
+  bar.style.display='flex';
+  bar.innerHTML=`<span style="font-size:11.5px;color:#3d2d5a">Filtered by <strong>${esc(_crCrossFilter.fieldLabel||_crCrossFilter.field)}: ${esc(_crCrossFilter.value)}</strong> \u2014 click the same point again, or here, to clear</span>
+    <button type="button" onclick="crClearCrossFilter()" style="font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">\u2715 Clear</button>`;
 }
 // Re-renders every non-slicer visual on the canvas (charts, tables, cards)
 // so a slicer's new selection takes effect immediately — this is what makes
@@ -4868,7 +4915,7 @@ function crRenderVisual(id){
   if(crChartTypeNeedsRows(v.chart_type) && !v.rows) return;
   const emptyEl=document.getElementById('cr-visual-empty-'+id);
   if(emptyEl) emptyEl.style.display='none';
-  const filters=crCombinedFilters(v);
+  const filters=crCombinedFilters(v, id);
   const measurePayload = v.measureDef || v.measure;
 
   if(crChartTypeIsCombo(v.chart_type)){
@@ -5050,6 +5097,29 @@ function renderCrResult(d, chartType, chartId, tableWrapId, isTile, format, card
   // it's passed in per-chart, only when this specific visual has it turned on.
   const chartOpts={type:cfg.type, data:cfg.data, options:cfg.options};
   if(cfg._usesDataLabels && typeof ChartDataLabels!=='undefined') chartOpts.plugins=[ChartDataLabels];
+  // Cross-filtering: clicking a bar / slice / point filters the rest of the
+  // canvas by that category. Only on canvas tiles (not the standalone preview
+  // chart), and only where the visual is actually grouped by a field — a Card
+  // has no category to filter by.
+  if(isTile){
+    const vid=chartId.replace('cr-visual-chart-','');
+    const vv=_crVisuals[vid];
+    if(vv && vv.rows){
+      chartOpts.options=Object.assign({}, chartOpts.options, {
+        onClick:function(evt, elements){
+          if(!crFieldIsCrossFilterable(vv.rows)) return;
+          if(!elements || !elements.length){ crClearCrossFilter(); return; }
+          const label=(d.row_labels||[])[elements[0].index];
+          if(label===undefined) return;
+          crSetCrossFilter(vid, vv.rows, vv.rowsLabel||vv.rows, label);
+        },
+        onHover:function(evt, elements){
+          const t=evt && evt.native && evt.native.target;
+          if(t) t.style.cursor = (crFieldIsCrossFilterable(vv.rows) && elements && elements.length) ? 'pointer' : 'default';
+        },
+      });
+    }
+  }
   canvasEl._chartInst = new Chart(canvasEl, chartOpts);
 }
 // Combo charts (Excel/Power BI style: two independent measures sharing one
@@ -5115,6 +5185,19 @@ function renderCrComboResult(d1, d2, v, chartId){
         title:{display:!!fmt.title, text:fmt.title||'', color:fmt.titleColor||undefined},
       },
       scales,
+      // Same cross-filtering as every other chart type — clicking a column or
+      // a point on the line filters the rest of the canvas by that category.
+      onClick:function(evt, elements){
+        if(!v.rows || !crFieldIsCrossFilterable(v.rows)) return;
+        if(!elements || !elements.length){ crClearCrossFilter(); return; }
+        const label=labels[elements[0].index];
+        if(label===undefined) return;
+        crSetCrossFilter(id, v.rows, v.rowsLabel||v.rows, label);
+      },
+      onHover:function(evt, elements){
+        const t=evt && evt.native && evt.native.target;
+        if(t) t.style.cursor=(v.rows && crFieldIsCrossFilterable(v.rows) && elements && elements.length) ? 'pointer' : 'default';
+      },
     },
   });
 
@@ -6041,6 +6124,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.18", date:"2026-07", title:"Cross-filtering: click a bar, slice or point to filter the rest of the report",
+    changes:[
+      "Clicking a data point in any chart \u2014 a bar, a column, a pie or donut slice, a line or area point, radar, polar, or either series of a combo chart \u2014 now filters every other visual on the page by that value, the way Power BI does. Click the same point again, click an empty part of the chart, or use the Clear button to remove it.",
+      "The clicked visual deliberately keeps showing its full data rather than filtering itself down to the one value you picked \u2014 same as Power BI, so you keep the context you selected from.",
+      "A banner above the canvas shows what's currently filtering the report, since otherwise a cross-filtered canvas just looks like unexpected numbers.",
+      "Cross-filters combine with slicers and Report Filters, and a visual's own filter on the same field still takes precedence \u2014 the same precedence order already used everywhere else.",
+      "Charts grouped by Day / Week / Month / Hour of Day aren't clickable for this: those groupings are computed rather than stored, so filtering by one would have matched no rows and blanked the whole canvas. They show a normal cursor rather than silently doing nothing useful.",
+      "The selection clears when you switch page or open a different report.",
+    ]},
   { v:"2.17", date:"2026-07", title:"Bottom of the canvas is reachable, finer horizontal resizing, and automatic unique visual names",
     changes:[
       "Found why nothing could be moved to the very bottom of the page: the row cap was calculated by dividing the page height by cellHeight PLUS margin, but GridStack sizes each row as exactly cellHeight (the margin sits inside the item, it isn't extra spacing between rows). That under-counted the rows that fit and left roughly 80px along the bottom edge that no visual could enter. Corrected \u2014 the full page is usable now.",
