@@ -1240,14 +1240,23 @@ select:focus{outline:none;border-color:var(--green)}
               </select>
             </label>
             <span id="cr-selected-visual-label" style="font-size:12px;color:var(--t3)">No visual selected — add one, or click an existing visual below</span>
-            <label style="font-size:11.5px;display:flex;align-items:center;gap:4px;color:var(--t3);margin-left:auto">Zoom
-              <select id="cr-canvas-zoom" onchange="crSetCanvasZoom(this.value)" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
-                <option value="fit">Fit to page</option>
-                <option value="1">100%</option>
-                <option value="0.75">75%</option>
-                <option value="0.5">50%</option>
-              </select>
-            </label>
+          </div>
+          <!-- Zoom sits OUTSIDE the Add Visual toolbar because that toolbar is
+               hidden in the read-only view — and zoom is exactly what you want
+               there. −/+ step through the same scale the dropdown sets. -->
+          <div id="cr-canvas-zoom-bar" style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+            <span style="font-size:11.5px;color:var(--t3)">Zoom</span>
+            <button type="button" onclick="crNudgeZoom(-1)" title="Zoom out" style="width:24px;height:24px;line-height:1;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">−</button>
+            <span id="cr-zoom-pct" style="font-size:11.5px;min-width:42px;text-align:center;color:var(--t3)">100%</span>
+            <button type="button" onclick="crNudgeZoom(1)" title="Zoom in" style="width:24px;height:24px;line-height:1;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">+</button>
+            <select id="cr-canvas-zoom" onchange="crSetCanvasZoom(this.value)" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+              <option value="fit">Fit to page</option>
+              <option value="1.5">150%</option>
+              <option value="1.25">125%</option>
+              <option value="1">100%</option>
+              <option value="0.75">75%</option>
+              <option value="0.5">50%</option>
+            </select>
           </div>
           <!-- Two nested wrappers so the canvas can be visually scaled to fit
                without changing its real dimensions: #cr-canvas-viewport is
@@ -1291,6 +1300,9 @@ select:focus{outline:none;border-color:var(--green)}
           <div id="cr-chart-type-gallery" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px"></div>
           <input type="hidden" id="cr-chart-type" value="col_clustered">
 
+          <label style="font-size:11.5px;display:flex;align-items:center;gap:5px;margin-bottom:10px">Visual name
+            <input id="cr-visual-name" placeholder="auto from measure &amp; field" style="flex:1;min-width:0;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+          </label>
           <div id="cr-size-pos-box" style="background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
             <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">Size &amp; Position (px)</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
@@ -2635,6 +2647,18 @@ function crChartTypeNeedsRows(chartType){ return chartType!=='card' && !crChartT
 // used to be a separate chart type before it became the checkbox below) —
 // still recognized here so a visual saved with it doesn't break, even
 // though nothing can create one anymore.
+// One definition of a visual's displayed title, so the canvas tile, the
+// "Editing:" label and a reloaded report can't drift apart. A user-supplied
+// name always wins; otherwise it's derived from the measure and field.
+function crVisualTitleText(v){
+  if(!v) return '';
+  if(v.customTitle) return v.customTitle;
+  if(v.isSlicer) return '\u{1F527} '+(v.slicerTitle||v.slicerFieldLabel||'Slicer');
+  const base = crChartTypeIsCombo(v.chart_type)
+    ? (v.measureLabel||'')+' + '+(v.measure2Label||'')
+    : (v.measureLabel||'');
+  return base+(v.rowsLabel?' by '+v.rowsLabel:'');
+}
 function crChartTypeIsCombo(chartType){ return chartType==='combo_col_line' || chartType==='combo_col_line_dual'; }
 const CR_PALETTES={
   navy:  ['#1e3a5f','#e8b339','#1d7a3a','#a02c2c','#6a4d99','#2d8f8f','#c47a2c','#4d6a99'],
@@ -2932,6 +2956,14 @@ const CR_PAGE_SIZES={'16:9':{w:1280,h:720}, '16:9-lg':{w:1600,h:900}, '4:3':{w:9
 // coordinates are in. Reports without it were saved on the original coarser
 // 12-column/70px grid and are scaled up by this factor when loaded.
 const CR_GRID_SCALE=4;
+// Vertical resolution is tracked separately from horizontal: the first pass
+// at this (v2.13) scaled both by 4, but a 17.5px row step was still coarse
+// enough that dragging a bottom edge visibly jumped. Rows are now 8× finer
+// than the original 70px grid (8.75px), while columns stay at 4×. Saved
+// reports carry both markers so each axis is migrated exactly once.
+const CR_GRID_SCALE_Y=8;
+const CR_CELL_H_PX=70/CR_GRID_SCALE_Y;   // 8.75
+const CR_CELL_MARGIN_PX=1;
 let _crPageSize='16:9';
 // Multiple renameable pages (tabs), Power BI style — each page is its own
 // canvas of visuals. Only the ACTIVE page's visuals live in the normal
@@ -2993,7 +3025,7 @@ let _crCanvasZoom='fit';   // 'fit' (Power BI's default — scale so the whole p
 // Pixel <-> grid-unit conversion for the Size & Position boxes. GridStack
 // stores whole cells, so a pixel value is rounded to the nearest cell — the
 // note under the inputs says so rather than silently changing what was typed.
-const CR_CELL_H=17.5, CR_CELL_MARGIN=2, CR_GRID_COLS=48;
+const CR_CELL_H=CR_CELL_H_PX, CR_CELL_MARGIN=CR_CELL_MARGIN_PX, CR_GRID_COLS=48;
 function crCellW(){
   const size=CR_PAGE_SIZES[_crPageSize]||CR_PAGE_SIZES['16:9'];
   return size.w/CR_GRID_COLS;
@@ -3032,6 +3064,32 @@ function crApplySizePos(){
   if(v){ if(v.isSlicer) crRenderSlicerVisual(id); else crRenderVisual(id); }  // redraw to the new box
   crRefreshSizePosInputs();  // show what it actually snapped to
 }
+const CR_ZOOM_STEPS=[0.5,0.75,1,1.25,1.5];
+// −/+ step through the preset scales. From "Fit", the first press starts
+// from whatever fit actually resolved to, so the jump feels continuous
+// rather than snapping back to 100%.
+function crNudgeZoom(dir){
+  let cur = (_crCanvasZoom==='fit') ? crCurrentScale() : parseFloat(_crCanvasZoom)||1;
+  let idx = CR_ZOOM_STEPS.findIndex(z=>Math.abs(z-cur)<0.001);
+  if(idx<0){
+    idx = dir>0 ? CR_ZOOM_STEPS.findIndex(z=>z>cur) : -1;
+    if(dir>0 && idx<0) idx=CR_ZOOM_STEPS.length-1;
+    if(dir<0){
+      for(let i=CR_ZOOM_STEPS.length-1;i>=0;i--){ if(CR_ZOOM_STEPS[i]<cur){ idx=i; break; } }
+      if(idx<0) idx=0;
+    }
+    crSetCanvasZoom(String(CR_ZOOM_STEPS[Math.max(0,Math.min(idx,CR_ZOOM_STEPS.length-1))]));
+    return;
+  }
+  const next=Math.max(0, Math.min(CR_ZOOM_STEPS.length-1, idx+dir));
+  crSetCanvasZoom(String(CR_ZOOM_STEPS[next]));
+}
+// The scale currently applied to the canvas, read back from the transform.
+function crCurrentScale(){
+  const scaler=document.getElementById('cr-canvas-scaler');
+  const m=scaler && /scale\(([\d.]+)\)/.exec(scaler.style.transform||'');
+  return m ? parseFloat(m[1]) : 1;
+}
 function crSetCanvasZoom(mode){
   _crCanvasZoom=mode;
   const sel=document.getElementById('cr-canvas-zoom');
@@ -3063,7 +3121,11 @@ function crApplyCanvasScale(){
     // would be circular in the same way offsetHeight was.
     const track=viewport.parentElement;
     const availW=(track && track.clientWidth) || size.w;
-    const availH=Math.max(240, window.innerHeight-200);  // room for toolbar + page tabs
+    // The read-only view hides the Add Visual toolbar and the report-filter
+    // panel, so there's more usable height there — give the canvas the benefit
+    // of it so a saved report opens as large as the screen allows.
+    const chrome=(_crBuilderMode==='edit') ? 200 : 120;
+    const availH=Math.max(240, window.innerHeight-chrome);
     // Allow a modest enlargement when there's spare room (Power BI's Fit to
     // page does grow the canvas, not just shrink it), capped at 1.5 — charts
     // are drawn to a <canvas> at their CSS size, so scaling far past 1:1
@@ -3084,6 +3146,8 @@ function crApplyCanvasScale(){
   // the one size that legitimately scrolls.
   viewport.style.height=(Math.ceil(size.h*scale)+1)+'px';
   viewport.style.overflowY=(_crPageSize==='letter') ? 'auto' : 'hidden';
+  const pct=document.getElementById('cr-zoom-pct');
+  if(pct) pct.textContent=Math.round(scale*100)+'%';
 }
 function crSetPageSize(preset){
   const size=CR_PAGE_SIZES[preset] || CR_PAGE_SIZES['16:9'];
@@ -3107,7 +3171,7 @@ function crSetPageSize(preset){
 // if it exceeds the page. New visuals still can't push past the page size.
 function crComputeMaxRow(floorRows){
   const size=CR_PAGE_SIZES[_crPageSize]||CR_PAGE_SIZES['16:9'];
-  const pageRows=Math.max(8, Math.floor(size.h/(17.5+2)));  // 17.5=cellHeight, 2=margin, matching GridStack.init
+  const pageRows=Math.max(8, Math.floor(size.h/(CR_CELL_H_PX+CR_CELL_MARGIN_PX)));  // matches GridStack.init
   return Math.max(pageRows, floorRows||0);
 }
 // Deepest row a layout occupies (y+h of its lowest widget) — used above so
@@ -3125,6 +3189,7 @@ function crSerializeVisualsFromSnapshot(layout, visualsMap){
     return {id:p.id, x:p.x, y:p.y, w:p.w, h:p.h,
             measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null,
             measure2:v.measure2||'', measure2Label:v.measure2Label||'', measure2Def:v.measure2Def||null,
+            customTitle:v.customTitle||'',
             rows:v.rows, rowsLabel:v.rowsLabel,
             columns:v.columns||'', columnsLabel:v.columnsLabel||'',
             chart_type:v.chart_type||'col_clustered',
@@ -3173,9 +3238,7 @@ function crLoadPageSnapshot(id){
     _crVisuals[p.id]=v;
     crAddWidgetWithHtml({w:p.w||4, h:p.h||4, x:p.x, y:p.y, id:p.id}, crVisualWidgetHtml(p.id));
     const titleEl=document.getElementById('cr-visual-title-'+p.id);
-    if(titleEl) titleEl.textContent = v.isSlicer
-      ? '🔧 '+(v.slicerTitle||v.slicerFieldLabel||'Slicer')
-      : (crChartTypeIsCombo(v.chart_type) ? (v.measureLabel||'')+' + '+(v.measure2Label||'') : (v.measureLabel||''))+(v.rowsLabel?' by '+v.rowsLabel:'');
+    if(titleEl) titleEl.textContent = crVisualTitleText(v);
     crApplyTitleBarVisibility(p.id);
   });
   Object.keys(_crVisuals).forEach(vid=>{
@@ -3266,7 +3329,7 @@ function crInitGridIfNeeded(){
   // in big jumps. Because the factor is a clean ×4, layouts saved in the old
   // units convert exactly (see CR_GRID_SCALE / the migration on load) with no
   // rounding drift.
-  _crGrid=GridStack.init({column:48, cellHeight:17.5, margin:2, minRow:8, maxRow:crComputeMaxRow(),
+  _crGrid=GridStack.init({column:48, cellHeight:CR_CELL_H_PX, margin:CR_CELL_MARGIN_PX, minRow:8, maxRow:crComputeMaxRow(),
     resizable:{handles:'e, se, s, sw, w, n, ne, nw'}}, document.getElementById('cr-gridstack'));
   // Re-render a visual's chart after it's resized, so Chart.js redraws to fit
   // the new box instead of staying the old size.
@@ -3330,6 +3393,7 @@ function crSetBuilderMode(mode){
   if(_crGrid) _crGrid.setStatic(!isEdit);  // view mode: canvas is display-only, no drag/resize
   if(!isEdit) crDeselectVisual();  // closes the Format/Drag & Drop columns too, if they were open
   renderCrPageTabs();  // the +/rename/delete controls only show in edit mode
+  crApplyCanvasScale();  // view mode has more height available than edit mode
 }
 // Recomputes the 4-column grid's widths from the current collapse state of
 // each of the 3 right-hand columns — called on mode switch and whenever a
@@ -3561,7 +3625,7 @@ function crAddVisual(){
   crInitGridIfNeeded();
   const id='v'+(++_crVisualSeq);
   _crVisuals[id]={measure:'',measureLabel:'',rows:'',rowsLabel:'',columns:'',columnsLabel:'',chart_type:'col_clustered',format:{},filters:[],showTitleBar:true};
-  crAddWidgetWithHtml({w:16,h:16,id:id}, crVisualWidgetHtml(id));  // 4×4 on the old grid
+  crAddWidgetWithHtml({w:16,h:32,id:id}, crVisualWidgetHtml(id));  // 4×4 on the original grid
   crSelectVisual(id);
 }
 function crSelectVisual(id){
@@ -3587,6 +3651,7 @@ function crSelectVisual(id){
     else crResetCustomMeasureBuilder();
   }
   const tbEl=document.getElementById('cr-tile-titlebar'); if(tbEl) tbEl.checked=v.showTitleBar!==false;
+  const nmEl=document.getElementById('cr-visual-name'); if(nmEl) nmEl.value=v.customTitle||'';
   if(crChartTypeIsSlicer(v.chart_type)){
     const sfEl=document.getElementById('cr-slicer-field'); if(sfEl) sfEl.value=v.slicerField||'';
     crSlicerFieldSelectChanged();
@@ -3967,15 +4032,20 @@ function crRenderSlicerVisual(id){
   const wrap=document.getElementById('cr-visual-slicer-'+id);
   if(!wrap) return;
   wrap.style.display='flex';
+  wrap.style.position='relative';   // anchors the corner clear icon below
   const label=v.slicerTitle||v.slicerFieldLabel||'Slicer';
+  // Small ✕ in the top-right instead of a full-width "Clear" button — it
+  // takes almost no room in the tile, which matters because slicers are
+  // usually sized small.
+  const clearIcon=`<span onclick="event.stopPropagation();crClearSlicer('${id}')" title="Clear selection"
+      style="position:absolute;top:2px;right:4px;font-size:12px;line-height:1;color:#9aa;cursor:pointer;padding:2px">\u2715</span>`;
   if(v.chart_type==='slicer_timeline'){
     const from=(v.slicerSelected&&v.slicerSelected.from)||'';
     const to=(v.slicerSelected&&v.slicerSelected.to)||'';
-    wrap.innerHTML=`<div style="font-size:11px;font-weight:700;color:#3d2d5a;margin-bottom:6px">📅 ${esc(label)}</div>
+    wrap.innerHTML=clearIcon+`<div style="font-size:11px;font-weight:700;color:#3d2d5a;margin-bottom:6px">📅 ${esc(label)}</div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         <label style="font-size:11px">From <input type="date" id="cr-slicer-val-${id}-from" value="${esc(from)}" onchange="crSlicerValueChanged('${id}')" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11px"></label>
         <label style="font-size:11px">To <input type="date" id="cr-slicer-val-${id}-to" value="${esc(to)}" onchange="crSlicerValueChanged('${id}')" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11px"></label>
-        <button type="button" onclick="crClearSlicer('${id}')" style="font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">Clear</button>
       </div>`;
     return;
   }
@@ -3984,23 +4054,21 @@ function crRenderSlicerVisual(id){
   const selected=v.slicerSelected||[];
   if(v.chart_type==='slicer_dropdown'){
     const summary=!selected.length ? 'All' : (selected.length<=2 ? selected.join(', ') : selected.length+' selected');
-    wrap.innerHTML=`<div style="font-size:11px;font-weight:700;color:#3d2d5a;margin-bottom:6px">🔽 ${esc(label)}</div>
+    wrap.innerHTML=clearIcon+`<div style="font-size:11px;font-weight:700;color:#3d2d5a;margin-bottom:6px">🔽 ${esc(label)}</div>
       <button type="button" id="cr-slicer-dd-btn-${id}" onclick="crToggleSlicerDropdown('${id}')"
         style="width:100%;text-align:left;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;font-size:11.5px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:6px">
         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(summary)}</span><span style="flex-shrink:0;color:var(--t3)">▾</span>
-      </button>
-      <button type="button" onclick="crClearSlicer('${id}')" style="margin-top:6px;font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">Clear</button>`;
+      </button>`;
   } else {
     // slicer_list — a row of toggle chips, Power BI "list slicer" style
-    wrap.innerHTML=`<div style="font-size:11px;font-weight:700;color:#3d2d5a;margin-bottom:6px">☰ ${esc(label)}</div>
+    wrap.innerHTML=clearIcon+`<div style="font-size:11px;font-weight:700;color:#3d2d5a;margin-bottom:6px">☰ ${esc(label)}</div>
       <div style="display:flex;flex-wrap:wrap;gap:5px;overflow:auto">
         ${opts.map(o=>{
           const active=selected.includes(o);
           return `<button type="button" data-val="${esc(o)}" onclick="crToggleSlicerListValue('${id}', this)"
             style="font-size:11px;padding:4px 9px;border-radius:14px;border:1px solid ${active?'#1e3a5f':'var(--border)'};background:${active?'#1e3a5f':'#fff'};color:${active?'#fff':'#333'};cursor:pointer">${esc(o)}</button>`;
         }).join('')}
-      </div>
-      <button type="button" onclick="crClearSlicer('${id}')" style="margin-top:6px;font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">Clear</button>`;
+      </div>`;
   }
 }
 // ── Dropdown slicer's popup panel ─────────────────────────────────────────
@@ -4487,10 +4555,10 @@ function crApplyToSelectedVisual(){
       ? {field:f.field, fieldLabel:f.fieldLabel, from:f.from, to:f.to}
       : {field:f.field, fieldLabel:f.fieldLabel, values:f.values.slice()}),
   };
+  const nameEl=document.getElementById('cr-visual-name');
+  _crVisuals[id].customTitle=(nameEl && nameEl.value.trim()) || '';
   const titleEl=document.getElementById('cr-visual-title-'+id);
-  const titleText=isCombo
-    ? _crVisuals[id].measureLabel+' + '+_crVisuals[id].measure2Label+(_crVisuals[id].rowsLabel?' by '+_crVisuals[id].rowsLabel:'')
-    : _crVisuals[id].measureLabel+(_crVisuals[id].rowsLabel?' by '+_crVisuals[id].rowsLabel:'');
+  const titleText=crVisualTitleText(_crVisuals[id]);
   if(titleEl) titleEl.textContent=titleText;
   document.getElementById('cr-selected-visual-label').textContent='Editing: '+titleText;
   crApplyTitleBarVisibility(id);
@@ -4862,6 +4930,7 @@ function saveCustomReportCanvas(){
   const config={
     filters:_crReportFilters,
     gridScale:CR_GRID_SCALE,
+    gridScaleY:CR_GRID_SCALE_Y,
     pages,
   };
   fetch('/api/custom_report/tiles',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -4947,6 +5016,7 @@ function crLoadReportIntoCanvas(cfg){
       if(vNum>maxVisualNum) maxVisualNum=vNum;
       visualsMap[vid]={measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null,
                     measure2:v.measure2||'', measure2Label:v.measure2Label||'', measure2Def:v.measure2Def||null,
+                    customTitle:v.customTitle||'',
                     rows:v.rows, rowsLabel:v.rowsLabel,
                     columns:v.columns||'', columnsLabel:v.columnsLabel||'', chart_type:v.chart_type||'col_clustered',
                     format:v.format||{}, filters:v.filters||[],
@@ -4957,14 +5027,19 @@ function crLoadReportIntoCanvas(cfg){
                     showTitleBar:v.showTitleBar!==false};
     });
     if(maxVisualNum>_crVisualSeq) _crVisualSeq=maxVisualNum;
-    // Layouts saved before the grid resolution increased are in the old
-    // 12-column / 70px units. The new grid is exactly 4× finer, so an exact
-    // ×4 conversion restores them pixel-for-pixel — no rounding, no drift.
-    // cfg.gridScale marks configs already stored in the new units.
-    const gridMul = (cfg.gridScale===CR_GRID_SCALE) ? 1 : CR_GRID_SCALE;
+    // Grid units have changed twice, so each axis is migrated from whatever
+    // it was actually saved in — using markers rather than guessing:
+    //   no gridScale        → original 12-col/70px grid: x,w ×4 and y,h ×8
+    //   gridScale=4, no Y   → v2.13 grid (both axes ×4): y,h need ×2 more
+    //   both markers        → already current: no change
+    // Every factor is a whole number, so conversions are exact.
+    const savedX = cfg.gridScale || 1;                       // 1 = original units
+    const savedY = cfg.gridScaleY || cfg.gridScale || 1;     // v2.13 scaled Y by gridScale
+    const mulX = CR_GRID_SCALE / savedX;
+    const mulY = CR_GRID_SCALE_Y / savedY;
     const layout=(pg.visuals||[]).map(v=>({id:v.id,
-      x:(v.x||0)*gridMul, y:(v.y||0)*gridMul,
-      w:(v.w||4)*gridMul, h:(v.h||4)*gridMul}));
+      x:Math.round((v.x||0)*mulX), y:Math.round((v.y||0)*mulY),
+      w:Math.max(1, Math.round((v.w||4)*mulX)), h:Math.max(1, Math.round((v.h||4)*mulY))}));
     _crPageSnapshots[id]={visuals:visualsMap, layout, pageSize:pg.pageSize||'16:9'};
     _crPageList.push({id, name:pg.name||('Page '+(i+1))});
   });
@@ -5749,6 +5824,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.14", date:"2026-07", title:"Precise vertical resizing, named visuals, tidier slicers, and zoom in the report view",
+    changes:[
+      "Vertical resizing is much finer: rows went from 17.5px to 8.75px \u2014 8\u00d7 the original grid rather than the 4\u00d7 of last release. Horizontal was already fine at 4\u00d7; it was specifically the vertical steps that were still jumping. Saved reports carry a marker for each axis, so whichever grid a report was saved on it converts exactly, once.",
+      "Visuals can be named: a \u201cVisual name\u201d box in the Format panel overrides the automatic \u201cMeasure by Field\u201d title. Leave it blank to keep the automatic one. Saved with the report.",
+      "Slicers: the full-width \u201cClear\u201d button is gone, replaced by a small \u2715 in the tile\u2019s top-right corner \u2014 slicers are usually sized small, and the button was taking space the options needed.",
+      "The read-only report view (opening a saved report) now uses the extra height it has available, so reports open as large as the screen allows, and the zoom control is available there too \u2014 it used to live inside the edit-only toolbar and disappeared in the view.",
+      "Zoom now has \u2212 / + buttons and a live percentage readout alongside the dropdown, with 125% and 150% added.",
+    ]},
   { v:"2.13", date:"2026-07", title:"Free-form resizing, precise Size & Position boxes, proper chart icons, and no stray scrollbar",
     changes:[
       "Resizing is far finer now: the canvas grid went from 12 columns / 70px rows to 48 columns / 17.5px rows \u2014 exactly 4\u00d7 the resolution \u2014 so visuals move and resize in small steps instead of jumping between a few fixed positions. Existing saved reports convert exactly (the factor is a clean \u00d74, so there's no rounding drift) and are stamped on save so they're never converted twice.",
