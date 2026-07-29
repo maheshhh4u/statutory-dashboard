@@ -1256,7 +1256,7 @@ select:focus{outline:none;border-color:var(--green)}
                transform. The grid itself stays at its true Page Size in px,
                so every stored x/y/w/h stays in exactly the same units and
                already-saved reports are unaffected. -->
-          <div id="cr-canvas-viewport" style="min-width:0;overflow-x:hidden;overflow-y:auto">
+          <div id="cr-canvas-viewport" style="min-width:0;overflow:hidden">
             <div id="cr-canvas-scaler" style="transform-origin:top left">
               <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;width:1280px;height:720px"></div>
             </div>
@@ -1291,6 +1291,24 @@ select:focus{outline:none;border-color:var(--green)}
           <div id="cr-chart-type-gallery" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px"></div>
           <input type="hidden" id="cr-chart-type" value="col_clustered">
 
+          <div id="cr-size-pos-box" style="background:#fff;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px">
+            <div style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">Size &amp; Position (px)</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+              <label style="font-size:11px;display:flex;align-items:center;gap:4px">W
+                <input type="number" id="cr-size-w" min="20" step="1" onchange="crApplySizePos()" style="width:100%;padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+              </label>
+              <label style="font-size:11px;display:flex;align-items:center;gap:4px">H
+                <input type="number" id="cr-size-h" min="20" step="1" onchange="crApplySizePos()" style="width:100%;padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+              </label>
+              <label style="font-size:11px;display:flex;align-items:center;gap:4px">X
+                <input type="number" id="cr-pos-x" min="0" step="1" onchange="crApplySizePos()" style="width:100%;padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+              </label>
+              <label style="font-size:11px;display:flex;align-items:center;gap:4px">Y
+                <input type="number" id="cr-pos-y" min="0" step="1" onchange="crApplySizePos()" style="width:100%;padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+              </label>
+            </div>
+            <p style="font-size:10px;color:var(--t3);margin:6px 0 0">Values snap to the nearest grid step (about 19px), so they may adjust slightly.</p>
+          </div>
           <label id="cr-combo-secondary-axis-wrap" style="display:none;font-size:11.5px;align-items:center;gap:5px;margin-bottom:10px"><input type="checkbox" id="cr-combo-secondary-axis" onchange="crPreviewFormatChanges()"> Secondary axis for Line (own scale on the right, separate from the columns)</label>
 
           <label style="font-size:11.5px;display:flex;align-items:center;gap:5px;margin-bottom:10px"><input type="checkbox" id="cr-tile-titlebar" checked> Show tile title bar (name + drag handle)</label>
@@ -2910,6 +2928,10 @@ let _crBuilderMode='edit';    // 'view' (opening a saved report — canvas only)
 // of anything else on screen; the canvas itself scrolls if the browser
 // window is smaller than the chosen page size, rather than shrinking.
 const CR_PAGE_SIZES={'16:9':{w:1280,h:720}, '16:9-lg':{w:1600,h:900}, '4:3':{w:960,h:720}, 'letter':{w:850,h:1100}};
+// Stamped into every saved report so we can tell which grid units its
+// coordinates are in. Reports without it were saved on the original coarser
+// 12-column/70px grid and are scaled up by this factor when loaded.
+const CR_GRID_SCALE=4;
 let _crPageSize='16:9';
 // Multiple renameable pages (tabs), Power BI style — each page is its own
 // canvas of visuals. Only the ACTIVE page's visuals live in the normal
@@ -2968,6 +2990,48 @@ function initCustomReport(){
   loadCustomReportTiles();
 }
 let _crCanvasZoom='fit';   // 'fit' (Power BI's default — scale so the whole page is visible) or a fixed scale like '1'
+// Pixel <-> grid-unit conversion for the Size & Position boxes. GridStack
+// stores whole cells, so a pixel value is rounded to the nearest cell — the
+// note under the inputs says so rather than silently changing what was typed.
+const CR_CELL_H=17.5, CR_CELL_MARGIN=2, CR_GRID_COLS=48;
+function crCellW(){
+  const size=CR_PAGE_SIZES[_crPageSize]||CR_PAGE_SIZES['16:9'];
+  return size.w/CR_GRID_COLS;
+}
+// Refreshes the W/H/X/Y boxes from whichever visual is selected.
+function crRefreshSizePosInputs(){
+  const id=_crSelectedVisualId;
+  const box=document.getElementById('cr-size-pos-box');
+  if(!box) return;
+  if(!id || !_crGrid){ box.style.display='none'; return; }
+  const el=document.querySelector(`#cr-gridstack [gs-id="${id}"]`);
+  if(!el){ box.style.display='none'; return; }
+  box.style.display='block';
+  const n=el.gridstackNode||{};
+  const cw=crCellW(), ch=CR_CELL_H+CR_CELL_MARGIN;
+  const set=(elId,val)=>{ const e=document.getElementById(elId); if(e) e.value=Math.round(val); };
+  set('cr-size-w',(n.w||0)*cw);
+  set('cr-size-h',(n.h||0)*ch);
+  set('cr-pos-x',(n.x||0)*cw);
+  set('cr-pos-y',(n.y||0)*ch);
+}
+function crApplySizePos(){
+  const id=_crSelectedVisualId;
+  if(!id || !_crGrid) return;
+  const el=document.querySelector(`#cr-gridstack [gs-id="${id}"]`);
+  if(!el) return;
+  const cw=crCellW(), ch=CR_CELL_H+CR_CELL_MARGIN;
+  const num=(elId)=>{ const e=document.getElementById(elId); return e ? parseFloat(e.value) : NaN; };
+  const n=el.gridstackNode||{};
+  const w=Math.max(1, Math.round((num('cr-size-w')||0)/cw)) || n.w;
+  const h=Math.max(1, Math.round((num('cr-size-h')||0)/ch)) || n.h;
+  const x=Math.max(0, Math.round((num('cr-pos-x')||0)/cw));
+  const y=Math.max(0, Math.round((num('cr-pos-y')||0)/ch));
+  _crGrid.update(el, {x, y, w, h});
+  const v=_crVisuals[id];
+  if(v){ if(v.isSlicer) crRenderSlicerVisual(id); else crRenderVisual(id); }  // redraw to the new box
+  crRefreshSizePosInputs();  // show what it actually snapped to
+}
 function crSetCanvasZoom(mode){
   _crCanvasZoom=mode;
   const sel=document.getElementById('cr-canvas-zoom');
@@ -3014,7 +3078,12 @@ function crApplyCanvasScale(){
   // so without this the surrounding page would reserve the unscaled size).
   // Fixed to the page dimensions, so this box never moves with content.
   viewport.style.width=(size.w*scale)+'px';
-  viewport.style.height=(size.h*scale)+'px';
+  // Ceil + 1px of slack: the scaled height is fractional, and a sub-pixel
+  // overflow was enough to make the browser show a scrollbar even though the
+  // page fitted. Letter is genuinely taller than the space available, so it's
+  // the one size that legitimately scrolls.
+  viewport.style.height=(Math.ceil(size.h*scale)+1)+'px';
+  viewport.style.overflowY=(_crPageSize==='letter') ? 'auto' : 'hidden';
 }
 function crSetPageSize(preset){
   const size=CR_PAGE_SIZES[preset] || CR_PAGE_SIZES['16:9'];
@@ -3038,7 +3107,7 @@ function crSetPageSize(preset){
 // if it exceeds the page. New visuals still can't push past the page size.
 function crComputeMaxRow(floorRows){
   const size=CR_PAGE_SIZES[_crPageSize]||CR_PAGE_SIZES['16:9'];
-  const pageRows=Math.max(2, Math.floor(size.h/(70+8)));  // 70=cellHeight, 8=margin, matching GridStack.init
+  const pageRows=Math.max(8, Math.floor(size.h/(17.5+2)));  // 17.5=cellHeight, 2=margin, matching GridStack.init
   return Math.max(pageRows, floorRows||0);
 }
 // Deepest row a layout occupies (y+h of its lowest widget) — used above so
@@ -3191,7 +3260,13 @@ function crInitGridIfNeeded(){
   // happily grows the canvas taller every time a widget is added or
   // dragged further down, which is exactly the "vertically it keeps
   // expanding" behaviour reported even after the width was fixed.
-  _crGrid=GridStack.init({cellHeight:70, margin:8, minRow:2, maxRow:crComputeMaxRow(),
+  // 48 columns at 17.5px rows — exactly 4× the original 12 columns / 70px
+  // rows. Same physical proportions, but every drag/resize step is a quarter
+  // the size, which is what makes placement feel free rather than snapping
+  // in big jumps. Because the factor is a clean ×4, layouts saved in the old
+  // units convert exactly (see CR_GRID_SCALE / the migration on load) with no
+  // rounding drift.
+  _crGrid=GridStack.init({column:48, cellHeight:17.5, margin:2, minRow:8, maxRow:crComputeMaxRow(),
     resizable:{handles:'e, se, s, sw, w, n, ne, nw'}}, document.getElementById('cr-gridstack'));
   // Re-render a visual's chart after it's resized, so Chart.js redraws to fit
   // the new box instead of staying the old size.
@@ -3200,9 +3275,10 @@ function crInitGridIfNeeded(){
     const v=id && _crVisuals[id];
     if(v){ if(v.isSlicer) crRenderSlicerVisual(id); else crRenderVisual(id); }
     crHideSizeBadge();
+    crRefreshSizePosInputs();
   });
   _crGrid.on('resize', function(event, el){ crShowSizeBadge(el); crCloseSlicerDropdown(); });
-  _crGrid.on('dragstop', function(event, el){ crHideSizeBadge(); });
+  _crGrid.on('dragstop', function(event, el){ crHideSizeBadge(); crRefreshSizePosInputs(); });
   _crGrid.on('drag', function(event, el){ crCloseSlicerDropdown(); });
 }
 // A small floating "W × H" (grid columns × rows) readout that follows a
@@ -3485,7 +3561,7 @@ function crAddVisual(){
   crInitGridIfNeeded();
   const id='v'+(++_crVisualSeq);
   _crVisuals[id]={measure:'',measureLabel:'',rows:'',rowsLabel:'',columns:'',columnsLabel:'',chart_type:'col_clustered',format:{},filters:[],showTitleBar:true};
-  crAddWidgetWithHtml({w:4,h:4,id:id}, crVisualWidgetHtml(id));
+  crAddWidgetWithHtml({w:16,h:16,id:id}, crVisualWidgetHtml(id));  // 4×4 on the old grid
   crSelectVisual(id);
 }
 function crSelectVisual(id){
@@ -3538,6 +3614,7 @@ function crSelectVisual(id){
   document.getElementById('cr-panel-format').style.display='block';
   document.getElementById('cr-panel-dragdrop').style.display='block';
   crUpdateBuilderGridColumns();  // their tracks were collapsed while hidden
+  crRefreshSizePosInputs();
   document.getElementById('cr-selected-visual-label').textContent = crChartTypeIsSlicer(v.chart_type)
     ? (v.slicerField ? 'Editing slicer: '+(v.slicerTitle||v.slicerFieldLabel||v.slicerField) : 'Editing a new, unconfigured slicer')
     : (v.measureLabel ? 'Editing: '+v.measureLabel+(v.rowsLabel?' by '+v.rowsLabel:'') : 'Editing a new, unconfigured visual');
@@ -3559,12 +3636,41 @@ function crDeselectVisual(){
   document.querySelectorAll('#cr-gridstack .grid-stack-item').forEach(el=>{ el.style.outline='none'; });
   renderCrMatchSizeOptions();
 }
+// Inline SVG glyphs for the chart-type gallery. Emoji were being used before,
+// which read as decorative rather than as a chart picker — and several
+// (Column vs Bar vs Stacked) shared the same emoji, so they were impossible to
+// tell apart. These are simple monochrome shapes that actually depict each
+// chart, in the same spirit as Power BI's Visualizations pane.
+const CR_ICON_SVG=(function(){
+  const s=(body)=>`<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+  const axis='<path d="M3 3v18h18" stroke-opacity=".45"/>';
+  return {
+    card:        s('<rect x="4" y="6" width="16" height="12" rx="2"/><path d="M8 12h8"/>'),
+    col_clustered:  s(axis+'<rect x="6" y="10" width="3" height="8"/><rect x="11" y="6" width="3" height="12"/><rect x="16" y="13" width="3" height="5"/>'),
+    col_stacked:    s(axis+'<rect x="7" y="12" width="4" height="6"/><rect x="7" y="7" width="4" height="5"/><rect x="14" y="14" width="4" height="4"/><rect x="14" y="9" width="4" height="5"/>'),
+    col_stacked100: s(axis+'<rect x="7" y="12" width="4" height="6"/><rect x="7" y="5" width="4" height="7"/><rect x="14" y="12" width="4" height="6"/><rect x="14" y="5" width="4" height="7"/>'),
+    bar_clustered:  s(axis+'<rect x="6" y="6" width="12" height="3"/><rect x="6" y="11" width="8" height="3"/><rect x="6" y="16" width="5" height="3"/>'),
+    bar_stacked:    s(axis+'<rect x="6" y="7" width="6" height="4"/><rect x="12" y="7" width="6" height="4"/><rect x="6" y="14" width="4" height="4"/><rect x="10" y="14" width="6" height="4"/>'),
+    bar_stacked100: s(axis+'<rect x="6" y="7" width="7" height="4"/><rect x="13" y="7" width="6" height="4"/><rect x="6" y="14" width="7" height="4"/><rect x="13" y="14" width="6" height="4"/>'),
+    line:        s(axis+'<path d="M6 15l4-4 3 3 5-7"/>'),
+    area:        s(axis+'<path d="M6 16l4-5 3 3 5-6v9z" fill="currentColor" fill-opacity=".25"/><path d="M6 16l4-5 3 3 5-6"/>'),
+    pie:         s('<circle cx="12" cy="12" r="8"/><path d="M12 12V4M12 12l7 3"/>'),
+    doughnut:    s('<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/><path d="M12 4v4.6"/>'),
+    radar:       s('<path d="M12 3l8 6-3 10H7L4 9z"/><path d="M12 8l4 3-1.5 5h-5L8 11z" stroke-opacity=".55"/>'),
+    polarArea:   s('<circle cx="12" cy="12" r="8" stroke-opacity=".45"/><path d="M12 12V5a7 7 0 016 4z" fill="currentColor" fill-opacity=".28"/><path d="M12 12l-5 5a7 7 0 01-2-5z" fill="currentColor" fill-opacity=".18"/>'),
+    table:       s('<rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M4 10h16M4 14.5h16M10 5v14M15 5v14" stroke-opacity=".6"/>'),
+    combo_col_line: s(axis+'<rect x="6" y="12" width="3" height="6"/><rect x="11" y="9" width="3" height="9"/><rect x="16" y="14" width="3" height="4"/><path d="M6 10l5-3 5 4" stroke-opacity=".95"/>'),
+    slicer_dropdown: s('<rect x="4" y="8" width="16" height="8" rx="1.5"/><path d="M15 11l2 2 2-2" stroke-opacity=".7"/>'),
+    slicer_list:  s('<rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M7.5 9h9M7.5 12h9M7.5 15h6"/>'),
+    slicer_timeline: s('<rect x="4" y="6" width="16" height="13" rx="1.5"/><path d="M4 10h16M9 4v4M15 4v4"/>'),
+  };
+})();
 function renderCrChartTypeGallery(){
   const gal=document.getElementById('cr-chart-type-gallery');
   if(!gal) return;
   gal.innerHTML=CR_CHART_TYPES.map(ct=>
     `<button type="button" data-chart-type="${ct.value}" onclick="crSetChartType('${ct.value}')" title="${esc(ct.label)}"
-       style="width:40px;height:36px;font-size:16px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer" class="cr-chart-type-btn">${ct.icon}</button>`
+       style="width:40px;height:36px;display:flex;align-items:center;justify-content:center;color:#1e3a5f;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer" class="cr-chart-type-btn">${CR_ICON_SVG[ct.value]||esc(ct.icon||'')}</button>`
   ).join('');
 }
 function crSetChartType(value){
@@ -4755,6 +4861,7 @@ function saveCustomReportCanvas(){
   if(!pages.some(p=>p.visuals.length)){ alert('Configure at least one visual or slicer (on any page) before saving.'); return; }
   const config={
     filters:_crReportFilters,
+    gridScale:CR_GRID_SCALE,
     pages,
   };
   fetch('/api/custom_report/tiles',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -4850,7 +4957,14 @@ function crLoadReportIntoCanvas(cfg){
                     showTitleBar:v.showTitleBar!==false};
     });
     if(maxVisualNum>_crVisualSeq) _crVisualSeq=maxVisualNum;
-    const layout=(pg.visuals||[]).map(v=>({id:v.id, x:v.x, y:v.y, w:v.w||4, h:v.h||4}));
+    // Layouts saved before the grid resolution increased are in the old
+    // 12-column / 70px units. The new grid is exactly 4× finer, so an exact
+    // ×4 conversion restores them pixel-for-pixel — no rounding, no drift.
+    // cfg.gridScale marks configs already stored in the new units.
+    const gridMul = (cfg.gridScale===CR_GRID_SCALE) ? 1 : CR_GRID_SCALE;
+    const layout=(pg.visuals||[]).map(v=>({id:v.id,
+      x:(v.x||0)*gridMul, y:(v.y||0)*gridMul,
+      w:(v.w||4)*gridMul, h:(v.h||4)*gridMul}));
     _crPageSnapshots[id]={visuals:visualsMap, layout, pageSize:pg.pageSize||'16:9'};
     _crPageList.push({id, name:pg.name||('Page '+(i+1))});
   });
@@ -5635,6 +5749,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.13", date:"2026-07", title:"Free-form resizing, precise Size & Position boxes, proper chart icons, and no stray scrollbar",
+    changes:[
+      "Resizing is far finer now: the canvas grid went from 12 columns / 70px rows to 48 columns / 17.5px rows \u2014 exactly 4\u00d7 the resolution \u2014 so visuals move and resize in small steps instead of jumping between a few fixed positions. Existing saved reports convert exactly (the factor is a clean \u00d74, so there's no rounding drift) and are stamped on save so they're never converted twice.",
+      "New \u201cSize & Position (px)\u201d box in the Format panel with W, H, X and Y \u2014 type exact pixel values, the same way Power BI's General > Properties pane works. Values snap to the nearest grid step and the boxes update to show what they actually landed on, so nothing changes behind your back. They also refresh as you drag or resize by hand.",
+      "Chart-type icons are now proper drawn glyphs instead of emoji. Several types (Column vs Bar vs the stacked variants) previously shared the same emoji and were impossible to tell apart; each now shows the shape of the chart it makes.",
+      "The canvas no longer shows a scrollbar it didn't need \u2014 the scaled height was landing a fraction of a pixel over, which was enough to trigger one. Only Letter (850\u00d71100), which is genuinely taller than the space available, scrolls now.",
+    ]},
   { v:"2.12", date:"2026-07", title:"Fixed the report builder layout — panels stranded mid-page, and a much bigger canvas",
     changes:[
       "Found why the right-hand panels weren't on the right: Format and Drag & Drop only appear once a visual is selected, but their grid columns were always reserved. With nothing selected, those two sat empty and Fields dropped into the first free column \u2014 leaving Fields floating in the middle of the page with a wide blank strip beside it. Each panel is now pinned to its own column, so they always stay in the correct order at the right-hand edge.",
