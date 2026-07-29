@@ -9,6 +9,16 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@13/dist/gridstack.min.css">
+<style>
+  /* GridStack recalculates and writes an inline height onto the grid element
+     from its current row count, which made the visible canvas box grow and
+     shrink with its contents. The Custom Report canvas is meant to be a
+     fixed page (Power BI style), so pin it to the chosen Page Size instead.
+     Widget placement is unaffected — GridStack positions widgets absolutely
+     from their own x/y/w/h, not from the container's height. --cr-page-h is
+     set by crSetPageSize(). */
+  #cr-gridstack { height: var(--cr-page-h, 720px) !important; }
+</style>
 <script src="https://cdn.jsdelivr.net/npm/gridstack@13/dist/gridstack-all.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1245,7 +1255,7 @@ select:focus{outline:none;border-color:var(--green)}
                transform. The grid itself stays at its true Page Size in px,
                so every stored x/y/w/h stays in exactly the same units and
                already-saved reports are unaffected. -->
-          <div id="cr-canvas-viewport" style="min-width:0;overflow:hidden">
+          <div id="cr-canvas-viewport" style="min-width:0;overflow-x:hidden;overflow-y:auto">
             <div id="cr-canvas-scaler" style="transform-origin:top left">
               <div id="cr-gridstack" class="grid-stack" style="background:#f5f5f7;border:1px solid var(--border);border-radius:8px;width:1280px;height:720px"></div>
             </div>
@@ -2967,37 +2977,48 @@ function crSetCanvasZoom(mode){
 // Power BI's "Fit to page" does, instead of making you scroll to reach the
 // right-hand edge. Only a CSS transform — the grid keeps its true pixel size
 // and its stored coordinates, so nothing about saved layouts changes.
+//
+// CRITICAL: the scale is computed ONLY from the fixed Page Size and the space
+// available around it — never from anything measured off the canvas itself.
+// An earlier version used the grid element's offsetHeight here, but GridStack
+// rewrites that height as widgets are added or dragged, so the measurement
+// changed with the content, which changed the scale, which visibly resized
+// the canvas — exactly the "shrinks and expands based on the visuals in it"
+// problem. Measuring the canvas to decide how big to draw the canvas is
+// inherently circular; the page size is the only stable input.
 function crApplyCanvasScale(){
   const viewport=document.getElementById('cr-canvas-viewport');
   const scaler=document.getElementById('cr-canvas-scaler');
-  const canvas=document.getElementById('cr-gridstack');
-  if(!viewport || !scaler || !canvas) return;
+  if(!viewport || !scaler) return;
   const size=CR_PAGE_SIZES[_crPageSize]||CR_PAGE_SIZES['16:9'];
-  // The grid can be taller than the page when a saved report needs the extra
-  // rows (see crComputeMaxRow) — scale against its real height so nothing
-  // ends up clipped.
-  const realH=Math.max(size.h, canvas.offsetHeight||size.h);
   let scale;
   if(_crCanvasZoom==='fit'){
-    const availW=viewport.clientWidth||size.w;
-    // Leave a little vertical room for the toolbar and page tabs.
-    const availH=Math.max(240, window.innerHeight-200);
-    scale=Math.min(availW/size.w, availH/realH, 1);  // never enlarge past 100%
+    // Measure the COLUMN the canvas sits in, not the viewport itself — the
+    // viewport's own width is set by this function, so reading it back here
+    // would be circular in the same way offsetHeight was.
+    const track=viewport.parentElement;
+    const availW=(track && track.clientWidth) || size.w;
+    const availH=Math.max(240, window.innerHeight-200);  // room for toolbar + page tabs
+    scale=Math.min(availW/size.w, availH/size.h, 1);     // never enlarge past 100%
   } else {
     scale=parseFloat(_crCanvasZoom)||1;
   }
   if(!isFinite(scale) || scale<=0) scale=1;
   scaler.style.transform='scale('+scale+')';
-  // Size the viewport to the SCALED canvas so the surrounding layout doesn't
-  // reserve space for the unscaled size (a transform doesn't affect layout).
-  viewport.style.height=(realH*scale)+'px';
+  // Size the viewport to the SCALED page (a transform doesn't affect layout,
+  // so without this the surrounding page would reserve the unscaled size).
+  // Fixed to the page dimensions, so this box never moves with content.
   viewport.style.width=(size.w*scale)+'px';
+  viewport.style.height=(size.h*scale)+'px';
 }
 function crSetPageSize(preset){
   const size=CR_PAGE_SIZES[preset] || CR_PAGE_SIZES['16:9'];
   _crPageSize = CR_PAGE_SIZES[preset] ? preset : '16:9';
   const canvas=document.getElementById('cr-gridstack');
   if(canvas){ canvas.style.width=size.w+'px'; canvas.style.height=size.h+'px'; }
+  // Feeds the #cr-gridstack height override in <style> above, which is what
+  // actually holds the box at a fixed size against GridStack's own updates.
+  document.documentElement.style.setProperty('--cr-page-h', size.h+'px');
   const sel=document.getElementById('cr-page-size');
   if(sel) sel.value=_crPageSize;
   if(_crGrid) _crGrid.opts.maxRow=crComputeMaxRow(crLayoutRequiredRows(_crGrid.save(false)));
@@ -5590,6 +5611,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.10", date:"2026-07", title:"Fix: canvas was still resizing itself as visuals were added — two circular measurements removed",
+    changes:[
+      "The fit-to-page scale was being calculated from the canvas element's own measured height. GridStack rewrites that height whenever widgets are added or moved, so the content changed the measurement, the measurement changed the scale, and the canvas visibly grew and shrank. Measuring the canvas to decide how big to draw the canvas is circular by nature \u2014 it now scales from the fixed Page Size and the space around it, and nothing else.",
+      "Same problem in a second place: the available width was read from the very element this function resizes. It now measures the surrounding column instead.",
+      "Also pinned the canvas box itself to the chosen Page Size in CSS, so GridStack's own height updates can't change the visible page rectangle either. Visual placement is unaffected \u2014 widgets are positioned from their own coordinates, not the container's height.",
+      "Net effect: the canvas is now a genuinely fixed page, like Power BI \u2014 its size changes only when you change Page Size or Zoom, never in response to what's on it.",
+    ]},
   { v:"2.09", date:"2026-07", title:"Canvas now fits the screen like Power BI, and the side panels collapse the way Power BI's do",
     changes:[
       "The whole canvas is visible at once now, no horizontal scrollbar \u2014 it scales to fit the available space, exactly like Power BI's \"Fit to page\". A Zoom control next to Page Size lets you switch between Fit to page (default), 100%, 75%, and 50% if you'd rather work at a fixed magnification.",
