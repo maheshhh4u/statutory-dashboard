@@ -5611,6 +5611,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.11", date:"2026-07", title:"Daily Calling: saved searches now give you the NEXT 100, not charities already called",
+    changes:[
+      "Root cause: saved searches were deliberately exempt from the \u201calready called\u201d exclusion that every other source uses \u2014 the idea being that a saved search should show exactly what the Charity Search page shows. In practice that meant finishing the first 100 of a saved search and being handed those same charities again. Daily Calling is a work queue, not a search result, so the exclusion now applies to saved searches too.",
+      "A charity already called is only offered again when it's genuinely due a retry (\u201c\ud83d\udd01 Retry now \u2014 missed once\u201d and the other missed states). Ones still in their cooldown, or that have used up their retry attempts, are held back \u2014 exactly as with every other list source.",
+      "Second bug found in the same flow, which would have broken this completely regardless: a saved search only ever fetched its first 300 matches, on the assumption that already-called charities stayed in the list. With them correctly excluded, someone 200 calls in had just 100 candidates left, and past 300 would have had none at all. Raised to a still-bounded 3,000 so there's real headroom to skip past everything already worked through and still fill a fresh 100.",
+      "The \u201cRefine before generating\u201d preview had the same gap \u2014 it listed the raw pool including already-called charities, so it disagreed with what generating actually produced. It now applies the same rules, so what you see before generating is what you get.",
+    ]},
   { v:"2.10", date:"2026-07", title:"Fix: canvas was still resizing itself as visuals were added — two circular measurements removed",
     changes:[
       "The fit-to-page scale was being calculated from the canvas element's own measured height. GridStack rewrites that height whenever widgets are added or moved, so the content changed the measurement, the measurement changed the scale, and the canvas visibly grew and shrank. Measuring the canvas to decide how big to draw the canvas is circular by nature \u2014 it now scales from the fixed Page Size and the space around it, and nothing else.",

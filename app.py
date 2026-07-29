@@ -4705,10 +4705,16 @@ def _rank_calling_pool(category, filters=None):
                 "note": f"Saved search '{saved_name}' was not found — it may have been deleted."})
         # Run the saved search live (saved searches only store filter criteria, not
         # results, so results always reflect the current Charity Commission data).
-        # Daily Calling only ever uses the top 100, so a small bounded limit here is
-        # plenty and keeps a broad saved search (e.g. a full year of registrations)
-        # from pulling in thousands of rows unnecessarily.
-        rows, _truncated = _run_advanced_search(crit, limit=300)
+        # This limit needs enough headroom to skip PAST every charity already
+        # called from this search and still reach a full next 100. It used to be
+        # 300, on the reasoning that "Daily Calling only ever uses the top 100" —
+        # but that assumed already-called charities stayed in the list. Now that
+        # they're correctly excluded (see api_calling_batch_generate), a caller
+        # 200 calls into a saved search had only 100 candidates left, and once
+        # past 300 would have had none at all, which is what caused "the next 100
+        # isn't coming up". Still bounded, so a broad saved search can't pull
+        # unbounded rows into memory.
+        rows, _truncated = _run_advanced_search(crit, limit=3000)
         if not rows:
             return [], jsonify({"charities":[], "count":0, "category":category,
                 "category_label": CALLING_CATEGORIES.get(category,category),
@@ -4754,6 +4760,18 @@ def api_daily_calling():
     scored, err = _rank_calling_pool(category, filters)
     if err is not None:
         return err
+    # Apply the same already-called exclusion the batch generator uses, so this
+    # preview shows what would actually be generated rather than the raw pool.
+    # Without this the preview listed charities that had already been worked
+    # through — the "it's showing the previous call list" symptom — even though
+    # generating would (now) correctly skip them.
+    retry_states = _retry_states_map()
+    def _eligible(reg):
+        if not _ever_called(reg): return True
+        rs = retry_states.get(str(reg))
+        return bool(rs and rs.get("retry_due"))
+    scored = [c for c in scored
+              if _eligible(c["reg_number"]) and c["reg_number"] not in _calling_excl]
     top = scored[:100]
     called_today_count = sum(1 for c in top if c["called_today"])
     return jsonify({
@@ -5167,16 +5185,20 @@ def api_calling_batch_generate():
         rs = retry_states.get(str(reg))
         return bool(rs and rs.get("retry_due"))
 
-    # For a saved search specifically, show the exact same set of charities as
-    # the Charity Search page would (full parity, per explicit request) — the
-    # "already called" retry exclusion below is the right behaviour for the
-    # other sources (don't resurface charities already worked through a
-    # prospecting list), but a saved search is a specific, deliberate set of
-    # charities the caller defined themselves, and expects to see in full.
-    # The explicit, caller-controlled exclusions (Exclude-from-list checkboxes,
-    # permanent exclusions) still apply either way.
+    # Saved searches used to be exempt from the already-called exclusion below,
+    # so a saved search showed the same full set the Charity Search page does.
+    # In practice that meant re-serving charities the caller had already worked
+    # through: after finishing the first 100 of "Wiltshire & England" she'd get
+    # those same charities back instead of the next 100. Daily Calling is a
+    # work queue, not a search result — a charity that's been called belongs
+    # back in it only when it's genuinely due a retry. So _retry_ok now applies
+    # to every source, saved searches included: never-called charities are
+    # eligible, plus any whose retry cooldown has come due ("Retry now — missed
+    # once"); charities still cooling down, or that have used up their retry
+    # attempts, are held back. Explicit caller-controlled exclusions
+    # (Exclude-from-list checkboxes, permanent exclusions) still apply on top.
     pool = [c for c in scored
-            if (category == "search" or _retry_ok(c["reg_number"]))
+            if _retry_ok(c["reg_number"])
             and not _name_excluded(c) and c["reg_number"] not in _calling_excl]
 
     # ── Source-specific filters (Anniversary milestone/timing, Late months, New days) ──
