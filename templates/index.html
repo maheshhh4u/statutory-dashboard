@@ -3553,6 +3553,12 @@ function loadRelationships(){
     // so a join that looks sensible by name but matches nothing says so.
     const q=(x)=>{
       const c=x.pct>=80?'#1d7a3a':(x.pct>=40?'#8a6d1a':'#c0392b');
+      // When there was nothing to sample, say so rather than showing "0% match"
+      // — those mean very different things, and conflating them is what made a
+      // broken query look like a data problem.
+      if(x.reason){
+        return `<span style="color:#8a6d1a;font-size:11px" title="${esc(x.reason)}">not comparable</span>`;
+      }
       return `<span style="color:${c};font-size:11px" title="${x.matched} of ${x.sampled} sampled values found a match">${x.pct}% match</span>`;
     };
     const relRow=(r)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:#fff;font-size:12px">
@@ -6677,6 +6683,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.27", date:"2026-07", title:"Fix: relationships always reported 0% match \u2014 a quoting bug in the check, not your data",
+    changes:[
+      "The match check filtered out blank values with TRIM(column) <> \"\" \u2014 but double quotes mean an IDENTIFIER in SQL, not text. So it was comparing the column against a column literally named \"\", which doesn\u2019t exist. The query failed, the failure was swallowed, and with no values to compare every relationship reported 0% no matter how well the keys actually lined up. Now uses single quotes, which is what makes it a string.",
+      "Your keys were fine all along \u2014 call_log and called_log both hold reg_number and both have data, which is why 0% looked so wrong. Re-open the Relationships tab after deploying and the real percentages will show.",
+      "A relationship where there was genuinely nothing to compare (an empty column or table) now reads \u201cnot comparable\u201d with an explanation on hover, rather than \u201c0% match\u201d. Those mean different things, and conflating them is exactly what made a broken query look like a data problem.",
+      "Checked the rest of the model code for the same mistake \u2014 this was the only place it occurred.",
+    ]},
   { v:"2.26", date:"2026-07", title:"Memory: four fixes for the repeated out-of-memory restarts on Render",
     changes:[
       "Biggest one, straight from the log (\u201cDownloaded 42976KB\u201d): every Charity Commission bulk file was being buffered whole in memory before being read \u2014 about 43MB held for the entire scan, on top of the rows being parsed out of it. Downloads now spool to a temporary file on disk and are read from there, so only the current row is in memory. The temp file is cleaned up even if the scan is abandoned part-way.",

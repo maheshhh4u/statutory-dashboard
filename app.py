@@ -2560,17 +2560,31 @@ def _model_table_columns(table):
 def _model_join_quality(from_table, from_col, to_table, to_col):
     """What proportion of a sample of left-hand values actually find a match on
     the right. Bounded sampling — this runs on a 512MB instance and some of
-    these tables will grow."""
-    left = db_query(f'SELECT DISTINCT "{from_col}" FROM "{from_table}" '
-                    f'WHERE "{from_col}" IS NOT NULL AND TRIM("{from_col}")<>"" LIMIT 200') or []
+    these tables will grow.
+
+    The empty-string comparison below MUST use single quotes. Double quotes are
+    identifier quoting in SQL, so <> "" compared the column against a column
+    named "" — the query failed, db_query returned an empty list, and every
+    relationship reported 0% match no matter how well the keys actually lined
+    up. Because the failure was swallowed, it looked like a data problem rather
+    than a broken query, so the result now distinguishes 'nothing to sample'
+    from 'sampled and found no matches'."""
+    left = db_query(f"""SELECT DISTINCT "{from_col}" FROM "{from_table}" """
+                    f"""WHERE "{from_col}" IS NOT NULL AND TRIM("{from_col}") <> '' LIMIT 200""") or []
     if not left:
-        return {"sampled": 0, "matched": 0, "pct": 0}
-    right = db_query(f'SELECT DISTINCT "{to_col}" FROM "{to_table}" '
-                     f'WHERE "{to_col}" IS NOT NULL AND TRIM("{to_col}")<>"" LIMIT 5000') or []
+        return {"sampled": 0, "matched": 0, "pct": 0,
+                "reason": f"No values to compare in {from_table}.{from_col} — the column is empty, or the table has no rows."}
+    right = db_query(f"""SELECT DISTINCT "{to_col}" FROM "{to_table}" """
+                     f"""WHERE "{to_col}" IS NOT NULL AND TRIM("{to_col}") <> '' LIMIT 5000""") or []
+    if not right:
+        return {"sampled": len(left), "matched": 0, "pct": 0,
+                "reason": f"No values to compare in {to_table}.{to_col} — the column is empty, or the table has no rows."}
+    # Compared as trimmed strings: these columns are all TEXT, and the same
+    # registration number can be stored with different padding in two tables.
     right_set = {str(r[0]).strip() for r in right}
     matched = sum(1 for r in left if str(r[0]).strip() in right_set)
     return {"sampled": len(left), "matched": matched,
-            "pct": round(100.0 * matched / len(left)) if left else 0}
+            "pct": round(100.0 * matched / len(left))}
 
 def _model_relationships():
     rows = db_query("SELECT id, from_table, from_column, to_table, to_column FROM model_relationships ORDER BY id") or []
