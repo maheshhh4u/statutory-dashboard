@@ -1,4 +1,4 @@
-import os, io, csv, zipfile, requests, threading, json, re
+import os, io, csv, zipfile, requests, threading, json, re, tempfile
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -666,7 +666,11 @@ def cache_get(key,max_age=180):
 # _get_called_classification_map) are scoped to only the charities that have
 # actually been called, not the whole country, so they're small enough not
 # to need this eviction pool at all.
-_LARGE_SOURCE_CACHE_LIMIT = 2
+# Dropped from 2 to 1 after repeated out-of-memory restarts on Render: each of
+# these datasets is large, and holding two at once was enough to tip a 512MB
+# instance over when a bulk scan was also running. One is recomputed on demand
+# if it's been evicted, which is slower but survives.
+_LARGE_SOURCE_CACHE_LIMIT = 1
 def _is_large_source_key(k):
     return (k=="prospects" or k=="late" or k=="old_charities" or k.startswith("new_")
             or k.startswith("milestones_") or k.startswith("area_regs_") or k.startswith("classif_regs_"))
@@ -690,30 +694,48 @@ def flt(v):
     except: return 0.0
 
 def stream_zip_csv(url, needed_cols=None):
-    r=requests.get(url,timeout=180,stream=True)
-    r.raise_for_status()
-    buf=io.BytesIO()
-    for chunk in r.iter_content(chunk_size=1024*1024): buf.write(chunk)
-    buf.seek(0)
-    print(f"  Downloaded {buf.getbuffer().nbytes//1024}KB from {url.split('/')[-1]}")
-    with zipfile.ZipFile(buf) as z:
-        inner=z.namelist()[0]
-        with z.open(inner) as f:
-            header=f.readline().decode('utf-8',errors='replace').rstrip('\r\n')
-            all_cols=[c.strip().lower() for c in header.split('\t')]
-            print(f"  [stream_zip_csv] {url.split('/')[-1]} actual columns: {all_cols}")
-            keep={i:c for i,c in enumerate(all_cols) if not needed_cols or c in needed_cols}
-            if needed_cols and not keep:
-                print(f"  [stream_zip_csv] WARNING: none of {sorted(needed_cols)} matched the actual columns above")
-            count=0
-            for raw in f:
-                try:
-                    fields=raw.decode('utf-8',errors='replace').rstrip('\r\n').split('\t')
-                    row={c:(fields[i].strip() if i<len(fields) else '') for i,c in keep.items()}
-                    row={k:('' if v.lower() in ('nan','none') else v) for k,v in row.items()}
-                    yield row; count+=1
-                except: continue
-    print(f"  Streamed {count} rows")
+    # Spooled to a temp FILE rather than a BytesIO. The main charity extract is
+    # ~43MB compressed, so buffering it in memory cost that much RAM for the
+    # whole scan, on top of the decompressed rows being parsed — a large part
+    # of why this instance kept hitting Render's 512MB ceiling. Reading the zip
+    # from disk keeps only the current row in memory. The temp file is removed
+    # in the finally below even if the caller abandons the generator early.
+    tmp = tempfile.NamedTemporaryFile(prefix="ccbulk_", suffix=".zip", delete=False)
+    tmp_path = tmp.name
+    try:
+        r=requests.get(url,timeout=180,stream=True)
+        r.raise_for_status()
+        size=0
+        for chunk in r.iter_content(chunk_size=1024*1024):
+            if chunk:
+                tmp.write(chunk); size+=len(chunk)
+        tmp.flush(); tmp.close()
+        print(f"  Downloaded {size//1024}KB from {url.split('/')[-1]} (spooled to disk)")
+        with zipfile.ZipFile(tmp_path) as z:
+            inner=z.namelist()[0]
+            with z.open(inner) as f:
+                header=f.readline().decode('utf-8',errors='replace').rstrip('\r\n')
+                all_cols=[c.strip().lower() for c in header.split('\t')]
+                print(f"  [stream_zip_csv] {url.split('/')[-1]} actual columns: {all_cols}")
+                keep={i:c for i,c in enumerate(all_cols) if not needed_cols or c in needed_cols}
+                if needed_cols and not keep:
+                    print(f"  [stream_zip_csv] WARNING: none of {sorted(needed_cols)} matched the actual columns above")
+                count=0
+                for raw in f:
+                    try:
+                        fields=raw.decode('utf-8',errors='replace').rstrip('\r\n').split('\t')
+                        row={c:(fields[i].strip() if i<len(fields) else '') for i,c in keep.items()}
+                        row={k:('' if v.lower() in ('nan','none') else v) for k,v in row.items()}
+                        yield row; count+=1
+                    except: continue
+        print(f"  Streamed {count} rows")
+    finally:
+        try:
+            if not tmp.closed: tmp.close()
+        except Exception: pass
+        try: os.unlink(tmp_path)
+        except Exception: pass
+        import gc; gc.collect()
 
 def classify(ti,stat,pct,cont):
     l=[]
@@ -741,6 +763,11 @@ def bg_run(key,fn):
             import traceback; print(f"BG {key} ERROR: {traceback.format_exc()}")
         finally:
             with _bg_lock: _bg_status[key]="idle"
+            # These builds create and discard very large intermediate
+            # structures. Without an explicit collection the freed memory can
+            # sit unreclaimed until the next allocation pressure — which on a
+            # 512MB instance is often the restart itself.
+            import gc; gc.collect()
     threading.Thread(target=_w,daemon=True).start()
 
 def bg_check(key,empty):
@@ -781,6 +808,16 @@ def compute_prospects():
         if classify(ti,stat,pct,gc):
             prospect_regs.add(reg)
             prospect_regs.add(reg.lstrip("0"))
+
+    # The financial rows for every charity in the country have now served their
+    # purpose — only prospects survive the classify() check in the loop below,
+    # so dropping the rest here is behaviour-neutral and frees the bulk of what
+    # this function holds (roughly 200,000 rows down to a few thousand) BEFORE
+    # the next bulk scan starts. Peak memory is what matters on a 512MB
+    # instance, and the peak was these two dicts overlapping the charity scan.
+    latest={r:v for r,v in latest.items() if r in prospect_regs}
+    prev={r:v for r,v in prev.items() if r in prospect_regs}
+    import gc; gc.collect()
 
     # Only load contact info for prospects (much smaller memory footprint)
     contacts={}

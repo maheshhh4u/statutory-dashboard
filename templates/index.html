@@ -6677,6 +6677,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.26", date:"2026-07", title:"Memory: four fixes for the repeated out-of-memory restarts on Render",
+    changes:[
+      "Biggest one, straight from the log (\u201cDownloaded 42976KB\u201d): every Charity Commission bulk file was being buffered whole in memory before being read \u2014 about 43MB held for the entire scan, on top of the rows being parsed out of it. Downloads now spool to a temporary file on disk and are read from there, so only the current row is in memory. The temp file is cleaned up even if the scan is abandoned part-way.",
+      "The prospects build held a financial row for every charity in the country \u2014 roughly 200,000 of them \u2014 and was still holding them while the next bulk scan ran. Non-prospects are now dropped as soon as they\u2019ve been classified, before that scan starts, cutting it to a few thousand rows. Behaviour is identical: those rows were discarded a few lines later anyway.",
+      "Reduced how many large datasets are kept in memory at once from two to one. Holding two was enough to tip the instance over when a scan was also running. An evicted one is rebuilt on demand \u2014 slower on that first request, but it survives.",
+      "Added an explicit memory sweep after each background dataset build, so the freed memory is actually returned rather than sitting unreclaimed until the next allocation \u2014 which on a 512MB instance was often the restart itself.",
+      "These reduce PEAK memory, which is what actually causes the restarts \u2014 not average use. Worth watching over a full day, since the crashes have been intermittent rather than immediate.",
+    ]},
   { v:"2.25", date:"2026-07", title:"Generate new calling list: third option to work the missed-call backlog first",
     changes:[
       "New \u201c\ud83d\udfe1 Missed calls first\u201d option alongside Include leftovers and Fresh list. It builds the list from the retry-due charities \u2014 the ones shown in yellow \u2014 taking them first and filling any remaining slots with fresh charities, so you still get a full 100 even when the backlog is short.",
