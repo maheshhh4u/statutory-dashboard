@@ -6677,6 +6677,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.25", date:"2026-07", title:"Generate new calling list: third option to work the missed-call backlog first",
+    changes:[
+      "New \u201c\ud83d\udfe1 Missed calls first\u201d option alongside Include leftovers and Fresh list. It builds the list from the retry-due charities \u2014 the ones shown in yellow \u2014 taking them first and filling any remaining slots with fresh charities, so you still get a full 100 even when the backlog is short.",
+      "Retry-due charities are normally capped at a quarter of a generated list, deliberately, so a backlog can\u2019t crowd out new prospects. Choosing this option lifts that cap, since at that point working the backlog is the whole intent.",
+      "The mode options now always show. Previously they only appeared when the current list had uncompleted calls \u2014 but a list can have nothing outstanding while still having plenty of retry-due charities waiting, so hiding the choice in that case would have made the new option unreachable exactly when it\u2019s most useful.",
+    ]},
   { v:"2.24", date:"2026-07", title:"Expression Builder \u2014 Blue Prism Calculation-stage style, with 47 functions",
     changes:[
       "New \u0192 Builder\u2026 button next to Add calculated column opens a proper expression builder: name and result type at the top, the expression itself, then a browsable list of columns and functions with a detail pane \u2014 the same layout as Blue Prism\u2019s Calculation stage.",
@@ -9568,13 +9574,24 @@ const GEN_PICKER_FIELDS=[
   {pickerId:'genlist_how', key:'how_class'},
 ];
 function showGeneratePopup(cat, remaining){
-  const modeHtml = remaining>0
-    ? `<p style="margin:0 0 10px;font-size:13px">You still have <strong>${remaining}</strong> uncompleted ${remaining===1?'call':'calls'} in the current list.</p>
-       <div style="display:flex;gap:10px;margin-bottom:16px">
-         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="radio" name="genmode" value="leftovers" checked> Include leftovers</label>
-         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="radio" name="genmode" value="fresh"> Fresh list (set leftovers aside)</label>
-       </div>`
-    : '<input type="hidden" name="genmode" value="fresh" checked style="display:none">';
+  // The mode options are always shown now. "Missed calls first" is useful
+  // whether or not there are leftovers — a list can have nothing outstanding
+  // while still having a backlog of retry-due charities waiting — so it can no
+  // longer live behind the remaining>0 check the other two sat behind.
+  const leftoverRow = remaining>0
+    ? `<p style="margin:0 0 10px;font-size:13px">You still have <strong>${remaining}</strong> uncompleted ${remaining===1?'call':'calls'} in the current list.</p>`
+    : '';
+  const modeHtml = `${leftoverRow}
+       <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+         ${remaining>0 ? `<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="radio" name="genmode" value="leftovers" checked> Include leftovers</label>` : ''}
+         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="radio" name="genmode" value="fresh" ${remaining>0?'':'checked'}> Fresh list${remaining>0?' (set leftovers aside)':''}</label>
+         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+           <input type="radio" name="genmode" value="retries">
+           <span>&#128993; Missed calls first &mdash; work the retry backlog
+             <span style="color:var(--t3);font-size:11.5px">(the ones shown in yellow; normally capped at a quarter of the list, this fills it)</span>
+           </span>
+         </label>
+       </div>`;
   const fieldsHtml = GEN_ADV_FIELDS.map(f=>
     `<div><label style="font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;display:block;margin-bottom:2px">${esc(f.label)}</label>
      <input id="${f.id}" type="${f.type||'text'}" placeholder="${esc(f.ph||'')}" style="width:100%;padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-family:inherit;font-size:12px">

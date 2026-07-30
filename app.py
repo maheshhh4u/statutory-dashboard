@@ -6034,22 +6034,42 @@ def api_calling_batch_generate():
     retry_cap = max(5, int(100 * RETRY_SHARE_CAP))
     fresh_added = 0
     retry_added = 0
-    # First pass: fresh (never-called) charities, in priority order, uncapped
-    # other than the overall list size.
-    for c in pool:
-        if len(selected) >= 100: break
-        reg = c["reg_number"]
-        if reg in excl or reg in used: continue
-        if c.get("ever_called"): continue  # retry-due — handled in the second pass
-        selected.append(c); used.add(reg); fresh_added += 1
-    # Second pass: retry-due charities fill any remaining slots, capped so they
-    # can never dominate the list even when the pool is mostly backlog.
-    for c in pool:
-        if len(selected) >= 100 or retry_added >= retry_cap: break
-        reg = c["reg_number"]
-        if reg in excl or reg in used: continue
-        selected.append(c); used.add(reg); retry_added += 1
-    print(f"  [generate] fresh={fresh_added} retry_due={retry_added} (cap={retry_cap}) leftovers={len(used)-fresh_added-retry_added}")
+    if mode == "retries":
+        # "Missed calls first": the caller has deliberately asked to work the
+        # retry backlog — the ones shown in yellow — so the usual 25% cap is
+        # lifted and they're taken FIRST, uncapped. Any remaining slots are
+        # then filled with fresh charities so a short backlog still produces a
+        # full list rather than a nearly-empty one.
+        for c in pool:
+            if len(selected) >= 100: break
+            reg = c["reg_number"]
+            if reg in excl or reg in used: continue
+            if not c.get("ever_called"): continue   # fresh — second pass
+            selected.append(c); used.add(reg); retry_added += 1
+        for c in pool:
+            if len(selected) >= 100: break
+            reg = c["reg_number"]
+            if reg in excl or reg in used: continue
+            if c.get("ever_called"): continue
+            selected.append(c); used.add(reg); fresh_added += 1
+    else:
+        # First pass: fresh (never-called) charities, in priority order, uncapped
+        # other than the overall list size.
+        for c in pool:
+            if len(selected) >= 100: break
+            reg = c["reg_number"]
+            if reg in excl or reg in used: continue
+            if c.get("ever_called"): continue  # retry-due — handled in the second pass
+            selected.append(c); used.add(reg); fresh_added += 1
+        # Second pass: retry-due charities fill any remaining slots, capped so they
+        # can never dominate the list even when the pool is mostly backlog.
+        for c in pool:
+            if len(selected) >= 100 or retry_added >= retry_cap: break
+            reg = c["reg_number"]
+            if reg in excl or reg in used: continue
+            selected.append(c); used.add(reg); retry_added += 1
+    print(f"  [generate] mode={mode} fresh={fresh_added} retry_due={retry_added} "
+          f"(cap={'none' if mode=='retries' else retry_cap}) leftovers={len(used)-fresh_added-retry_added}")
 
     selected = selected[:100]
     if not selected:
