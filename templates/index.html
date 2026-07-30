@@ -1519,6 +1519,19 @@ select:focus{outline:none;border-color:var(--green)}
             <span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;writing-mode:vertical-rl;white-space:nowrap">📏 Fields</span>
           </div>
           <div id="cr-panel-fields-body" style="padding:10px 12px">
+          <!-- Data source lives inside Fields rather than in a panel of its own:
+               the model tables are just another place fields come from, so
+               splitting them out would mean hunting in two places for the same
+               kind of thing. The small link opens the full browser for
+               relationships, types and calculated columns. -->
+          <div style="display:flex;align-items:center;gap:5px;margin-bottom:8px">
+            <select id="cr-field-source" onchange="crSetFieldSource(this.value)" title="Where these fields come from"
+              style="flex:1;min-width:0;padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
+              <option value="report">Calling data (report)</option>
+            </select>
+            <span onclick="openModelBrowser()" title="Browse tables, relationships and calculated columns"
+              style="cursor:pointer;font-size:13px;flex-shrink:0">&#128451;</span>
+          </div>
           <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">📏 Measures</div>
           <div id="cr-palette-measures" style="margin-bottom:14px"></div>
           <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">🔀 Fields</div>
@@ -3330,6 +3343,7 @@ function crSerializeVisualsFromSnapshot(layout, visualsMap){
             measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null,
             measure2:v.measure2||'', measure2Label:v.measure2Label||'', measure2Def:v.measure2Def||null,
             customTitle:v.customTitle||'',
+            source:v.source||'report', modelTable:v.modelTable||'',
             rows:v.rows, rowsLabel:v.rowsLabel,
             columns:v.columns||'', columnsLabel:v.columnsLabel||'',
             chart_type:v.chart_type||'col_clustered',
@@ -3776,6 +3790,7 @@ const CR_MENUS={
   file: ()=>[
     {label:'\u2190 Back to Reports', fn:'crBackToGallery()'},
     {label:'\u{1F4BE} Save Report', fn:'saveCustomReportCanvas()', disabled:_crBuilderMode!=='edit'},
+    {label:'\u{1F4C4} Save As\u2026', fn:'saveReportAs()', disabled:_crBuilderMode!=='edit'},
     {sep:true},
     {label:'\u270F\uFE0F Edit this report', fn:'crEnterEditMode()', disabled:_crBuilderMode==='edit'},
   ],
@@ -4152,6 +4167,7 @@ function crOpenBuilder(){
   if(build) build.style.display='block';
   crInitGridIfNeeded();
   document.getElementById('cr-report-name').value='';
+  crPopulateFieldSources();
   _crVisuals={};
   _crVisualDataCache={};
   _crVisualSeq=0;
@@ -4171,6 +4187,57 @@ function crBackToGallery(){
   if(build) build.style.display='none';
   if(gal) gal.style.display='block';
   loadCustomReportTiles();
+}
+// ── Model fields inside the Fields panel ───────────────────────────────────
+// The source dropdown swaps what the palette lists: the built-in calling
+// measures/fields, or the columns of a model table. Chips behave identically
+// either way — they're dragged into the same wells — so nothing else in the
+// builder needs to know which source is active. What differs is only where a
+// visual gets its numbers from, handled in crRenderVisual.
+let _crFieldSource='report';
+let _crModelFieldCache={};   // table -> fields payload, so switching back is instant
+function crPopulateFieldSources(){
+  const sel=document.getElementById('cr-field-source');
+  if(!sel) return;
+  fetch('/api/model/tables').then(r=>r.json()).then(d=>{
+    if(!d.ok) return;
+    const cur=sel.value;
+    sel.innerHTML='<option value="report">Calling data (report)</option>'+
+      (d.tables||[]).map(t=>`<option value="model:${esc(t.name)}">${esc(t.name)} (${t.rows.toLocaleString()})</option>`).join('');
+    sel.value=cur||'report';
+  }).catch(()=>{});
+}
+function crSetFieldSource(val){
+  _crFieldSource=val||'report';
+  if(_crFieldSource==='report'){ renderCrPalette(); return; }
+  const table=_crFieldSource.slice(6);
+  if(_crModelFieldCache[table]){ crRenderModelPalette(table); return; }
+  fetch('/api/model/query_fields?table='+encodeURIComponent(table)).then(r=>r.json()).then(d=>{
+    if(!d.ok) return;
+    _crModelFieldCache[table]=d;
+    crRenderModelPalette(table);
+  }).catch(()=>{});
+}
+function crRenderModelPalette(table){
+  const d=_crModelFieldCache[table]; if(!d) return;
+  const mEl=document.getElementById('cr-palette-measures');
+  const dEl=document.getElementById('cr-palette-dims');
+  if(!mEl||!dEl) return;
+  const chip=(value,label,kind)=>`<div draggable="true" data-kind="${kind}" data-value="${esc(value)}" data-label="${esc(label)}"
+      ondragstart="crChipDragStart(event)" onclick="crChipTapEl(this)"
+      style="background:${kind==='measure'?'#f0e9fb':'#e9f1fb'};border:1px solid ${kind==='measure'?'#d2bdf0':'#bdd7f0'};border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px;cursor:grab;user-select:none">${esc(label)}</div>`;
+  // Count of rows always applies; Sum/Average/Min/Max are only offered for
+  // columns typed as a number on the Tables tab — which is the practical
+  // payoff for setting those types.
+  let measures=chip('model:count','Count of rows','measure');
+  (d.fields||[]).filter(f=>f.type==='integer'||f.type==='number').forEach(f=>{
+    ['sum','avg','min','max'].forEach(a=>{
+      const lbl={sum:'Sum',avg:'Average',min:'Min',max:'Max'}[a];
+      measures+=chip('model:'+a+':'+f.ref, lbl+' of '+f.label, 'measure');
+    });
+  });
+  mEl.innerHTML=measures;
+  dEl.innerHTML=(d.fields||[]).map(f=>chip(f.ref, f.label, 'dim')).join('');
 }
 function renderCrPalette(){
   const mEl=document.getElementById('cr-palette-measures');
@@ -4352,6 +4419,11 @@ function crSelectVisual(id){
   }
   const tbEl=document.getElementById('cr-tile-titlebar'); if(tbEl) tbEl.checked=v.showTitleBar!==false;
   const nmEl=document.getElementById('cr-visual-name'); if(nmEl) nmEl.value=v.customTitle||'';
+  const srcSel=document.getElementById('cr-field-source');
+  if(srcSel){
+    const want=(v.source==='model' && v.modelTable) ? ('model:'+v.modelTable) : 'report';
+    if(srcSel.value!==want){ srcSel.value=want; crSetFieldSource(want); }
+  }
   if(crChartTypeIsSlicer(v.chart_type)){
     const sfEl=document.getElementById('cr-slicer-field'); if(sfEl) sfEl.value=v.slicerField||'';
     crSlicerFieldSelectChanged();
@@ -5352,6 +5424,10 @@ function crApplyToSelectedVisual(){
   }
   crPushUndo();   // validation passed — this will change the canvas
   _crVisuals[id]={
+    // A visual built from a model table remembers that, so it keeps querying
+    // the model even after the Fields panel is switched back to the report.
+    source: (_crFieldSource && _crFieldSource!=='report') ? 'model' : 'report',
+    modelTable: (_crFieldSource && _crFieldSource!=='report') ? _crFieldSource.slice(6) : '',
     measure:_crCanvas.values.value, measureLabel:_crCanvas.values.label, measureDef:customDef,
     measure2: isCombo ? _crCanvas.values_line.value : '', measure2Label: isCombo ? _crCanvas.values_line.label : '', measure2Def: customDef2,
     rows: needsRows && _crCanvas.rows ? _crCanvas.rows.value : '',
@@ -5483,6 +5559,31 @@ function crRenderVisual(id){
   if(crChartTypeNeedsRows(v.chart_type) && !v.rows) return;
   const emptyEl=document.getElementById('cr-visual-empty-'+id);
   if(emptyEl) emptyEl.style.display='none';
+
+  // Visuals built from a model table go to the model query engine instead of
+  // the calling-report one. Its response uses the same row_labels/data/
+  // measure_label shape, so every renderer, chart type and formatting option
+  // works unchanged — the only difference is where the numbers come from.
+  if(v.source==='model' && v.modelTable){
+    if(!v.rows){
+      const st=document.getElementById('cr-result-status');
+      if(st){ st.textContent='\u26a0 A visual built from a table needs a field in Rows \u2014 Card (single total) isn\u2019t supported from model tables yet.'; st.style.color='#c0392b'; }
+      return;
+    }
+    const m=String(v.measure||'');           // "model:count" or "model:<agg>:<field>"
+    const parts=m.split(':');
+    const agg=parts[1]||'count';
+    const aggCol=parts.slice(2).join(':')||'';
+    return fetch('/api/model/query',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({table:v.modelTable, group_by:v.rows||'', agg, agg_column:aggCol})})
+      .then(r=>r.json()).then(d=>{
+        const status=document.getElementById('cr-result-status');
+        if(!d.ok){ if(status){ status.textContent='\u26a0 '+(d.error||'Model query failed'); status.style.color='#c0392b'; } return; }
+        _crVisualDataCache[id]={kind:'chart', d};
+        renderCrResult(d, v.chart_type, 'cr-visual-chart-'+id, 'cr-visual-table-'+id, true, v.format, 'cr-visual-card-'+id);
+      }).catch(()=>{});
+  }
+
   const filters=crCombinedFilters(v, id);
   const measurePayload = v.measureDef || v.measure;
 
@@ -5774,6 +5875,22 @@ function renderCrComboResult(d1, d2, v, chartId){
 }
 
 // ── Saved tiles ──────────────────────────────────────────────────────────────
+// Saves the current report under a new name, leaving the original untouched.
+// Saving is keyed on the report name (an existing name is replaced), so this
+// is simply a rename-then-save — but doing it explicitly avoids the trap of
+// renaming in the title box and overwriting the original by accident.
+function saveReportAs(){
+  const nameEl=document.getElementById('cr-report-name');
+  const current=(nameEl.value||'').trim();
+  const suggested=current ? current+' (copy)' : '';
+  const name=prompt('Save this report as:', suggested);
+  if(name===null) return;
+  const trimmed=name.trim();
+  if(!trimmed){ alert('Give the report a name.'); return; }
+  if(trimmed===current && !confirm('That\u2019s the same name as the current report, so it will be overwritten. Continue?')) return;
+  nameEl.value=trimmed;
+  saveCustomReportCanvas();
+}
 function saveCustomReportCanvas(){
   const nameEl=document.getElementById('cr-report-name');
   const name=(nameEl.value||'').trim();
@@ -5876,6 +5993,7 @@ function crLoadReportIntoCanvas(cfg){
       visualsMap[vid]={measure:v.measure, measureLabel:v.measureLabel, measureDef:v.measureDef||null,
                     measure2:v.measure2||'', measure2Label:v.measure2Label||'', measure2Def:v.measure2Def||null,
                     customTitle:v.customTitle||'',
+                    source:v.source||'report', modelTable:v.modelTable||'',
                     rows:v.rows, rowsLabel:v.rowsLabel,
                     columns:v.columns||'', columnsLabel:v.columnsLabel||'', chart_type:v.chart_type||'col_clustered',
                     format:v.format||{}, filters:v.filters||[],
@@ -6683,6 +6801,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.28", date:"2026-07", title:"Model tables usable directly in the Fields panel, plus Save As",
+    changes:[
+      "The Fields panel now has a small source dropdown at the top: \u201cCalling data (report)\u201d as before, or any table from the data model. Switch it and the palette lists that table\u2019s columns as fields and its aggregations as measures \u2014 Count of rows always, plus Sum/Average/Min/Max for any column typed as a number on the Tables tab. Columns from related tables appear too, so a relationship pays off directly here.",
+      "No separate area for it, as asked \u2014 the tables are just another place fields come from. The small \ud83d\uddc3 icon beside the dropdown opens the full browser when you need relationships, types or calculated columns.",
+      "Chips drag into Values/Rows exactly as before, and every chart type, formatting option and slicer works unchanged \u2014 the model query returns the same shape as the report engine, so only the source of the numbers differs. A visual remembers which table it was built from, so it keeps querying that table even after the panel is switched back.",
+      "One current limit, stated plainly rather than left to be discovered: a visual built from a model table needs a field in Rows. Card (a single total with no breakdown) isn\u2019t supported from model tables yet \u2014 the query engine has no whole-table-total mode \u2014 and says so rather than failing with an unhelpful error.",
+      "New File \u2192 Save As\u2026 saves the current report under a different name, leaving the original as it was. It warns if you reuse the current name, since saving is keyed on the name and would otherwise overwrite silently.",
+    ]},
   { v:"2.27", date:"2026-07", title:"Fix: relationships always reported 0% match \u2014 a quoting bug in the check, not your data",
     changes:[
       "The match check filtered out blank values with TRIM(column) <> \"\" \u2014 but double quotes mean an IDENTIFIER in SQL, not text. So it was comparing the column against a column literally named \"\", which doesn\u2019t exist. The query failed, the failure was swallowed, and with no values to compare every relationship reported 0% no matter how well the keys actually lined up. Now uses single quotes, which is what makes it a string.",
