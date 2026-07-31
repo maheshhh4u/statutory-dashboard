@@ -3129,6 +3129,9 @@ ADMIN_USERS_PAGE = """<!doctype html><html><head><meta charset="utf-8">
       <button class="btn" onclick="createUser()">Create</button>
     </div>
     <div id="cmsg" class="msg"></div>
+    <p style="font-size:11.5px;color:#889;margin:9px 0 0">
+      Username can be an email address. Password needs 10 characters or more &mdash; any characters are allowed, including @ % &amp; $ * ! ~
+    </p>
   </div>
 
   <div class="card">
@@ -3139,6 +3142,7 @@ ADMIN_USERS_PAGE = """<!doctype html><html><head><meta charset="utf-8">
       <button class="btn" onclick="changePw()">Change password</button>
     </div>
     <div id="pmsg" class="msg"></div>
+    <p style="font-size:11.5px;color:#889;margin:9px 0 0">10 characters or more. Any characters allowed, including @ % &amp; $ * ! ~</p>
     <div style="margin-top:16px;border-top:1px solid #f0f1f3;padding-top:14px">
       <div class="row">
         <span style="font-size:12.5px">Two-factor authentication: <strong id="tstate">&hellip;</strong></span>
@@ -3193,7 +3197,7 @@ function act(username, action, confirmIt){
     body:JSON.stringify({action})}).then(r=>r.json()).then(d=>{ if(!d.ok) alert(d.error||'Failed'); load(); });
 }
 function setPw(username){
-  const pw=prompt('New password for '+username+' (min 10 characters):');
+  const pw=prompt('New password for '+username+'\\n\\nAt least 10 characters. Any characters allowed, including @ % & $ * ! ~');
   if(pw===null) return;
   fetch('/api/auth/users/'+encodeURIComponent(username),{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'set_password',password:pw})}).then(r=>r.json()).then(d=>{
@@ -3284,10 +3288,13 @@ def api_auth_create_user():
     display = str(d.get("display_name", "")).strip()[:60]
     password = str(d.get("password", ""))
     is_admin = 1 if d.get("is_admin") else 0
-    if not re.match(r"^[a-z0-9._-]{3,40}$", username):
-        return jsonify({"ok": False, "error": "Username must be 3-40 characters: letters, numbers, dot, dash or underscore"}), 400
+    # Widened to allow email addresses as usernames, which is what people
+    # naturally reach for. Note this constrains the USERNAME only — passwords
+    # have no character restrictions at all, just a minimum length.
+    if not re.match(r"^[a-z0-9._%+@-]{3,60}$", username):
+        return jsonify({"ok": False, "error": "That username isn't valid. Use 3-60 characters — letters, numbers, or . _ - % + @ (an email address is fine). This applies to the username only, not the password."}), 400
     if len(password) < 10:
-        return jsonify({"ok": False, "error": "Password must be at least 10 characters"}), 400
+        return jsonify({"ok": False, "error": "Password must be at least 10 characters. Any characters are allowed, including @ % & $ * ! ~"}), 400
     if _auth_get_user(username):
         return jsonify({"ok": False, "error": "That username already exists"}), 400
     db_exec("INSERT INTO app_users(username, display_name, password_hash, is_admin, created_at, must_change) "
@@ -3308,7 +3315,7 @@ def api_auth_update_user(username):
     if action == "set_password":
         pw = str(d.get("password", ""))
         if len(pw) < 10:
-            return jsonify({"ok": False, "error": "Password must be at least 10 characters"}), 400
+            return jsonify({"ok": False, "error": "Password must be at least 10 characters. Any characters are allowed, including @ % & $ * ! ~"}), 400
         db_exec("UPDATE app_users SET password_hash=?, must_change=1 WHERE username=?",
                 (generate_password_hash(pw), username))
         # Changing a password signs that person's other devices out, which is
@@ -3376,7 +3383,7 @@ def api_auth_change_password():
         return jsonify({"ok": False, "error": "Your current password isn't right"}), 400
     new = str(d.get("new", ""))
     if len(new) < 10:
-        return jsonify({"ok": False, "error": "New password must be at least 10 characters"}), 400
+        return jsonify({"ok": False, "error": "New password must be at least 10 characters. Any characters are allowed, including @ % & $ * ! ~"}), 400
     db_exec("UPDATE app_users SET password_hash=?, must_change=0 WHERE username=?",
             (generate_password_hash(new), u["username"]))
     return jsonify({"ok": True})

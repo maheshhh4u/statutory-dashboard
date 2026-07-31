@@ -6921,6 +6921,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.33", date:"2026-07", title:"Email addresses can be usernames, and the password rules are now stated up front",
+    changes:[
+      "To clear up the confusion: passwords never had any character restrictions \u2014 @ % & $ * ! ~ and anything else have always been fine, with 10 characters the only rule. The message you saw was about the USERNAME field; it just didn\u2019t say so clearly enough.",
+      "Usernames now allow @ % + as well, so an email address works \u2014 checked against all three of your work addresses. Length raised to 60 characters to fit them.",
+      "Every message now names the field it\u2019s talking about, and the password ones spell out that any characters are allowed.",
+      "Added the same guidance under the forms themselves, so it\u2019s visible before you hit an error rather than after.",
+    ]},
   { v:"2.32", date:"2026-07", title:"Fix: the Users page was completely broken \u2014 one stray apostrophe",
     changes:[
       "Everything on the Users page failed at once \u2014 accounts stuck on \u201cLoading\u2026\u201d, Create doing nothing, 2FA Set up doing nothing \u2014 and that was the clue: one JavaScript error stops the whole script, so every button on the page dies together rather than just one.",
