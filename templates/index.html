@@ -9,6 +9,13 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@13/dist/gridstack.min.css">
+<!-- Report export. All three run in the browser: the canvas is captured to an
+     image here and written into a PDF or .pptx client-side, so nothing is
+     rendered on the server. That keeps export off the Render instance's
+     memory budget entirely, which matters given how tight 512MB has been. -->
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
 <style>
   /* GridStack recalculates and writes an inline height onto the grid element
      from its current row count, which made the visible canvas box grow and
@@ -1277,6 +1284,8 @@ select:focus{outline:none;border-color:var(--green)}
             <button type="button" onclick="crNudgeZoom(-1)" title="Zoom out" style="width:24px;height:24px;line-height:1;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">−</button>
             <span id="cr-zoom-pct" style="font-size:11.5px;min-width:42px;text-align:center;color:var(--t3)">100%</span>
             <button type="button" onclick="crNudgeZoom(1)" title="Zoom in" style="width:24px;height:24px;line-height:1;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer">+</button>
+            <span id="cr-export-status" style="font-size:11.5px;color:var(--t3);margin-left:10px"></span>
+            <span style="flex:1"></span>
             <select id="cr-canvas-zoom" onchange="crSetCanvasZoom(this.value)" style="padding:3px 5px;border:1px solid var(--border);border-radius:4px;font-size:11.5px">
               <option value="fit">Fit to page</option>
               <option value="1.5">150%</option>
@@ -3783,6 +3792,112 @@ function modelPage(dir){
   _modelOffset=Math.max(0, _modelOffset + dir*MODEL_PAGE);
   loadModelTablePage();
 }
+// ── Export to PDF / PowerPoint ─────────────────────────────────────────────
+// The canvas is captured as an image and written into the file in the browser.
+// Two things need care:
+//  1. The canvas is displayed with CSS zoom (see crApplyCanvasScale).
+//     html2canvas measures layout, not the zoomed presentation, so the zoom is
+//     temporarily set to 1 for the capture and restored afterwards — otherwise
+//     the output is cropped or scaled wrongly.
+//  2. Switching pages re-runs each visual's query, so the capture has to wait
+//     for those to finish rather than photographing a half-drawn canvas.
+function crExportWait(ms){ return new Promise(r=>setTimeout(r, ms)); }
+function crExportStatus(msg, bad){
+  const st=document.getElementById('cr-export-status') || document.getElementById('cr-result-status');
+  if(st){ st.textContent=msg; st.style.color=bad?'#c0392b':'var(--t3)'; }
+}
+// Grabs the current page's canvas as a PNG at its true (unzoomed) size.
+async function crCapturePage(){
+  const scaler=document.getElementById('cr-canvas-scaler');
+  const grid=document.getElementById('cr-gridstack');
+  if(!scaler || !grid || typeof html2canvas==='undefined') return null;
+  const prevZoom=scaler.style.zoom;
+  scaler.style.zoom='';                 // capture at 1:1
+  await crExportWait(120);              // let the browser reflow before measuring
+  let img=null;
+  try{
+    const shot=await html2canvas(grid, {backgroundColor:'#ffffff', scale:2, logging:false, useCORS:true});
+    img={data:shot.toDataURL('image/png'), w:shot.width, h:shot.height};
+  }catch(e){ console.error('capture failed', e); }
+  scaler.style.zoom=prevZoom;
+  crApplyCanvasScale();
+  return img;
+}
+// Walks every page of the report, capturing each. Restores whichever page was
+// open when it started.
+async function crCaptureAllPages(){
+  const startPage=_crActivePageId;
+  const shots=[];
+  for(let i=0;i<_crPageList.length;i++){
+    const pg=_crPageList[i];
+    crExportStatus(`Preparing page ${i+1} of ${_crPageList.length} \u2014 ${pg.name}\u2026`);
+    if(pg.id!==_crActivePageId){
+      crSwitchToPage(pg.id);
+      await crExportWait(1400);   // visuals re-query on a page switch
+    } else {
+      await crExportWait(200);
+    }
+    const img=await crCapturePage();
+    if(img) shots.push({name:pg.name, img});
+  }
+  if(startPage && startPage!==_crActivePageId){
+    crSwitchToPage(startPage);
+    await crExportWait(300);
+  }
+  return shots;
+}
+function crReportFileName(ext){
+  const n=(document.getElementById('cr-report-name').value||'report').trim() || 'report';
+  return n.replace(/[^A-Za-z0-9 _-]/g,'').replace(/\s+/g,'_')+'.'+ext;
+}
+async function crExportPDF(){
+  if(typeof window.jspdf==='undefined'){ crExportStatus('\u26a0 PDF library didn\u2019t load \u2014 check the connection and reload.', true); return; }
+  crExportStatus('Building PDF\u2026');
+  try{
+    const shots=await crCaptureAllPages();
+    if(!shots.length){ crExportStatus('\u26a0 Nothing to export.', true); return; }
+    const {jsPDF}=window.jspdf;
+    let pdf=null;
+    shots.forEach((s,i)=>{
+      // Page orientation follows the canvas, so a Letter-shaped page doesn't
+      // get letterboxed into a landscape sheet.
+      const landscape=s.img.w>=s.img.h;
+      const opts={orientation:landscape?'landscape':'portrait', unit:'pt', format:'a4'};
+      if(i===0) pdf=new jsPDF(opts); else pdf.addPage(opts.format, opts.orientation);
+      const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight();
+      const margin=24;
+      const scale=Math.min((pw-margin*2)/s.img.w, (ph-margin*2-18)/s.img.h);
+      const w=s.img.w*scale, h=s.img.h*scale;
+      pdf.setFontSize(11); pdf.setTextColor(90);
+      pdf.text(s.name||('Page '+(i+1)), margin, margin);
+      pdf.addImage(s.img.data, 'PNG', (pw-w)/2, margin+10, w, h);
+    });
+    pdf.save(crReportFileName('pdf'));
+    crExportStatus('\u2713 PDF exported ('+shots.length+' page'+(shots.length===1?'':'s')+').');
+  }catch(e){ crExportStatus('\u26a0 '+e.message, true); }
+}
+async function crExportPPT(){
+  if(typeof PptxGenJS==='undefined'){ crExportStatus('\u26a0 PowerPoint library didn\u2019t load \u2014 check the connection and reload.', true); return; }
+  crExportStatus('Building PowerPoint\u2026');
+  try{
+    const shots=await crCaptureAllPages();
+    if(!shots.length){ crExportStatus('\u26a0 Nothing to export.', true); return; }
+    const pptx=new PptxGenJS();
+    pptx.layout='LAYOUT_16x9';           // 10 x 5.625 inches
+    const SW=10, SH=5.625;
+    shots.forEach((s,i)=>{
+      const slide=pptx.addSlide();
+      slide.addText(s.name||('Page '+(i+1)), {x:0.35, y:0.18, w:SW-0.7, h:0.35, fontSize:14, color:'1e3a5f', bold:true});
+      const avail={w:SW-0.7, h:SH-0.95};
+      const ar=s.img.w/s.img.h;
+      let w=avail.w, h=w/ar;
+      if(h>avail.h){ h=avail.h; w=h*ar; }   // fit inside, never stretch
+      slide.addImage({data:s.img.data, x:(SW-w)/2, y:0.62, w, h});
+    });
+    await pptx.writeFile({fileName:crReportFileName('pptx')});
+    crExportStatus('\u2713 PowerPoint exported ('+shots.length+' slide'+(shots.length===1?'':'s')+').');
+  }catch(e){ crExportStatus('\u26a0 '+e.message, true); }
+}
 // ── Menu bar ───────────────────────────────────────────────────────────────
 // Menus are rebuilt each time they're opened so enabled/disabled state and
 // the current zoom / page size always reflect reality.
@@ -3791,6 +3906,9 @@ const CR_MENUS={
     {label:'\u2190 Back to Reports', fn:'crBackToGallery()'},
     {label:'\u{1F4BE} Save Report', fn:'saveCustomReportCanvas()', disabled:_crBuilderMode!=='edit'},
     {label:'\u{1F4C4} Save As\u2026', fn:'saveReportAs()', disabled:_crBuilderMode!=='edit'},
+    {sep:true},
+    {label:'\u{1F4D1} Export to PDF\u2026', fn:'crExportPDF()'},
+    {label:'\u{1F4CA} Export to PowerPoint\u2026', fn:'crExportPPT()'},
     {sep:true},
     {label:'\u270F\uFE0F Edit this report', fn:'crEnterEditMode()', disabled:_crBuilderMode==='edit'},
   ],
@@ -6801,6 +6919,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.29", date:"2026-07", title:"Export a report to PDF or PowerPoint",
+    changes:[
+      "File \u2192 Export to PDF\u2026 and Export to PowerPoint\u2026. Every page of the report becomes a PDF page or a slide, titled with the page name, sized to fit without stretching. The file is named after the report.",
+      "Both run entirely in the browser \u2014 the canvas is captured to an image and written into the PDF or .pptx locally. Nothing is rendered on the server, which was a deliberate choice: server-side export would have meant a new dependency and real memory cost on an instance we\u2019ve just spent a release getting under its 512MB limit.",
+      "Two details that would otherwise have produced broken output. The canvas is displayed with CSS zoom, which capture libraries measure incorrectly \u2014 so zoom is set to 1 for the capture and restored straight after. And because switching pages re-runs each visual\u2019s query, the export waits for those to finish rather than photographing a half-drawn page.",
+      "Progress is shown next to the Zoom control, which stays visible in the read-only report view \u2014 the status line used previously sits in a panel that\u2019s hidden exactly when someone is most likely to be exporting.",
+      "Export works in both the editing and read-only views.",
+      "Worth knowing: the export captures the canvas as it looks on screen, so it\u2019s a picture rather than editable PowerPoint shapes. Genuinely editable charts would mean rebuilding each visual as a native PowerPoint chart object \u2014 possible, but a much larger piece of work, and worth doing only if someone actually needs to edit the charts after export rather than just present them.",
+    ]},
   { v:"2.28", date:"2026-07", title:"Model tables usable directly in the Fields panel, plus Save As",
     changes:[
       "The Fields panel now has a small source dropdown at the top: \u201cCalling data (report)\u201d as before, or any table from the data model. Switch it and the palette lists that table\u2019s columns as fields and its aggregations as measures \u2014 Count of rows always, plus Sum/Average/Min/Max for any column typed as a number on the Tables tab. Columns from related tables appear too, so a relationship pays off directly here.",
