@@ -334,6 +334,8 @@ select:focus{outline:none;border-color:var(--green)}
   <button class="nav-btn" onclick="switchTab('old',this)">🏛️ 40+ Yrs · Zero Statutory</button>
   <button class="nav-btn" onclick="switchTab('milestones',this)">🎂 Anniversary Watch</button>
   <button class="nav-btn" onclick="showAbout()" title="About & version history" style="margin-left:auto;font-weight:700">ℹ️ About</button>
+  <a class="nav-btn" href="/admin/users" title="Manage login accounts" style="text-decoration:none">👤 Users</a>
+  <a class="nav-btn" href="/logout" title="Sign out" style="text-decoration:none">⏻ Sign out</a>
 </nav>
 <main class="main">
 <!-- Caller warning banner -->
@@ -6919,6 +6921,17 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.31", date:"2026-07", title:"Login added \u2014 the dashboard was previously open to anyone with the URL",
+    changes:[
+      "Worth stating plainly: until now there was no sign-in at all. Anyone who knew or guessed the address had full access to charity contacts, call logs and notes. That\u2019s now behind a login.",
+      "Sign-in page with \u201ckeep me signed in on this device\u201d. Passwords are stored hashed with scrypt \u2014 never in readable form, so even the database doesn\u2019t reveal them.",
+      "Optional two-factor authentication using Google or Microsoft Authenticator, set up from the Users page by scanning a QR code. Off by default, switched on per person. It works entirely offline \u2014 no email or SMS \u2014 and I verified the code generation against the official RFC test vectors so it matches those apps exactly.",
+      "New \u{1F464} Users page at /admin/users for administrators: create accounts, set passwords, grant or remove admin, reset someone\u2019s 2FA if they lose their phone, sign out their devices, and disable or delete accounts. Reachable from the header.",
+      "\u201cKeep me signed in\u201d renews itself every time you visit, so in normal use you never get signed out \u2014 but each device is tracked separately and can be revoked instantly from the Users page. A genuinely permanent cookie would mean a lost laptop is permanent access with no way to withdraw it.",
+      "Accounts lock for 15 minutes after 8 failed attempts, counted in the database so a restart can\u2019t reset it. The failure message is identical for a wrong username and a wrong password, so it can\u2019t be used to discover which accounts exist.",
+      "The health check used by uptime monitoring stays open, so monitoring keeps working.",
+      "Two things to do at deploy \u2014 both important. Set SECRET_KEY in Render\u2019s environment variables (any long random string): without it everyone is signed out on every deploy. And on first start the log prints a one-time administrator username and password \u2014 sign in, change it immediately, and create a second admin, because with no email there is no self-service recovery.",
+    ]},
   { v:"2.30", date:"2026-07", title:"Speed: fixed the two things actually making Daily Calling and saved reports slow",
     changes:[
       "Daily Calling was doing far more work than it looked. Two helpers \u2014 \u2018has this charity ever been called\u2019 and \u2018was it called today\u2019 \u2014 each scanned the ENTIRE call log every time they were asked about one charity. Loading a 100-row list calls them once per row, so with ~1,500 log entries that was roughly 300,000 scans per request, getting steadily worse with every call logged. They now share an index built once, so each check is a single lookup.",

@@ -1,4 +1,4 @@
-import os, io, csv, zipfile, requests, threading, json, re, tempfile
+import os, io, csv, zipfile, requests, threading, json, re, tempfile, hashlib, time
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -8,9 +8,25 @@ try:
     from zoneinfo import ZoneInfo
 except ImportError:
     ZoneInfo = None  # extremely old Python fallback — display_timezone conversion becomes a no-op
-from flask import Flask, render_template, jsonify, request, Response, stream_with_context
+from flask import Flask, render_template, jsonify, request, Response, stream_with_context, session, redirect, url_for, make_response
+from werkzeug.security import generate_password_hash, check_password_hash
+import hmac as _hmac, base64 as _b64, struct as _struct, secrets as _secrets
 
 app = Flask(__name__)
+# Sessions are signed with this key. It MUST be set as an environment variable
+# on Render: if it isn't, a random one is generated per process, which logs
+# everyone out on every deploy and breaks sign-in entirely once there is more
+# than one worker. It is never hardcoded — a key in the repo would let anyone
+# who can read the code forge a session cookie for any user.
+app.secret_key = os.environ.get("SECRET_KEY") or _secrets.token_hex(32)
+if not os.environ.get("SECRET_KEY"):
+    print("[auth] WARNING: SECRET_KEY is not set — sessions will be lost on every restart. "
+          "Set it in Render > Environment.")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,     # not readable from JavaScript
+    SESSION_COOKIE_SAMESITE="Lax",    # not sent on cross-site POSTs
+    SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER")),  # HTTPS-only in production
+)
 
 API_KEY  = os.environ.get("CC_API_KEY", "80c5abfc86864f8d9330288c3521bb78")
 BULK_BASE= "https://ccewuksprdoneregsadata1.blob.core.windows.net/data/txt"
@@ -192,6 +208,40 @@ def db_init():
             from_table TEXT, from_column TEXT,
             to_table TEXT, to_column TEXT,
             created_at TEXT
+        )""")
+        # Login accounts. Kept separate from the existing `users` table, which
+        # holds caller names for attribution rather than credentials — merging
+        # the two would tie "who made this call" to "who can sign in", and
+        # those genuinely are different lists.
+        client.execute("""CREATE TABLE IF NOT EXISTS app_users (
+            username TEXT PRIMARY KEY,
+            display_name TEXT,
+            password_hash TEXT,
+            is_admin INTEGER DEFAULT 0,
+            totp_secret TEXT,
+            totp_enabled INTEGER DEFAULT 0,
+            disabled INTEGER DEFAULT 0,
+            must_change INTEGER DEFAULT 0,
+            created_at TEXT,
+            last_login TEXT
+        )""")
+        # "Remember me" tokens. Stored hashed, exactly like passwords: the raw
+        # token is a credential, so a leaked database shouldn't hand out live
+        # logins. Each row is one device, so a single lost laptop can be
+        # revoked without signing everyone else out.
+        client.execute("""CREATE TABLE IF NOT EXISTS auth_tokens (
+            token_hash TEXT PRIMARY KEY,
+            username TEXT,
+            created_at TEXT,
+            last_used TEXT,
+            user_agent TEXT
+        )""")
+        # Failed sign-in attempts, for lockout. In the database rather than in
+        # memory so a restart can't be used to wipe the count and keep guessing.
+        client.execute("""CREATE TABLE IF NOT EXISTS login_attempts (
+            username TEXT PRIMARY KEY,
+            fails INTEGER DEFAULT 0,
+            locked_until TEXT
         )""")
         # Simple key-value store for app-wide settings (e.g. display timezone)
         client.execute("""CREATE TABLE IF NOT EXISTS app_settings (
@@ -2786,6 +2836,586 @@ def api_model_query_fields():
             fields.append({"ref": other + "." + cc["name"], "label": other + "." + cc["name"] + " (calculated)",
                            "type": otypes.get(cc["name"], cc["data_type"]), "source": other})
     return jsonify({"ok": True, "fields": fields, "related": related})
+
+# ══ Authentication ═════════════════════════════════════════════════════════
+# Password + optional authenticator-app (TOTP) sign-in. No email is involved
+# anywhere, so there is no reset-by-link: an admin resets a forgotten password
+# or a lost 2FA device. That is why there should always be at least two admins.
+
+AUTH_MAX_FAILS = 8            # attempts before a temporary lock
+AUTH_LOCK_MINUTES = 15
+AUTH_TOKEN_DAYS = 365         # remember-me lifetime, refreshed on every visit
+
+def _auth_hash_token(raw):
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+def _auth_now():
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+def _auth_get_user(username):
+    r = db_query("SELECT username, display_name, password_hash, is_admin, totp_secret, "
+                 "totp_enabled, disabled, must_change FROM app_users WHERE username=?",
+                 (str(username).strip().lower(),))
+    if not r: return None
+    u = r[0]
+    return {"username": u[0], "display_name": u[1], "password_hash": u[2], "is_admin": bool(u[3]),
+            "totp_secret": u[4], "totp_enabled": bool(u[5]), "disabled": bool(u[6]),
+            "must_change": bool(u[7])}
+
+def _auth_any_users():
+    r = db_query("SELECT COUNT(*) FROM app_users")
+    return bool(r and r[0][0])
+
+def _auth_bootstrap():
+    """First run only: create an admin so there is a way in. The password is
+    generated and printed to the Render log rather than being a known default —
+    a fixed default on a public URL is an open door."""
+    if _auth_any_users(): return
+    pw = _secrets.token_urlsafe(12)
+    db_exec("INSERT INTO app_users(username, display_name, password_hash, is_admin, created_at, must_change) "
+            "VALUES(?,?,?,?,?,?)",
+            ("admin", "Administrator", generate_password_hash(pw), 1, _auth_now(), 1))
+    print("=" * 66)
+    print("[auth] No accounts existed, so an administrator has been created:")
+    print(f"[auth]   username: admin")
+    print(f"[auth]   password: {pw}")
+    print("[auth] Sign in and change it immediately — this is shown only once.")
+    print("=" * 66)
+
+# ── TOTP (authenticator apps) ──────────────────────────────────────────────
+# Implemented directly on Python's built-in hmac/hashlib rather than pulling in
+# a library: it is a small, stable, well-specified algorithm (RFC 6238), and
+# every dependency added here is another thing to keep patched on a server that
+# holds personal data.
+def _totp_secret_new():
+    return _b64.b32encode(_secrets.token_bytes(20)).decode().rstrip("=")
+
+def _totp_code(secret, when=None, step=30, digits=6):
+    key = _b64.b32decode(secret + "=" * (-len(secret) % 8), casefold=True)
+    counter = int((when or time.time()) // step)
+    mac = _hmac.new(key, _struct.pack(">Q", counter), hashlib.sha1).digest()
+    off = mac[-1] & 0x0F
+    code = (_struct.unpack(">I", mac[off:off + 4])[0] & 0x7FFFFFFF) % (10 ** digits)
+    return str(code).zfill(digits)
+
+def _totp_verify(secret, code):
+    """Accepts the previous, current and next window — clocks drift, and a
+    30-second window with no tolerance produces mysterious failures."""
+    code = str(code or "").strip().replace(" ", "")
+    if not secret or not code.isdigit(): return False
+    now = time.time()
+    return any(_hmac.compare_digest(_totp_code(secret, now + off * 30), code) for off in (-1, 0, 1))
+
+# ── Lockout ────────────────────────────────────────────────────────────────
+def _auth_locked(username):
+    r = db_query("SELECT fails, locked_until FROM login_attempts WHERE username=?", (username,))
+    if not r: return False
+    _fails, until = r[0]
+    if not until: return False
+    try:
+        return datetime.strptime(until, "%Y-%m-%d %H:%M:%S") > datetime.utcnow()
+    except Exception:
+        return False
+
+def _auth_record_fail(username):
+    r = db_query("SELECT fails FROM login_attempts WHERE username=?", (username,))
+    fails = (r[0][0] if r else 0) + 1
+    until = ""
+    if fails >= AUTH_MAX_FAILS:
+        until = (datetime.utcnow() + timedelta(minutes=AUTH_LOCK_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+        fails = 0    # reset the counter alongside the lock
+    db_exec("DELETE FROM login_attempts WHERE username=?", (username,))
+    db_exec("INSERT INTO login_attempts(username, fails, locked_until) VALUES(?,?,?)",
+            (username, fails, until))
+
+def _auth_clear_fails(username):
+    db_exec("DELETE FROM login_attempts WHERE username=?", (username,))
+
+# ── Session / remember-me ──────────────────────────────────────────────────
+def _auth_issue_token(username):
+    raw = _secrets.token_urlsafe(32)
+    db_exec("INSERT INTO auth_tokens(token_hash, username, created_at, last_used, user_agent) VALUES(?,?,?,?,?)",
+            (_auth_hash_token(raw), username, _auth_now(), _auth_now(),
+             str(request.headers.get("User-Agent", ""))[:180]))
+    return raw
+
+def _auth_user_for_token(raw):
+    if not raw: return None
+    r = db_query("SELECT username, last_used FROM auth_tokens WHERE token_hash=?", (_auth_hash_token(raw),))
+    if not r: return None
+    username, last_used = r[0]
+    try:
+        if datetime.strptime(last_used, "%Y-%m-%d %H:%M:%S") < datetime.utcnow() - timedelta(days=AUTH_TOKEN_DAYS):
+            db_exec("DELETE FROM auth_tokens WHERE token_hash=?", (_auth_hash_token(raw),))
+            return None
+    except Exception:
+        pass
+    # Sliding renewal: a device in regular use never gets logged out, which is
+    # the "forever" behaviour asked for — while a device that goes quiet for a
+    # year stops working on its own.
+    db_exec("UPDATE auth_tokens SET last_used=? WHERE token_hash=?", (_auth_now(), _auth_hash_token(raw)))
+    return username
+
+def current_user():
+    u = session.get("auth_user")
+    if u: return u
+    tok = request.cookies.get("remember_token")
+    if tok:
+        username = _auth_user_for_token(tok)
+        if username:
+            user = _auth_get_user(username)
+            if user and not user["disabled"]:
+                session["auth_user"] = username
+                session["auth_admin"] = user["is_admin"]
+                return username
+    return None
+
+def current_user_is_admin():
+    if not current_user(): return False
+    if session.get("auth_admin") is not None: return bool(session.get("auth_admin"))
+    u = _auth_get_user(session.get("auth_user"))
+    return bool(u and u["is_admin"])
+
+# Paths that must stay reachable without signing in. Locking these would break
+# uptime monitoring and stop RingCentral delivering call events — both fail
+# silently, so they are allowed deliberately rather than discovered later.
+_AUTH_OPEN_PREFIXES = ("/login", "/static/", "/healthz", "/api/rc/webhook", "/favicon")
+
+@app.before_request
+def _auth_guard():
+    p = request.path or "/"
+    if any(p == x or p.startswith(x) for x in _AUTH_OPEN_PREFIXES):
+        return None
+    if current_user():
+        return None
+    if p.startswith("/api/"):
+        return jsonify({"ok": False, "error": "Not signed in", "auth": False}), 401
+    return redirect("/login?next=" + p)
+
+LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in &middot; 9 Mountains</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+ body{margin:0;font-family:Inter,system-ui,sans-serif;background:#1e3a5f;display:flex;align-items:center;justify-content:center;min-height:100vh}
+ .card{background:#fff;border-radius:12px;padding:30px 32px;width:330px;box-shadow:0 12px 40px rgba(0,0,0,.28)}
+ h1{font-size:19px;margin:0 0 4px;color:#1e3a5f}
+ p.sub{font-size:12.5px;color:#667;margin:0 0 20px}
+ label{display:block;font-size:12px;color:#556;margin:12px 0 4px;font-weight:600}
+ input[type=text],input[type=password]{width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #d5d9e0;border-radius:6px;font-size:14px}
+ input:focus{outline:none;border-color:#1e3a5f}
+ .row{display:flex;align-items:center;gap:7px;margin-top:14px;font-size:12.5px;color:#556}
+ button{width:100%;margin-top:18px;padding:10px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer}
+ button:hover{background:#16304f}
+ .err{background:#fdeaea;border:1px solid #f5c2c2;color:#a02c2c;padding:8px 10px;border-radius:6px;font-size:12.5px;margin-bottom:14px}
+ .hint{font-size:11.5px;color:#889;margin-top:14px;line-height:1.45}
+</style></head><body>
+<div class="card">
+  <h1>9 Mountains</h1>
+  <p class="sub">Prospecting Dashboard</p>
+  {ERROR}
+  <form method="post" action="/login">
+    <input type="hidden" name="next" value="{NEXT}">
+    <label>Username</label>
+    <input type="text" name="username" autocomplete="username" autofocus value="{USERNAME}">
+    <label>Password</label>
+    <input type="password" name="password" autocomplete="current-password">
+    {TOTP_FIELD}
+    <div class="row"><input type="checkbox" name="remember" id="r" checked><label for="r" style="margin:0;font-weight:400">Keep me signed in on this device</label></div>
+    <button type="submit">Sign in</button>
+  </form>
+  <p class="hint">Forgotten your password, or lost your authenticator? An administrator can reset it &mdash; there is no email recovery.</p>
+</div></body></html>"""
+
+def _login_render(error="", username="", next_url="/", need_totp=False):
+    totp = ("<label>Authenticator code</label>"
+            "<input type='text' name='totp' inputmode='numeric' autocomplete='one-time-code' "
+            "pattern='[0-9]*' maxlength='6' autofocus>") if need_totp else ""
+    html = (LOGIN_PAGE
+            .replace("{ERROR}", f'<div class="err">{error}</div>' if error else "")
+            .replace("{USERNAME}", (username or "").replace('"', "&quot;"))
+            .replace("{NEXT}", (next_url or "/").replace('"', "&quot;"))
+            .replace("{TOTP_FIELD}", totp))
+    return Response(html, mimetype="text/html")
+
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    _auth_bootstrap()
+    next_url = request.values.get("next") or "/"
+    if not next_url.startswith("/"):
+        next_url = "/"          # never redirect off-site after sign-in
+    if request.method == "GET":
+        if current_user(): return redirect(next_url)
+        return _login_render(next_url=next_url)
+
+    username = str(request.form.get("username", "")).strip().lower()
+    password = str(request.form.get("password", ""))
+    totp = str(request.form.get("totp", "")).strip()
+    remember = bool(request.form.get("remember"))
+
+    if _auth_locked(username):
+        return _login_render("Too many failed attempts. Try again in a few minutes.", username, next_url)
+
+    user = _auth_get_user(username)
+    # Same message whether the username or the password was wrong, so this
+    # can't be used to work out which accounts exist.
+    if not user or user["disabled"] or not check_password_hash(user["password_hash"] or "", password):
+        _auth_record_fail(username)
+        return _login_render("Incorrect username or password.", username, next_url)
+
+    if user["totp_enabled"]:
+        if not totp:
+            return _login_render("", username, next_url, need_totp=True)
+        if not _totp_verify(user["totp_secret"], totp):
+            _auth_record_fail(username)
+            return _login_render("That code wasn't right \u2014 check your authenticator app.",
+                                 username, next_url, need_totp=True)
+
+    _auth_clear_fails(username)
+    session.permanent = True
+    session["auth_user"] = user["username"]
+    session["auth_admin"] = user["is_admin"]
+    db_exec("UPDATE app_users SET last_login=? WHERE username=?", (_auth_now(), user["username"]))
+    resp = make_response(redirect(next_url))
+    if remember:
+        raw = _auth_issue_token(user["username"])
+        resp.set_cookie("remember_token", raw, max_age=AUTH_TOKEN_DAYS * 86400,
+                        httponly=True, samesite="Lax", secure=bool(os.environ.get("RENDER")))
+    return resp
+
+ADMIN_USERS_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Users &middot; 9 Mountains</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<style>
+ body{margin:0;font-family:Inter,system-ui,sans-serif;background:#f5f6f8;color:#223}
+ header{background:#1e3a5f;color:#fff;padding:14px 22px;display:flex;align-items:center;gap:14px}
+ header h1{font-size:16px;margin:0;font-weight:700}
+ header a{color:#cfe0f5;font-size:12.5px;text-decoration:none;margin-left:auto}
+ .wrap{max-width:1000px;margin:22px auto;padding:0 18px}
+ .card{background:#fff;border:1px solid #e3e6ea;border-radius:9px;padding:16px 18px;margin-bottom:18px}
+ h2{font-size:13px;text-transform:uppercase;letter-spacing:.4px;color:#667;margin:0 0 12px}
+ table{width:100%;border-collapse:collapse;font-size:13px}
+ th{text-align:left;color:#667;font-size:11px;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid #e3e6ea}
+ td{padding:7px 8px;border-bottom:1px solid #f0f1f3;vertical-align:middle}
+ .btn{font-size:11.5px;padding:3px 9px;border:1px solid #d5d9e0;border-radius:5px;background:#fff;cursor:pointer;margin-right:4px}
+ .btn:hover{background:#f0f2f5}
+ .btn.danger{color:#a02c2c;border-color:#f0c6c6}
+ .tag{font-size:10.5px;padding:1px 7px;border-radius:10px;background:#eef2f8;color:#3a5a80;margin-right:4px}
+ .tag.off{background:#fdeaea;color:#a02c2c}
+ input,select{padding:6px 9px;border:1px solid #d5d9e0;border-radius:5px;font-size:13px}
+ .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+ .msg{font-size:12.5px;margin-top:9px}
+ #qr{margin:10px 0}
+ code{background:#f0f2f5;padding:2px 6px;border-radius:4px;font-size:12px}
+</style></head><body>
+<header><h1>&#128100; User accounts</h1><a href="/">&larr; Back to dashboard</a> <a href="/logout">Sign out</a></header>
+<div class="wrap">
+  <div class="card">
+    <h2>Accounts</h2>
+    <table><thead><tr><th>User</th><th>Status</th><th>Devices</th><th>Last sign-in</th><th></th></tr></thead>
+    <tbody id="rows"><tr><td colspan="5" style="color:#889">Loading&hellip;</td></tr></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>Add a user</h2>
+    <div class="row">
+      <input id="nu" placeholder="username" style="width:150px">
+      <input id="nd" placeholder="display name" style="width:170px">
+      <input id="np" type="password" placeholder="password (min 10 chars)" style="width:210px">
+      <label style="font-size:12.5px"><input type="checkbox" id="na"> Administrator</label>
+      <button class="btn" onclick="createUser()">Create</button>
+    </div>
+    <div id="cmsg" class="msg"></div>
+  </div>
+
+  <div class="card">
+    <h2>My account</h2>
+    <div class="row">
+      <input id="cp" type="password" placeholder="current password" style="width:190px">
+      <input id="npw" type="password" placeholder="new password" style="width:190px">
+      <button class="btn" onclick="changePw()">Change password</button>
+    </div>
+    <div id="pmsg" class="msg"></div>
+    <div style="margin-top:16px;border-top:1px solid #f0f1f3;padding-top:14px">
+      <div class="row">
+        <span style="font-size:12.5px">Two-factor authentication: <strong id="tstate">&hellip;</strong></span>
+        <button class="btn" id="tbtn" onclick="startTotp()">Set up</button>
+      </div>
+      <div id="qr"></div>
+      <div id="tsetup" style="display:none" class="row">
+        <input id="tcode" placeholder="6-digit code" maxlength="6" style="width:120px">
+        <button class="btn" onclick="enableTotp()">Verify &amp; turn on</button>
+      </div>
+      <div id="tmsg" class="msg"></div>
+      <p style="font-size:11.5px;color:#889;margin:10px 0 0">Optional, but strongly recommended. Scan the code with Google Authenticator or Microsoft Authenticator. There is no email recovery &mdash; if you lose the device an administrator must reset it.</p>
+    </div>
+  </div>
+</div>
+<script>
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let ME=null;
+function load(){
+  fetch('/api/auth/me').then(r=>r.json()).then(d=>{ if(d.ok){ ME=d;
+    document.getElementById('tstate').textContent=d.totp_enabled?'on':'off';
+    document.getElementById('tbtn').textContent=d.totp_enabled?'Turn off':'Set up';
+    document.getElementById('tbtn').onclick=d.totp_enabled?disableTotp:startTotp;
+  }});
+  fetch('/api/auth/users').then(r=>r.json()).then(d=>{
+    const tb=document.getElementById('rows');
+    if(!d.ok){ tb.innerHTML='<tr><td colspan="5" style="color:#a02c2c">'+esc(d.error)+'</td></tr>'; return; }
+    tb.innerHTML=d.users.map(u=>`<tr>
+      <td><strong>${esc(u.display_name||u.username)}</strong><br><span style="color:#889;font-size:11.5px">${esc(u.username)}</span></td>
+      <td>${u.is_admin?'<span class="tag">admin</span>':''}${u.totp_enabled?'<span class="tag">2FA</span>':''}${u.disabled?'<span class="tag off">disabled</span>':''}</td>
+      <td>${u.devices}</td>
+      <td style="color:#889;font-size:12px">${esc(u.last_login||'never')}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn" onclick="setPw('${esc(u.username)}')">Set password</button>
+        <button class="btn" onclick="act('${esc(u.username)}','toggle_admin')">${u.is_admin?'Remove admin':'Make admin'}</button>
+        <button class="btn" onclick="act('${esc(u.username)}','reset_2fa')">Reset 2FA</button>
+        <button class="btn" onclick="act('${esc(u.username)}','revoke_devices')">Sign out devices</button>
+        <button class="btn" onclick="act('${esc(u.username)}','toggle_disabled')">${u.disabled?'Enable':'Disable'}</button>
+        <button class="btn danger" onclick="act('${esc(u.username)}','delete',1)">Delete</button>
+      </td></tr>`).join('');
+  });
+}
+function act(username, action, confirmIt){
+  if(confirmIt && !confirm('Delete '+username+'? This cannot be undone.')) return;
+  fetch('/api/auth/users/'+encodeURIComponent(username),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action})}).then(r=>r.json()).then(d=>{ if(!d.ok) alert(d.error||'Failed'); load(); });
+}
+function setPw(username){
+  const pw=prompt('New password for '+username+' (min 10 characters):');
+  if(pw===null) return;
+  fetch('/api/auth/users/'+encodeURIComponent(username),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'set_password',password:pw})}).then(r=>r.json()).then(d=>{
+      alert(d.ok?'Password updated. Their other devices have been signed out.':(d.error||'Failed')); load(); });
+}
+function createUser(){
+  const m=document.getElementById('cmsg');
+  fetch('/api/auth/users',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username:document.getElementById('nu').value,display_name:document.getElementById('nd').value,
+      password:document.getElementById('np').value,is_admin:document.getElementById('na').checked})})
+    .then(r=>r.json()).then(d=>{
+      m.textContent=d.ok?'\u2713 Created.':'\u26a0 '+(d.error||'Failed'); m.style.color=d.ok?'#1d7a3a':'#a02c2c';
+      if(d.ok){ document.getElementById('nu').value='';document.getElementById('nd').value='';document.getElementById('np').value=''; load(); }
+    });
+}
+function changePw(){
+  const m=document.getElementById('pmsg');
+  fetch('/api/auth/change_password',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({current:document.getElementById('cp').value,new:document.getElementById('npw').value})})
+    .then(r=>r.json()).then(d=>{
+      m.textContent=d.ok?'\u2713 Password changed.':'\u26a0 '+(d.error||'Failed'); m.style.color=d.ok?'#1d7a3a':'#a02c2c';
+      if(d.ok){ document.getElementById('cp').value='';document.getElementById('npw').value=''; }
+    });
+}
+function startTotp(){
+  fetch('/api/auth/totp/start',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(!d.ok){ alert(d.error||'Failed'); return; }
+    const box=document.getElementById('qr'); box.innerHTML='';
+    new QRCode(box,{text:d.uri,width:150,height:150});
+    box.insertAdjacentHTML('beforeend','<p style="font-size:11.5px;color:#889;margin:8px 0 0">Can\'t scan? Enter this key manually: <code>'+esc(d.secret)+'</code></p>');
+    document.getElementById('tsetup').style.display='flex';
+  });
+}
+function enableTotp(){
+  const m=document.getElementById('tmsg');
+  fetch('/api/auth/totp/enable',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({code:document.getElementById('tcode').value})}).then(r=>r.json()).then(d=>{
+      m.textContent=d.ok?'\u2713 Two-factor authentication is on.':'\u26a0 '+(d.error||'Failed');
+      m.style.color=d.ok?'#1d7a3a':'#a02c2c';
+      if(d.ok){ document.getElementById('qr').innerHTML=''; document.getElementById('tsetup').style.display='none'; load(); }
+    });
+}
+function disableTotp(){
+  const pw=prompt('Confirm your password to turn off two-factor authentication:');
+  if(pw===null) return;
+  fetch('/api/auth/totp/disable',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({password:pw})}).then(r=>r.json()).then(d=>{ if(!d.ok) alert(d.error||'Failed'); load(); });
+}
+load();
+</script></body></html>"""
+
+def _require_admin():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    if not current_user_is_admin():
+        return jsonify({"ok": False, "error": "Administrators only"}), 403
+    return None
+
+@app.route("/admin/users")
+def admin_users_page():
+    if not current_user(): return redirect("/login?next=/admin/users")
+    if not current_user_is_admin():
+        return Response("<p style='font-family:sans-serif;padding:40px'>Administrators only. "
+                        "<a href='/'>Back to the dashboard</a></p>", mimetype="text/html")
+    return Response(ADMIN_USERS_PAGE, mimetype="text/html")
+
+@app.route("/api/auth/users", methods=["GET"])
+def api_auth_users():
+    err = _require_admin()
+    if err: return err
+    rows = db_query("SELECT username, display_name, is_admin, totp_enabled, disabled, created_at, last_login "
+                    "FROM app_users ORDER BY username") or []
+    out = []
+    for r in rows:
+        tok = db_query("SELECT COUNT(*) FROM auth_tokens WHERE username=?", (r[0],))
+        out.append({"username": r[0], "display_name": r[1], "is_admin": bool(r[2]),
+                    "totp_enabled": bool(r[3]), "disabled": bool(r[4]),
+                    "created_at": r[5], "last_login": r[6],
+                    "devices": (tok[0][0] if tok else 0)})
+    return jsonify({"ok": True, "users": out, "me": current_user()})
+
+@app.route("/api/auth/users", methods=["POST"])
+def api_auth_create_user():
+    err = _require_admin()
+    if err: return err
+    d = request.json or {}
+    username = str(d.get("username", "")).strip().lower()
+    display = str(d.get("display_name", "")).strip()[:60]
+    password = str(d.get("password", ""))
+    is_admin = 1 if d.get("is_admin") else 0
+    if not re.match(r"^[a-z0-9._-]{3,40}$", username):
+        return jsonify({"ok": False, "error": "Username must be 3-40 characters: letters, numbers, dot, dash or underscore"}), 400
+    if len(password) < 10:
+        return jsonify({"ok": False, "error": "Password must be at least 10 characters"}), 400
+    if _auth_get_user(username):
+        return jsonify({"ok": False, "error": "That username already exists"}), 400
+    db_exec("INSERT INTO app_users(username, display_name, password_hash, is_admin, created_at, must_change) "
+            "VALUES(?,?,?,?,?,?)",
+            (username, display or username, generate_password_hash(password), is_admin, _auth_now(), 1))
+    return jsonify({"ok": True})
+
+@app.route("/api/auth/users/<username>", methods=["POST"])
+def api_auth_update_user(username):
+    err = _require_admin()
+    if err: return err
+    username = str(username).strip().lower()
+    u = _auth_get_user(username)
+    if not u: return jsonify({"ok": False, "error": "No such user"}), 404
+    d = request.json or {}
+    action = str(d.get("action", "")).strip()
+
+    if action == "set_password":
+        pw = str(d.get("password", ""))
+        if len(pw) < 10:
+            return jsonify({"ok": False, "error": "Password must be at least 10 characters"}), 400
+        db_exec("UPDATE app_users SET password_hash=?, must_change=1 WHERE username=?",
+                (generate_password_hash(pw), username))
+        # Changing a password signs that person's other devices out, which is
+        # the point of a reset after a suspected compromise.
+        db_exec("DELETE FROM auth_tokens WHERE username=?", (username,))
+        return jsonify({"ok": True})
+
+    if action == "toggle_admin":
+        # Guard against removing the last administrator — with no email
+        # recovery, an account-less tenant would need database surgery.
+        if u["is_admin"]:
+            r = db_query("SELECT COUNT(*) FROM app_users WHERE is_admin=1 AND disabled=0")
+            if r and r[0][0] <= 1:
+                return jsonify({"ok": False, "error": "This is the only administrator — promote someone else first"}), 400
+        db_exec("UPDATE app_users SET is_admin=? WHERE username=?", (0 if u["is_admin"] else 1, username))
+        return jsonify({"ok": True})
+
+    if action == "toggle_disabled":
+        if not u["disabled"] and u["is_admin"]:
+            r = db_query("SELECT COUNT(*) FROM app_users WHERE is_admin=1 AND disabled=0")
+            if r and r[0][0] <= 1:
+                return jsonify({"ok": False, "error": "This is the only administrator — promote someone else first"}), 400
+        newval = 0 if u["disabled"] else 1
+        db_exec("UPDATE app_users SET disabled=? WHERE username=?", (newval, username))
+        if newval:
+            db_exec("DELETE FROM auth_tokens WHERE username=?", (username,))
+        return jsonify({"ok": True})
+
+    if action == "reset_2fa":
+        db_exec("UPDATE app_users SET totp_secret=NULL, totp_enabled=0 WHERE username=?", (username,))
+        return jsonify({"ok": True})
+
+    if action == "revoke_devices":
+        db_exec("DELETE FROM auth_tokens WHERE username=?", (username,))
+        return jsonify({"ok": True})
+
+    if action == "delete":
+        if username == current_user():
+            return jsonify({"ok": False, "error": "You can't delete your own account"}), 400
+        if u["is_admin"]:
+            r = db_query("SELECT COUNT(*) FROM app_users WHERE is_admin=1 AND disabled=0")
+            if r and r[0][0] <= 1:
+                return jsonify({"ok": False, "error": "This is the only administrator"}), 400
+        db_exec("DELETE FROM app_users WHERE username=?", (username,))
+        db_exec("DELETE FROM auth_tokens WHERE username=?", (username,))
+        return jsonify({"ok": True})
+
+    return jsonify({"ok": False, "error": "Unknown action"}), 400
+
+# ── Own account: password change and 2FA setup ─────────────────────────────
+@app.route("/api/auth/me", methods=["GET"])
+def api_auth_me():
+    if not current_user(): return jsonify({"ok": False, "error": "Not signed in"}), 401
+    u = _auth_get_user(current_user())
+    return jsonify({"ok": True, "username": u["username"], "display_name": u["display_name"],
+                    "is_admin": u["is_admin"], "totp_enabled": u["totp_enabled"],
+                    "must_change": u["must_change"]})
+
+@app.route("/api/auth/change_password", methods=["POST"])
+def api_auth_change_password():
+    if not current_user(): return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    u = _auth_get_user(current_user())
+    if not check_password_hash(u["password_hash"] or "", str(d.get("current", ""))):
+        return jsonify({"ok": False, "error": "Your current password isn't right"}), 400
+    new = str(d.get("new", ""))
+    if len(new) < 10:
+        return jsonify({"ok": False, "error": "New password must be at least 10 characters"}), 400
+    db_exec("UPDATE app_users SET password_hash=?, must_change=0 WHERE username=?",
+            (generate_password_hash(new), u["username"]))
+    return jsonify({"ok": True})
+
+@app.route("/api/auth/totp/start", methods=["POST"])
+def api_auth_totp_start():
+    if not current_user(): return jsonify({"ok": False, "error": "Not signed in"}), 401
+    u = _auth_get_user(current_user())
+    secret = _totp_secret_new()
+    # Stored but not yet enabled — 2FA only switches on once a code from the
+    # app has been verified, so nobody can lock themselves out with a bad scan.
+    db_exec("UPDATE app_users SET totp_secret=?, totp_enabled=0 WHERE username=?", (secret, u["username"]))
+    label = f"9 Mountains:{u['username']}"
+    uri = f"otpauth://totp/{label}?secret={secret}&issuer=9%20Mountains&period=30&digits=6"
+    return jsonify({"ok": True, "secret": secret, "uri": uri})
+
+@app.route("/api/auth/totp/enable", methods=["POST"])
+def api_auth_totp_enable():
+    if not current_user(): return jsonify({"ok": False, "error": "Not signed in"}), 401
+    u = _auth_get_user(current_user())
+    code = str((request.json or {}).get("code", ""))
+    if not u["totp_secret"]:
+        return jsonify({"ok": False, "error": "Start the setup first"}), 400
+    if not _totp_verify(u["totp_secret"], code):
+        return jsonify({"ok": False, "error": "That code wasn't right — try the next one"}), 400
+    db_exec("UPDATE app_users SET totp_enabled=1 WHERE username=?", (u["username"],))
+    return jsonify({"ok": True})
+
+@app.route("/api/auth/totp/disable", methods=["POST"])
+def api_auth_totp_disable():
+    if not current_user(): return jsonify({"ok": False, "error": "Not signed in"}), 401
+    u = _auth_get_user(current_user())
+    if not check_password_hash(u["password_hash"] or "", str((request.json or {}).get("password", ""))):
+        return jsonify({"ok": False, "error": "Password isn't right"}), 400
+    db_exec("UPDATE app_users SET totp_secret=NULL, totp_enabled=0 WHERE username=?", (u["username"],))
+    return jsonify({"ok": True})
+
+@app.route("/logout")
+def logout_page():
+    tok = request.cookies.get("remember_token")
+    if tok:
+        db_exec("DELETE FROM auth_tokens WHERE token_hash=?", (_auth_hash_token(tok),))
+    session.clear()
+    resp = make_response(redirect("/login"))
+    resp.delete_cookie("remember_token")
+    return resp
 
 @app.route("/api/model/functions", methods=["GET"])
 def api_model_functions():
