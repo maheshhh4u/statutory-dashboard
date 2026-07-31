@@ -1224,10 +1224,12 @@ def mark_called():
     key=f"{page}|{reg}"
     if key in _called_log:
         del _called_log[key]
+        _called_log_changed()
         db_exec("DELETE FROM called_log WHERE key=?", (key,))
         return jsonify({"ok":True,"marked":False})
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     _called_log[key]={"reg_number":reg,"name":name,"page":page,"called_by":caller,"timestamp":ts}
+    _called_log_changed()
     db_exec("INSERT OR REPLACE INTO called_log(key,reg_number,page,name,called_by,timestamp,data) VALUES(?,?,?,?,?,?,?)",
             (key, reg, page, name, caller, ts, "{}"))
     return jsonify({"ok":True,"marked":True})
@@ -2182,17 +2184,32 @@ def custom_report_run():
               LEFT JOIN statuses st ON st.key = cl.page || '|' || cl.reg_number
               LEFT JOIN calling_batch cb ON cb.reg_number=cl.reg_number AND cb.active=1
               WHERE cl.timestamp>=? AND cl.timestamp<=? {cf}"""
-    raw = db_query(sql, (ts_from, ts_to) + cp) or []
-
-    # Build the full row-dict list once, with source_list already resolved to
-    # its display label — both the card (no-grouping) path and the grouped
-    # path need the exact same shape below for filters to match consistently,
-    # since a filter on Source List is expressed in terms of the label the
-    # person actually picked, not the raw stored key.
-    rows_all = [{"reg_number": r[0], "page": r[1], "outcome": r[2], "duration_sec": r[3] or 0,
-                 "caller": r[4], "timestamp": r[5], "stage": r[6], "source_list": r[7]} for r in raw]
-    src_labels = {r["source_list"]: CALLING_CATEGORIES.get(r["source_list"], r["source_list"] or "Unknown") for r in rows_all}
-    for r in rows_all: r["source_list"] = src_labels.get(r["source_list"], r["source_list"])
+    # Opening a saved report runs this endpoint once PER VISUAL, and every one
+    # of them issued this same three-table join to Turso — a remote database,
+    # so each is a network round trip, and gunicorn runs a single worker so
+    # they queue rather than overlap. An eight-visual report therefore paid for
+    # eight identical remote queries before drawing anything. The rows are
+    # cached briefly against the parameters that actually affect them, so the
+    # first visual fetches and the rest reuse it. The TTL is deliberately short:
+    # a caller logging an outcome should see it reflected almost immediately.
+    _cr_rows_key = f"cr_rows|{ts_from}|{ts_to}|{','.join(sorted(callers))}"
+    rows_all = cache_get(_cr_rows_key, max_age=20)
+    if rows_all is None:
+        raw = db_query(sql, (ts_from, ts_to) + cp) or []
+        # Build the full row-dict list once, with source_list already resolved to
+        # its display label — both the card (no-grouping) path and the grouped
+        # path need the exact same shape below for filters to match consistently,
+        # since a filter on Source List is expressed in terms of the label the
+        # person actually picked, not the raw stored key.
+        rows_all = [{"reg_number": r[0], "page": r[1], "outcome": r[2], "duration_sec": r[3] or 0,
+                     "caller": r[4], "timestamp": r[5], "stage": r[6], "source_list": r[7]} for r in raw]
+        src_labels = {r["source_list"]: CALLING_CATEGORIES.get(r["source_list"], r["source_list"] or "Unknown") for r in rows_all}
+        for r in rows_all: r["source_list"] = src_labels.get(r["source_list"], r["source_list"])
+        cache_set(_cr_rows_key, rows_all)
+    # Copy before anything below mutates rows (charity classification attaches
+    # extra keys, and filters rebuild the list) so the cached version stays
+    # clean for the next visual.
+    rows_all = [dict(r) for r in rows_all]
     needs_charity = (rows_dim in _CR_CHARITY_DIMS) or (cols_dim in _CR_CHARITY_DIMS) or any(f["field"] in _CR_CHARITY_DIMS for f in filters)
     if needs_charity:
         _cr_attach_charity_classification(rows_all)
@@ -4173,6 +4190,7 @@ def save_call():
     key = f"{page}|{reg}"
     _called_log[key] = {"reg_number": reg, "page": page, "name": name,
                         "called_by": caller, "timestamp": ts}
+    _called_log_changed()
     db_exec("INSERT OR REPLACE INTO called_log(key,reg_number,page,name,called_by,timestamp,data) VALUES(?,?,?,?,?,?,?)",
             (key, reg, page, name, caller, ts, "{}"))
     # Mark this charity completed in the active calling batch (if it's in one)
@@ -4866,6 +4884,7 @@ def save_status():
         if key not in _called_log:
             ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
             _called_log[key]={"reg_number":reg,"page":page,"called_by":caller,"timestamp":ts}
+            _called_log_changed()
             db_exec("INSERT OR REPLACE INTO called_log(key,reg_number,page,name,called_by,timestamp,data) VALUES(?,?,?,?,?,?,?)",
                     (key, reg, page, "", caller, ts, "{}"))
     else:
@@ -5151,6 +5170,7 @@ def mark_called_by():
     if set_called is False or (set_called is None and do_toggle and key in _called_log):
         if key in _called_log:
             del _called_log[key]
+            _called_log_changed()
             db_exec("DELETE FROM called_log WHERE key=?", (key,))
         try:
             db_exec("UPDATE calling_batch SET completed=0 WHERE active=1 AND reg_number=?", (reg,))
@@ -5161,6 +5181,7 @@ def mark_called_by():
         "reg_number": reg, "name": name, "page": page,
         "called_by": caller, "timestamp": ts
     }
+    _called_log_changed()
     db_exec("INSERT OR REPLACE INTO called_log(key,reg_number,page,name,called_by,timestamp,data) VALUES(?,?,?,?,?,?,?)",
             (key, reg, page, name, caller, ts, "{}"))
     # Also flag the active Daily-Calling batch row as completed so the X/100 progress
@@ -5256,18 +5277,39 @@ def compute_milestones(milestone_years):
 # ── Daily Calling — top 100 priority-ranked contacts ────────────────────────────
 import math as _math
 
+# Both of these used to scan the whole call log for every charity they were
+# asked about. Loading a 100-row calling batch calls them once per row, so with
+# ~1,500 log entries that was ~300,000 scans per request — the reason Daily
+# Calling felt slow, and it got worse with every call logged. They now share an
+# index built once and rebuilt only when the log actually changes or the day
+# rolls over, turning each check into a single set lookup.
+_called_index = {"stamp": None, "ever": set(), "today": set()}
+_called_log_version = [0]
+def _called_log_changed():
+    """Called wherever _called_log is mutated. Length alone isn't enough to
+    detect a change — overwriting an existing entry leaves it identical — so a
+    version counter is bumped explicitly instead."""
+    _called_log_version[0] += 1
+def _called_index_get():
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    stamp = (len(_called_log), today, _called_log_version[0])
+    if _called_index["stamp"] != stamp:
+        ever, todays = set(), set()
+        for v in _called_log.values():
+            reg = str(v.get("reg_number"))
+            if not reg: continue
+            ever.add(reg)
+            if str(v.get("timestamp","")).startswith(today):
+                todays.add(reg)
+        _called_index.update({"stamp": stamp, "ever": ever, "today": todays})
+    return _called_index
+
 def _called_today(reg):
     """True if this charity was called today (UTC), per call_log timestamps."""
-    reg = str(reg)
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    for v in _called_log.values():
-        if str(v.get("reg_number"))==reg and str(v.get("timestamp","")).startswith(today):
-            return True
-    return False
+    return str(reg) in _called_index_get()["today"]
 
 def _ever_called(reg):
-    reg = str(reg)
-    return any(str(v.get("reg_number"))==reg for v in _called_log.values())
+    return str(reg) in _called_index_get()["ever"]
 
 def priority_score(c):
     """
@@ -5846,11 +5888,17 @@ def api_calling_batch():
         # (The completed flag itself is kept in sync by the safe, additive-only
         # repair inside _load_active_batch — no further self-heal needed here.)
         done = sum(1 for c in batch if c.get("completed") or c.get("called_today"))
-        print(f"  [calling_batch] active batch created_at={created_at!r}, {len(batch)} rows, done={done}")
-        for c in batch[:15]:
-            print(f"    reg={c.get('reg_number')} name={(c.get('name') or '')[:30]!r} "
-                  f"completed={c.get('completed')} called_today={c.get('called_today')} "
-                  f"outcome={c.get('outcome')!r} retry_due={c.get('retry_due')}")
+        # This endpoint is hit constantly while calling, and it was printing a
+        # header plus fifteen full rows EVERY time. Writing ~16 lines to the log
+        # on every request costs real time on Render and buried anything
+        # genuinely worth seeing. Kept behind a flag so it can be switched back
+        # on for diagnosis without editing code: set CALLING_BATCH_DEBUG=1.
+        if os.environ.get("CALLING_BATCH_DEBUG") == "1":
+            print(f"  [calling_batch] active batch created_at={created_at!r}, {len(batch)} rows, done={done}")
+            for c in batch[:15]:
+                print(f"    reg={c.get('reg_number')} name={(c.get('name') or '')[:30]!r} "
+                      f"completed={c.get('completed')} called_today={c.get('called_today')} "
+                      f"outcome={c.get('outcome')!r} retry_due={c.get('retry_due')}")
         return jsonify({
             "charities": batch, "count": len(batch), "has_batch": True,
             "batch_no": batch_no, "created_at": created_at, "category": category,

@@ -6919,6 +6919,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.30", date:"2026-07", title:"Speed: fixed the two things actually making Daily Calling and saved reports slow",
+    changes:[
+      "Daily Calling was doing far more work than it looked. Two helpers \u2014 \u2018has this charity ever been called\u2019 and \u2018was it called today\u2019 \u2014 each scanned the ENTIRE call log every time they were asked about one charity. Loading a 100-row list calls them once per row, so with ~1,500 log entries that was roughly 300,000 scans per request, getting steadily worse with every call logged. They now share an index built once, so each check is a single lookup.",
+      "Opening a saved report ran the same three-table query against the database once per visual. The database is remote, so each one is a network round trip, and the server runs a single worker so they queued rather than overlapped \u2014 an eight-visual report paid for eight identical queries before drawing anything. The rows are now fetched once and shared, so only the first visual waits. The cache lasts 20 seconds, short enough that a newly logged call still shows up straight away.",
+      "The calling list endpoint was writing sixteen lines to the log on every single request while someone was calling. That\u2019s now off by default and can be switched back on with the CALLING_BATCH_DEBUG environment variable when something needs diagnosing.",
+      "The shared rows are copied before use, so one visual\u2019s filters can never affect another\u2019s \u2014 the speed-up doesn\u2019t come at the cost of correctness.",
+    ]},
   { v:"2.29", date:"2026-07", title:"Export a report to PDF or PowerPoint",
     changes:[
       "File \u2192 Export to PDF\u2026 and Export to PowerPoint\u2026. Every page of the report becomes a PDF page or a slide, titled with the page name, sized to fit without stretching. The file is named after the report.",
