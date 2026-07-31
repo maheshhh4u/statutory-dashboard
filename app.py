@@ -3114,12 +3114,17 @@ ADMIN_USERS_PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <header><h1>&#128100; User accounts</h1><a href="/">&larr; Back to dashboard</a> <a href="/logout">Sign out</a></header>
 <div class="wrap">
   <div class="card">
+    <h2>My details</h2>
+    <table><tbody id="mydetails"><tr><td style="color:#889">Loading&hellip;</td></tr></tbody></table>
+  </div>
+
+  <div class="card" id="card-accounts">
     <h2>Accounts</h2>
     <table><thead><tr><th>User</th><th>Status</th><th>Devices</th><th>Last sign-in</th><th></th></tr></thead>
     <tbody id="rows"><tr><td colspan="5" style="color:#889">Loading&hellip;</td></tr></tbody></table>
   </div>
 
-  <div class="card">
+  <div class="card" id="card-adduser">
     <h2>Add a user</h2>
     <div class="row">
       <input id="nu" placeholder="username" style="width:150px" autocomplete="off">
@@ -3135,7 +3140,7 @@ ADMIN_USERS_PAGE = """<!doctype html><html><head><meta charset="utf-8">
   </div>
 
   <div class="card">
-    <h2>My account</h2>
+    <h2>Password &amp; security</h2>
     <div class="row">
       <input id="cp" type="password" placeholder="current password" style="width:190px" autocomplete="current-password">
       <input id="npw" type="password" placeholder="new password" style="width:190px" autocomplete="new-password">
@@ -3162,11 +3167,32 @@ ADMIN_USERS_PAGE = """<!doctype html><html><head><meta charset="utf-8">
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let ME=null;
 function load(){
-  fetch('/api/auth/me').then(r=>r.json()).then(d=>{ if(d.ok){ ME=d;
+  fetch('/api/auth/me').then(r=>r.json()).then(d=>{ if(!d.ok) return; ME=d;
     document.getElementById('tstate').textContent=d.totp_enabled?'on':'off';
     document.getElementById('tbtn').textContent=d.totp_enabled?'Turn off':'Set up';
     document.getElementById('tbtn').onclick=d.totp_enabled?disableTotp:startTotp;
-  }});
+    document.getElementById('mydetails').innerHTML=[
+      ['Username', esc(d.username)],
+      ['Name', esc(d.display_name||'\u2014')],
+      ['Role', d.is_admin?'Administrator':'Standard user'],
+      ['Two-factor', d.totp_enabled?'On':'Off'],
+      ['Signed-in devices', d.devices],
+      ['Last sign-in', esc(d.last_login||'\u2014')],
+      ['Account created', esc(d.created_at||'\u2014')],
+    ].map(r=>`<tr><td style="color:#667;width:170px">${r[0]}</td><td><strong>${r[1]}</strong></td></tr>`).join('');
+    // Everyone can manage their own password and 2FA; only administrators see
+    // the account list and the create-user form. The APIs behind those are
+    // protected server-side too, so this is presentation rather than security.
+    if(!d.is_admin){
+      document.getElementById('card-accounts').style.display='none';
+      document.getElementById('card-adduser').style.display='none';
+      document.querySelector('header h1').innerHTML='&#128100; My account';
+      return;   // don't call the admin-only endpoint
+    }
+    loadAccounts();
+  });
+}
+function loadAccounts(){
   fetch('/api/auth/users').then(r=>r.json()).then(d=>{
     const tb=document.getElementById('rows');
     if(!d.ok){ tb.innerHTML='<tr><td colspan="5" style="color:#a02c2c">'+esc(d.error)+'</td></tr>'; return; }
@@ -3258,10 +3284,12 @@ def _require_admin():
 
 @app.route("/admin/users")
 def admin_users_page():
+    # Open to every signed-in user, not just admins. A non-admin previously got
+    # a dead end reading "Administrators only", which left them no way to change
+    # their own password or set up 2FA — the two things they most need. The page
+    # now shows only what the person is actually allowed to do; the admin APIs
+    # behind it stay protected server-side regardless of what the page renders.
     if not current_user(): return redirect("/login?next=/admin/users")
-    if not current_user_is_admin():
-        return Response("<p style='font-family:sans-serif;padding:40px'>Administrators only. "
-                        "<a href='/'>Back to the dashboard</a></p>", mimetype="text/html")
     return Response(ADMIN_USERS_PAGE, mimetype="text/html")
 
 @app.route("/api/auth/users", methods=["GET"])
@@ -3370,9 +3398,14 @@ def api_auth_update_user(username):
 def api_auth_me():
     if not current_user(): return jsonify({"ok": False, "error": "Not signed in"}), 401
     u = _auth_get_user(current_user())
+    extra = db_query("SELECT last_login, created_at FROM app_users WHERE username=?", (u["username"],))
+    devices = db_query("SELECT COUNT(*) FROM auth_tokens WHERE username=?", (u["username"],))
     return jsonify({"ok": True, "username": u["username"], "display_name": u["display_name"],
                     "is_admin": u["is_admin"], "totp_enabled": u["totp_enabled"],
-                    "must_change": u["must_change"]})
+                    "must_change": u["must_change"],
+                    "last_login": (extra[0][0] if extra else ""),
+                    "created_at": (extra[0][1] if extra else ""),
+                    "devices": (devices[0][0] if devices else 0)})
 
 @app.route("/api/auth/change_password", methods=["POST"])
 def api_auth_change_password():

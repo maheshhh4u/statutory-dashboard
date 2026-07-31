@@ -334,7 +334,7 @@ select:focus{outline:none;border-color:var(--green)}
   <button class="nav-btn" onclick="switchTab('old',this)">🏛️ 40+ Yrs · Zero Statutory</button>
   <button class="nav-btn" onclick="switchTab('milestones',this)">🎂 Anniversary Watch</button>
   <button class="nav-btn" onclick="showAbout()" title="About & version history" style="margin-left:auto;font-weight:700">ℹ️ About</button>
-  <a class="nav-btn" href="/admin/users" title="Manage login accounts" style="text-decoration:none">👤 Users</a>
+  <a class="nav-btn" href="/admin/users" title="Your account, password and two-factor settings" style="text-decoration:none">👤 Account</a>
   <a class="nav-btn" href="/logout" title="Sign out" style="text-decoration:none">⏻ Sign out</a>
 </nav>
 <main class="main">
@@ -6921,6 +6921,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.34", date:"2026-07", title:"Non-admins get their own account page instead of a dead end",
+    changes:[
+      "A user without admin rights previously hit \u201cAdministrators only\u201d and a link back \u2014 with no way to change their own password or set up two-factor authentication, which are exactly the things they need most.",
+      "The page now adapts to who\u2019s signed in. Everyone sees a My details panel (username, name, role, whether 2FA is on, how many devices are signed in, last sign-in, account created) and can change their own password and manage their own 2FA. Only administrators additionally see the account list and the create-user form.",
+      "The admin APIs behind those sections remain protected on the server, so hiding them is presentation rather than the security boundary \u2014 a non-admin couldn\u2019t call them even by going around the page.",
+      "Header link renamed from Users to Account, since it now means something useful whichever kind of user you are.",
+    ]},
   { v:"2.33", date:"2026-07", title:"Email addresses can be usernames, and the password rules are now stated up front",
     changes:[
       "To clear up the confusion: passwords never had any character restrictions \u2014 @ % & $ * ! ~ and anything else have always been fine, with 10 characters the only rule. The message you saw was about the USERNAME field; it just didn\u2019t say so clearly enough.",
