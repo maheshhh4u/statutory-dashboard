@@ -2852,6 +2852,17 @@ def _auth_hash_token(raw):
 def _auth_now():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
+def _auth_caller_name(user):
+    """The name recorded against calls, taken from the signed-in account: the
+    first word of the display name, or the part of the username before any @.
+    Callers used to pick their own name from a dropdown, which meant call
+    attribution depended on remembering to set it correctly."""
+    if not user: return ""
+    disp = (user.get("display_name") or "").strip()
+    if disp: return disp.split()[0]
+    uname = (user.get("username") or "").strip()
+    return uname.split("@")[0] if uname else ""
+
 def _auth_get_user(username):
     r = db_query("SELECT username, display_name, password_hash, is_admin, totp_secret, "
                  "totp_enabled, disabled, must_change FROM app_users WHERE username=?",
@@ -3403,6 +3414,7 @@ def api_auth_me():
     return jsonify({"ok": True, "username": u["username"], "display_name": u["display_name"],
                     "is_admin": u["is_admin"], "totp_enabled": u["totp_enabled"],
                     "must_change": u["must_change"],
+                    "caller_name": _auth_caller_name(u),
                     "last_login": (extra[0][0] if extra else ""),
                     "created_at": (extra[0][1] if extra else ""),
                     "devices": (devices[0][0] if devices else 0)})
@@ -5790,12 +5802,21 @@ def debug(): return jsonify({"status":dict(_bg_status),"cache":list(_cache.keys(
 # ── Users / Callers API ────────────────────────────────────────────────────────
 @app.route("/api/users", methods=["GET"])
 def get_users():
-    """Always fetch fresh from DB so manual DB edits show immediately."""
-    rows = db_query("SELECT name FROM users ORDER BY added_at")
-    if rows:
-        # Update in-memory cache too so other code stays in sync
-        global _users
-        _users = [r[0] for r in rows]
+    """Caller names, used for the Caller filter in reports.
+
+    Callers now come from the login accounts rather than the old editable
+    caller list — whoever is signed in is who the call is attributed to. Names
+    already present in the call log are included as well, so historical calls
+    made under the previous system can still be filtered on."""
+    names = []
+    for r in (db_query("SELECT display_name, username FROM app_users WHERE disabled=0") or []):
+        n = _auth_caller_name({"display_name": r[0], "username": r[1]})
+        if n and n not in names: names.append(n)
+    for r in (db_query("SELECT DISTINCT called_by FROM called_log WHERE called_by IS NOT NULL AND TRIM(called_by) <> ''") or []):
+        n = str(r[0]).strip()
+        if n and n not in names: names.append(n)
+    global _users
+    _users = sorted(names, key=lambda x: x.lower())
     return jsonify(_users)
 
 @app.route("/api/db/refresh", methods=["GET","POST"])

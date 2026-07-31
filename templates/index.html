@@ -318,7 +318,7 @@ select:focus{outline:none;border-color:var(--green)}
   <div style="display:flex;align-items:center;gap:10px">
     <div style="display:flex;align-items:center;gap:7px">
       <span style="font-size:11px;color:rgba(255,255,255,.5)">Calling as:</span>
-      <span id="caller-display" onclick="openCallerPopup()" style="font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.1);color:#fff;cursor:pointer;min-width:100px;text-align:center">— Select —</span>
+      <span id="caller-display" title="Taken from your login — change it on the Account page" style="font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.1);color:#fff;min-width:100px;text-align:center">…</span>
     </div>
     <button onclick="openAdmin()" style="font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);cursor:pointer">⚙ Admin</button>
     <div style="font-size:11px;color:rgba(255,255,255,.4)" id="hdrDate"></div>
@@ -1709,43 +1709,12 @@ select:focus{outline:none;border-color:var(--green)}
     <h3>⚙ Admin — Settings</h3>
 
     <div style="display:flex;gap:4px;border-bottom:2px solid var(--s2);margin-bottom:16px">
-      <button type="button" class="admin-tab-btn active" id="admin-tab-btn-callers" onclick="switchAdminTab('callers')"
-        style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--navy);border-bottom:2px solid var(--navy);margin-bottom:-2px">👤 Callers</button>
-      <button type="button" class="admin-tab-btn" id="admin-tab-btn-timezone" onclick="switchAdminTab('timezone')"
-        style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">🌍 Timezone</button>
+      <button type="button" class="admin-tab-btn active" id="admin-tab-btn-timezone" onclick="switchAdminTab('timezone')"
+        style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--navy);border-bottom:2px solid var(--navy);margin-bottom:-2px">🌍 Timezone</button>
       <button type="button" class="admin-tab-btn" id="admin-tab-btn-sql" onclick="switchAdminTab('sql')"
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">🗄 SQL Query</button>
       <button type="button" class="admin-tab-btn" id="admin-tab-btn-dropdowns" onclick="switchAdminTab('dropdowns')"
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">📋 Dropdowns</button>
-    </div>
-
-    <div id="admin-tab-panel-callers">
-      <p style="font-size:12px;color:var(--t2);margin-bottom:14px">Manage callers and browser session settings.</p>
-
-      <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Caller Names</div>
-      <div id="admin-user-list" style="margin-bottom:12px"></div>
-      <div style="display:flex;gap:7px;margin-bottom:16px">
-        <input id="admin-new-user" placeholder="Add new caller name…" maxlength="60" style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px" onkeydown="if(event.key==='Enter')addUser()">
-        <button class="btn btn-green btn-sm" onclick="addUser()">+ Add</button>
-      </div>
-
-      <div style="font-size:12px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Browser Session Settings</div>
-      <div style="background:var(--s2);border-radius:var(--radius);padding:12px;margin-bottom:14px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <div>
-            <div style="font-size:12px;font-weight:600">Currently logged in as</div>
-            <div id="admin-current-caller" style="font-size:13px;color:var(--green);font-weight:700;margin-top:2px">—</div>
-          </div>
-          <button class="btn btn-outline btn-sm" onclick="openCallerPopup();closeAdmin()">Change</button>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <div>
-            <div style="font-size:12px;font-weight:600">Remember selection in browser</div>
-            <div id="admin-remember-status" style="font-size:11px;color:var(--t3);margin-top:2px">—</div>
-          </div>
-          <button class="btn btn-outline btn-sm" id="admin-clear-remember-btn" onclick="clearRemembered()">Clear remembered name</button>
-        </div>
-      </div>
     </div>
 
     <div id="admin-tab-panel-timezone" style="display:none">
@@ -6921,6 +6890,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.35", date:"2026-07", title:"Caller identity now comes from the login, and the old caller picker is gone",
+    changes:[
+      "\u201cCalling as\u201d is taken from whoever is signed in \u2014 the first name of their display name \u2014 rather than a dropdown. Calls are logged under that same name automatically, so attribution follows the account instead of depending on someone remembering to set the right name.",
+      "Removed the Callers tab from Admin. It managed a separate list of names that anyone could pick from, which no longer makes sense now there are real accounts \u2014 and it meant calls could be attributed to someone else, deliberately or by accident.",
+      "The Caller filter in reports now lists the login accounts, plus any names already present in the call log \u2014 so calls made under the old system can still be filtered on and nothing historical is lost.",
+      "If an account has no display name the caller name falls back to the part of the username before the @; if it still can\u2019t be worked out, the message now points at the actual cause (no display name set) rather than reopening a picker that no longer exists.",
+      "Set display names on the Account page \u2014 that\u2019s what now determines how calls are attributed.",
+    ]},
   { v:"2.34", date:"2026-07", title:"Non-admins get their own account page instead of a dead end",
     changes:[
       "A user without admin rights previously hit \u201cAdministrators only\u201d and a link back \u2014 with no way to change their own password or set up two-factor authentication, which are exactly the things they need most.",
@@ -8447,24 +8424,26 @@ function utcToDisplayParts(utcStr){
   }catch(e){ return {date:'', time:''}; }
 }
 
+// Who is calling is now decided by who is signed in, not by a dropdown. The
+// old picker let anyone attribute calls to anyone, and depended on remembering
+// to set it — calls were occasionally logged under the wrong name as a result.
 function initCaller(){
-  const remember = localStorage.getItem(LS_REMEMBER) === 'true';
-  const saved    = remember ? localStorage.getItem(LS_CALLER) : null;
-  if(saved){
-    currentCaller = saved;
+  fetch('/api/auth/me').then(r=>r.json()).then(d=>{
+    if(d && d.ok && d.caller_name){
+      currentCaller = d.caller_name;
+      localStorage.setItem(LS_CALLER, currentCaller);   // kept only so the existing call paths read it
+    }
     updateCallerDisplay();
-    document.getElementById('caller-warning').style.display='none';
-  } else {
-    // Show pop-up after short delay so page renders first
-    setTimeout(openCallerPopup, 600);
-  }
+    const warn=document.getElementById('caller-warning');
+    if(warn) warn.style.display='none';
+  }).catch(()=>{ updateCallerDisplay(); });
 }
 
 function updateCallerDisplay(){
   const el=document.getElementById('caller-display');
-  if(el) el.textContent = currentCaller || '— Select —';
+  if(el) el.textContent = currentCaller || '\u2014';
   const homeEl=document.getElementById('home-caller-name');
-  if(homeEl) homeEl.textContent = currentCaller || '— not selected —';
+  if(homeEl) homeEl.textContent = currentCaller || '\u2014';
   const adminEl=document.getElementById('admin-current-caller');
   if(adminEl) adminEl.textContent = currentCaller || 'Not selected';
   if(currentCaller) fetchDailyTip();
@@ -8550,7 +8529,7 @@ function loadUsers(){
 }
 
 function switchAdminTab(tab){
-  const tabs=['callers','timezone','sql','dropdowns'];
+  const tabs=['timezone','sql','dropdowns'];
   tabs.forEach(t=>{
     const panel=document.getElementById('admin-tab-panel-'+t);
     const btn=document.getElementById('admin-tab-btn-'+t);
@@ -8896,9 +8875,10 @@ function autoMarkCalled(pg, reg, name){
 }
 
 function toggleCalled(pg,reg,name){
-  // If no caller selected, show the selection popup first
+  // Caller comes from the signed-in account now, so an empty value means the
+  // account has no display name rather than "you forgot to pick".
   if(!currentCaller){
-    openCallerPopup();
+    alert('Your caller name could not be determined. Ask an administrator to set a display name on your account.');
     return;
   }
   const k = pg+'|'+reg;
@@ -11138,7 +11118,7 @@ function startMxSync(){
     alert(scope==='selected'?'No items selected. Tick some rows, or choose "All items".':'No charities to sync.');
     return;
   }
-  if(!currentCaller){openCallerPopup();return;}
+  if(!currentCaller){alert('Your caller name could not be determined. Ask an administrator to set a display name on your account.');return;}
   document.getElementById('mx-sync-btn').disabled=true;
   document.getElementById('mx-sync-progress').style.display='block';
   document.getElementById('mx-sync-result').style.display='none';
