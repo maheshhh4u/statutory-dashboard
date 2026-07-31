@@ -3092,7 +3092,8 @@ ADMIN_USERS_PAGE = """<!doctype html><html><head><meta charset="utf-8">
  body{margin:0;font-family:Inter,system-ui,sans-serif;background:#f5f6f8;color:#223}
  header{background:#1e3a5f;color:#fff;padding:14px 22px;display:flex;align-items:center;gap:14px}
  header h1{font-size:16px;margin:0;font-weight:700}
- header a{color:#cfe0f5;font-size:12.5px;text-decoration:none;margin-left:auto}
+ header a{color:#cfe0f5;font-size:12.5px;text-decoration:none;margin-left:14px}
+ header a:first-of-type{margin-left:auto}
  .wrap{max-width:1000px;margin:22px auto;padding:0 18px}
  .card{background:#fff;border:1px solid #e3e6ea;border-radius:9px;padding:16px 18px;margin-bottom:18px}
  h2{font-size:13px;text-transform:uppercase;letter-spacing:.4px;color:#667;margin:0 0 12px}
@@ -3121,9 +3122,9 @@ ADMIN_USERS_PAGE = """<!doctype html><html><head><meta charset="utf-8">
   <div class="card">
     <h2>Add a user</h2>
     <div class="row">
-      <input id="nu" placeholder="username" style="width:150px">
-      <input id="nd" placeholder="display name" style="width:170px">
-      <input id="np" type="password" placeholder="password (min 10 chars)" style="width:210px">
+      <input id="nu" placeholder="username" style="width:150px" autocomplete="off">
+      <input id="nd" placeholder="display name" style="width:170px" autocomplete="off">
+      <input id="np" type="password" placeholder="password (min 10 chars)" style="width:210px" autocomplete="new-password">
       <label style="font-size:12.5px"><input type="checkbox" id="na"> Administrator</label>
       <button class="btn" onclick="createUser()">Create</button>
     </div>
@@ -3133,8 +3134,8 @@ ADMIN_USERS_PAGE = """<!doctype html><html><head><meta charset="utf-8">
   <div class="card">
     <h2>My account</h2>
     <div class="row">
-      <input id="cp" type="password" placeholder="current password" style="width:190px">
-      <input id="npw" type="password" placeholder="new password" style="width:190px">
+      <input id="cp" type="password" placeholder="current password" style="width:190px" autocomplete="current-password">
+      <input id="npw" type="password" placeholder="new password" style="width:190px" autocomplete="new-password">
       <button class="btn" onclick="changePw()">Change password</button>
     </div>
     <div id="pmsg" class="msg"></div>
@@ -3165,6 +3166,7 @@ function load(){
   fetch('/api/auth/users').then(r=>r.json()).then(d=>{
     const tb=document.getElementById('rows');
     if(!d.ok){ tb.innerHTML='<tr><td colspan="5" style="color:#a02c2c">'+esc(d.error)+'</td></tr>'; return; }
+    if(!Array.isArray(d.users)){ tb.innerHTML='<tr><td colspan="5" style="color:#a02c2c">Unexpected response from the server.</td></tr>'; return; }
     tb.innerHTML=d.users.map(u=>`<tr>
       <td><strong>${esc(u.display_name||u.username)}</strong><br><span style="color:#889;font-size:11.5px">${esc(u.username)}</span></td>
       <td>${u.is_admin?'<span class="tag">admin</span>':''}${u.totp_enabled?'<span class="tag">2FA</span>':''}${u.disabled?'<span class="tag off">disabled</span>':''}</td>
@@ -3178,6 +3180,11 @@ function load(){
         <button class="btn" onclick="act('${esc(u.username)}','toggle_disabled')">${u.disabled?'Enable':'Disable'}</button>
         <button class="btn danger" onclick="act('${esc(u.username)}','delete',1)">Delete</button>
       </td></tr>`).join('');
+  }).catch(e=>{
+    // Without this, any failure left the table saying "Loading..." for ever,
+    // which gives no clue whether the request failed or the page is broken.
+    document.getElementById('rows').innerHTML=
+      '<tr><td colspan="5" style="color:#a02c2c">Could not load accounts: '+esc(e.message)+'</td></tr>';
   });
 }
 function act(username, action, confirmIt){
@@ -3216,7 +3223,7 @@ function startTotp(){
     if(!d.ok){ alert(d.error||'Failed'); return; }
     const box=document.getElementById('qr'); box.innerHTML='';
     new QRCode(box,{text:d.uri,width:150,height:150});
-    box.insertAdjacentHTML('beforeend','<p style="font-size:11.5px;color:#889;margin:8px 0 0">Can\'t scan? Enter this key manually: <code>'+esc(d.secret)+'</code></p>');
+    box.insertAdjacentHTML('beforeend','<p style="font-size:11.5px;color:#889;margin:8px 0 0">Can&rsquo;t scan? Enter this key manually: <code>'+esc(d.secret)+'</code></p>');
     document.getElementById('tsetup').style.display='flex';
   });
 }

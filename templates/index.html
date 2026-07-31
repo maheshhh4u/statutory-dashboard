@@ -6921,6 +6921,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.32", date:"2026-07", title:"Fix: the Users page was completely broken \u2014 one stray apostrophe",
+    changes:[
+      "Everything on the Users page failed at once \u2014 accounts stuck on \u201cLoading\u2026\u201d, Create doing nothing, 2FA Set up doing nothing \u2014 and that was the clue: one JavaScript error stops the whole script, so every button on the page dies together rather than just one.",
+      "The cause was an escaped apostrophe in \u201cCan\u2019t scan?\u201d. That page is built as a Python string, and Python turned the escape into a plain apostrophe before the browser ever saw it \u2014 which closed a JavaScript string early and broke the file. Replaced with an HTML entity, and I verified the page\u2019s JavaScript actually parses this time rather than assuming it did.",
+      "Also spotted in the screenshot: the browser was auto-filling the \u201cAdd a user\u201d form with your saved login, so it arrived pre-populated with admin and a password \u2014 an easy way to create an account by accident. Autofill is now switched off for those fields.",
+      "Added proper error handling to the accounts list. If the request fails it now says so, instead of sitting on \u201cLoading\u2026\u201d indefinitely and leaving you to guess whether it was the request or the page.",
+      "Tidied the header so \u201cSign out\u201d sits properly next to \u201cBack to dashboard\u201d.",
+    ]},
   { v:"2.31", date:"2026-07", title:"Login added \u2014 the dashboard was previously open to anyone with the URL",
     changes:[
       "Worth stating plainly: until now there was no sign-in at all. Anyone who knew or guessed the address had full access to charity contacts, call logs and notes. That\u2019s now behind a login.",
