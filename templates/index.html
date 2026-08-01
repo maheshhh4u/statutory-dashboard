@@ -4,6 +4,27 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>9 Mountains · Prospecting Dashboard</title>
+<!-- The browser falls back to the host's own icon when a page declares none,
+     which is why Render's logo was showing in the tab. The mark is already in
+     /static for the header, so it just needed pointing at. -->
+<script>
+// Runs before the page renders so the correct theme is in place on the first
+// paint — applying it later gives a visible white flash on every load.
+// localStorage holds the last known value; the server setting is fetched
+// afterwards and corrects it if an admin has changed it since.
+(function(){
+  try{
+    var t=localStorage.getItem('theme');
+    if(t==='dark'||t==='light'){ document.documentElement.setAttribute('data-theme',t); }
+    else if(t==='auto'||!t){
+      var dark=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.setAttribute('data-theme', dark?'dark':'light');
+    }
+  }catch(e){}
+})();
+</script>
+<link rel="icon" type="image/png" href="/static/9m-mark.png">
+<link rel="apple-touch-icon" href="/static/9m-mark.png">
 <!-- RingCentral Embeddable — src set dynamically once client_id is loaded -->
 <script id="rc-adapter-script"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
@@ -58,6 +79,39 @@
   --shadow:0 1px 4px rgba(30,58,95,.10);
   --shadow-lg:0 8px 24px rgba(30,58,95,.15);
 }
+
+/* Dark mode. The whole app already draws its colours from the variables above,
+   so a theme is just a different set of values — no component needed changing.
+   Applied by setting data-theme="dark" on <html>, which is done before the
+   page paints (see the inline script in <head>) to avoid a white flash. */
+html[data-theme="dark"]{
+  --navy:#4a7ab5;        /* lifted: the brand navy is unreadable on a dark ground */
+  --navy-d:#3d6494;
+  --navy-l:#6b98cf;
+  --navy-pale:#1c2c40;
+  --gold:#e8b339;
+  --gold-d:#c89829;
+  --gold-l:#3a2f14;
+  --gold-text:#e8b339;
+
+  --bg:#14171c;--surface:#1c2028;--s2:#242932;--border:#333a45;
+  --text:#e6e9ef;--t2:#a8b0bd;--t3:#7a8291;
+  --red:#ff8a80;--redl:#3a1f1e;
+  --orange:#ffb26b;--orangel:#3a2a18;
+  --purple:#c9a3e0;--purplel:#2c2136;
+
+  --green:var(--navy);--gl:var(--navy-pale);--gm:var(--navy);--grow:#1a1f27;
+  --blue:var(--navy);--bluel:var(--navy-pale);
+  --goldl:var(--gold-l);
+  --bd:var(--border);--t1:var(--text);
+  color-scheme:dark;     /* makes scrollbars and native controls follow suit */
+}
+/* Charts, the canvas and anything with a hard-coded white background need a
+   nudge — those were written before there was a theme to respect. */
+html[data-theme="dark"] body{background:var(--bg);color:var(--text)}
+html[data-theme="dark"] img.home-hero-logo,
+html[data-theme="dark"] .hdr-logo img{filter:brightness(0) invert(1)}
+
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Inter',-apple-system,system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
 h1,h2,h3,h4,.brand-font{font-family:'Montserrat','Inter',sans-serif;letter-spacing:.01em}
@@ -1711,12 +1765,24 @@ select:focus{outline:none;border-color:var(--green)}
     <div style="display:flex;gap:4px;border-bottom:2px solid var(--s2);margin-bottom:16px">
       <button type="button" class="admin-tab-btn active" id="admin-tab-btn-timezone" onclick="switchAdminTab('timezone')"
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--navy);border-bottom:2px solid var(--navy);margin-bottom:-2px">🌍 Timezone</button>
+      <button type="button" class="admin-tab-btn" id="admin-tab-btn-appearance" onclick="switchAdminTab('appearance')"
+        style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">🎨 Appearance</button>
       <button type="button" class="admin-tab-btn" id="admin-tab-btn-sql" onclick="switchAdminTab('sql')"
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">🗄 SQL Query</button>
       <button type="button" class="admin-tab-btn" id="admin-tab-btn-dropdowns" onclick="switchAdminTab('dropdowns')"
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">📋 Dropdowns</button>
     </div>
 
+    <div id="admin-tab-panel-appearance" style="display:none">
+      <p style="font-size:13px;color:var(--t2);margin:0 0 12px">Sets the colour theme for everyone using the dashboard. "Follow device" uses each person's own system setting, so it can differ per user.</p>
+      <div style="display:flex;flex-direction:column;gap:8px;max-width:420px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="radio" name="theme-mode" value="light"> ☀️ Light</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="radio" name="theme-mode" value="dark"> 🌙 Dark</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="radio" name="theme-mode" value="auto"> 💻 Follow device setting</label>
+        <button class="btn btn-green btn-sm" style="margin-top:8px;align-self:flex-start" onclick="saveThemeSetting()">Save theme</button>
+        <span id="theme-status" style="font-size:12px;color:var(--t3)"></span>
+      </div>
+    </div>
     <div id="admin-tab-panel-timezone" style="display:none">
       <p style="font-size:12px;color:var(--t2);margin-bottom:14px">Everything is stored in UTC in the database — this only controls how times are DISPLAYED and what timezone Excel exports use, everywhere in the dashboard. Applies to everyone, not just this browser. Every zone below automatically switches for daylight saving / summer time (e.g. BST ⇄ GMT each March/October) — zones marked "no DST" stay fixed year-round.</p>
       <div style="background:var(--s2);border-radius:var(--radius);padding:12px;margin-bottom:14px">
@@ -6890,6 +6956,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.36", date:"2026-07", title:"Dark mode, and the 9M logo in the browser tab",
+    changes:[
+      "The tab was showing Render\u2019s icon because the page never declared one of its own \u2014 browsers fall back to the host\u2019s when that happens. The 9M mark was already in /static for the header, so it just needed pointing at. It now appears in the tab, in bookmarks, and as the icon when saved to a phone home screen.",
+      "Dark mode, set from Admin \u2192 \ud83c\udfa8 Appearance: Light, Dark, or Follow device setting (which uses each person\u2019s own system preference, so it can differ between users). The choice applies to everyone and is saved with the other app settings.",
+      "The theme is applied before the page draws, so there\u2019s no white flash on load \u2014 the last known setting is remembered locally and the server\u2019s value confirms it a moment later.",
+      "It carries across the sign-in and account pages too, so those don\u2019t flash white in between.",
+      "This was quick because the whole app already draws its colours from a shared set of variables \u2014 dark mode is a different set of values rather than restyling anything. One thing to know: charts pick up their colours when they\u2019re drawn, so a chart already on screen keeps the old palette until it next refreshes.",
+    ]},
   { v:"2.35", date:"2026-07", title:"Caller identity now comes from the login, and the old caller picker is gone",
     changes:[
       "\u201cCalling as\u201d is taken from whoever is signed in \u2014 the first name of their display name \u2014 rather than a dropdown. Calls are logged under that same name automatically, so attribution follows the account instead of depending on someone remembering to set the right name.",
@@ -8515,6 +8589,44 @@ function clearRemembered(){
   alert('Remembered name cleared. You will be asked to select your name on the next visit.');
 }
 
+// ── Theme ──────────────────────────────────────────────────────────────────
+// The setting is stored server-side so it applies to everyone, and mirrored to
+// localStorage so the pre-paint script in <head> can apply it on the next load
+// without waiting for a request.
+function crApplyTheme(theme){
+  let effective = theme;
+  if(theme==='auto'){
+    effective = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+  document.documentElement.setAttribute('data-theme', effective==='dark' ? 'dark' : 'light');
+  try{ localStorage.setItem('theme', theme); }catch(e){}
+  // Charts read their colours once at build time, so an open chart keeps the
+  // old palette until it's redrawn.
+  if(typeof Chart!=='undefined' && Chart.defaults){
+    const css=getComputedStyle(document.documentElement);
+    Chart.defaults.color=css.getPropertyValue('--t2').trim()||'#5a6070';
+    Chart.defaults.borderColor=css.getPropertyValue('--border').trim()||'#dde3ec';
+  }
+}
+function loadThemeSetting(){
+  fetch('/api/settings/theme').then(r=>r.json()).then(d=>{
+    if(!d || !d.theme) return;
+    crApplyTheme(d.theme);
+    const el=document.querySelector(`input[name="theme-mode"][value="${d.theme}"]`);
+    if(el) el.checked=true;
+  }).catch(()=>{});
+}
+function saveThemeSetting(){
+  const sel=document.querySelector('input[name="theme-mode"]:checked');
+  const st=document.getElementById('theme-status');
+  if(!sel){ if(st){ st.textContent='Pick a theme first.'; st.style.color='#c0392b'; } return; }
+  fetch('/api/settings/theme',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({theme:sel.value})}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ if(st){ st.textContent='\u26a0 '+(d.error||'Could not save'); st.style.color='#c0392b'; } return; }
+      crApplyTheme(d.theme);
+      if(st){ st.textContent='\u2713 Saved \u2014 applies to everyone. Others will see it on their next page load.'; st.style.color='var(--green)'; }
+    }).catch(e=>{ if(st){ st.textContent='\u26a0 '+e.message; st.style.color='#c0392b'; } });
+}
 function loadUsers(){
   fetch('/api/users').then(r=>r.json()).then(users=>{
     userList=users;
@@ -8529,7 +8641,7 @@ function loadUsers(){
 }
 
 function switchAdminTab(tab){
-  const tabs=['timezone','sql','dropdowns'];
+  const tabs=['timezone','appearance','sql','dropdowns'];
   tabs.forEach(t=>{
     const panel=document.getElementById('admin-tab-panel-'+t);
     const btn=document.getElementById('admin-tab-btn-'+t);
@@ -8742,6 +8854,7 @@ function openAdmin(){
   renderAdminUserList();
   updateCallerDisplay();
   loadTimezoneSetting();
+  loadThemeSetting();
 }
 function closeAdmin(){document.getElementById('admin-modal').classList.remove('open');}
 function loadTimezoneSetting(){
@@ -11205,6 +11318,7 @@ document.getElementById('mx-modal').addEventListener('click',function(e){
   if(e.target===this)closeMxModal();
 });
 // Load users first — initCaller() is called inside loadUsers() after users arrive
+loadThemeSetting();   // confirm the server's theme, in case an admin changed it
 loadUsers();
 restoreWrap();
 setTimeout(setupResizableTables,300);

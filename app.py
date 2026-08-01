@@ -476,6 +476,23 @@ def display_date_range_to_utc(date_from, date_to):
     ts_to   = display_to_utc_str(f"{date_to} 23:59:59")
     return ts_from, ts_to
 
+@app.route("/api/settings/theme", methods=["GET"])
+def get_theme_setting():
+    """Light, dark, or auto (follow the device). Stored app-wide in the same
+    key-value settings table as the timezone."""
+    return jsonify({"theme": _app_settings.get("theme", "light")})
+
+@app.route("/api/settings/theme", methods=["POST"])
+def set_theme_setting():
+    if not current_user_is_admin():
+        return jsonify({"ok": False, "error": "Administrators only"}), 403
+    theme = str((request.json or {}).get("theme", "")).strip().lower()
+    if theme not in ("light", "dark", "auto"):
+        return jsonify({"ok": False, "error": "Theme must be light, dark or auto"}), 400
+    _app_settings["theme"] = theme
+    db_exec("INSERT OR REPLACE INTO app_settings(key,value) VALUES(?,?)", ("theme", theme))
+    return jsonify({"ok": True, "theme": theme})
+
 @app.route("/api/settings/timezone", methods=["GET"])
 def get_timezone_setting():
     return jsonify({"timezone": get_display_tz_name()})
@@ -3006,6 +3023,12 @@ def _auth_guard():
 LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign in &middot; 9 Mountains</title>
+<script>
+(function(){try{var t=localStorage.getItem('theme');
+ var dark = t==='dark' || ((t==='auto'||!t) && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+ if(dark) document.documentElement.setAttribute('data-theme','dark');}catch(e){}})();
+</script>
+
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
  body{margin:0;font-family:Inter,system-ui,sans-serif;background:#1e3a5f;display:flex;align-items:center;justify-content:center;min-height:100vh}
@@ -3097,9 +3120,24 @@ def login_page():
 ADMIN_USERS_PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Users &middot; 9 Mountains</title>
+<script>
+(function(){try{var t=localStorage.getItem('theme');
+ var dark = t==='dark' || ((t==='auto'||!t) && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+ if(dark) document.documentElement.setAttribute('data-theme','dark');}catch(e){}})();
+</script>
+
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <style>
+ html[data-theme="dark"] body{background:#14171c;color:#e6e9ef}
+ html[data-theme="dark"] .card{background:#1c2028;border-color:#333a45}
+ html[data-theme="dark"] th{color:#a8b0bd;border-bottom-color:#333a45}
+ html[data-theme="dark"] td{border-bottom-color:#242932}
+ html[data-theme="dark"] .btn{background:#242932;border-color:#3a4250;color:#e6e9ef}
+ html[data-theme="dark"] .btn:hover{background:#2c333e}
+ html[data-theme="dark"] input,html[data-theme="dark"] select{background:#242932;border-color:#3a4250;color:#e6e9ef}
+ html[data-theme="dark"] code{background:#242932;color:#e6e9ef}
+ html[data-theme="dark"]{color-scheme:dark}
  body{margin:0;font-family:Inter,system-ui,sans-serif;background:#f5f6f8;color:#223}
  header{background:#1e3a5f;color:#fff;padding:14px 22px;display:flex;align-items:center;gap:14px}
  header h1{font-size:16px;margin:0;font-weight:700}
