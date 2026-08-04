@@ -223,8 +223,13 @@ def db_init():
             disabled INTEGER DEFAULT 0,
             must_change INTEGER DEFAULT 0,
             created_at TEXT,
-            last_login TEXT
+            last_login TEXT,
+            landing_module TEXT
         )""")
+        try:
+            client.execute("ALTER TABLE app_users ADD COLUMN landing_module TEXT")
+        except Exception:
+            pass   # already present on an existing database
         # "Remember me" tokens. Stored hashed, exactly like passwords: the raw
         # token is a credential, so a leaked database shouldn't hand out live
         # logins. Each row is one device, so a single lost laptop can be
@@ -242,6 +247,28 @@ def db_init():
             username TEXT PRIMARY KEY,
             fails INTEGER DEFAULT 0,
             locked_until TEXT
+        )""")
+        # Finance briefing: invoices raised against clients. Kept deliberately
+        # simple — this is a briefing tool, not an accounts package.
+        client.execute("""CREATE TABLE IF NOT EXISTS finance_invoices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_name TEXT,
+            reference TEXT,
+            amount REAL,
+            issued_date TEXT,
+            due_date TEXT,
+            paid_date TEXT,
+            status TEXT,
+            notes TEXT,
+            created_at TEXT
+        )""")
+        # Targets a briefing is measured against (revenue, meetings, calls).
+        client.execute("""CREATE TABLE IF NOT EXISTS finance_targets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            period TEXT,
+            metric TEXT,
+            target_value REAL,
+            created_at TEXT
         )""")
         # Simple key-value store for app-wide settings (e.g. display timezone)
         client.execute("""CREATE TABLE IF NOT EXISTS app_settings (
@@ -475,6 +502,207 @@ def display_date_range_to_utc(date_from, date_to):
     ts_from = display_to_utc_str(f"{date_from} 00:00:00")
     ts_to   = display_to_utc_str(f"{date_to} 23:59:59")
     return ts_from, ts_to
+
+# ══ Modules ════════════════════════════════════════════════════════════════
+# Three views over the SAME Turso database rather than three applications.
+# Prospects is the existing dashboard; Admin and Finance are new briefings
+# built from the same call/charity data plus a little finance-specific data.
+#
+# Access control is checked in one place (_module_allowed) and currently lets
+# everyone through, as asked. Restricting later means changing that function
+# and storing per-user permissions — not rewriting the modules. Building the
+# check now is the whole point: retrofitting one is what gets expensive.
+CR_MODULES = [
+    {"id": "prospects", "label": "Prospect Generator", "icon": "\U0001F50D",
+     "description": "Finds leads and feeds the pipeline"},
+    {"id": "admin", "label": "Admin Briefing", "icon": "\U0001F4CB",
+     "description": "Team activity, coverage and data health"},
+    {"id": "finance", "label": "Finance Briefing", "icon": "\U0001F4B7",
+     "description": "Pipeline value, invoices and targets"},
+]
+_MODULE_IDS = {m["id"] for m in CR_MODULES}
+
+def _module_allowed(username, module_id):
+    """Currently everyone may open every module. The hook exists so access can
+    be restricted per account later without touching the modules themselves."""
+    return module_id in _MODULE_IDS
+
+@app.route("/api/modules", methods=["GET"])
+def api_modules():
+    u = _auth_get_user(current_user()) if current_user() else None
+    landing = ""
+    if u:
+        r = db_query("SELECT landing_module FROM app_users WHERE username=?", (u["username"],))
+        landing = (r[0][0] if r and r[0][0] else "") or ""
+    return jsonify({"ok": True,
+                    "modules": [m for m in CR_MODULES if _module_allowed(current_user(), m["id"])],
+                    "landing": landing if landing in _MODULE_IDS else "prospects"})
+
+@app.route("/api/modules/landing", methods=["POST"])
+def api_set_landing_module():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    m = str((request.json or {}).get("module", "")).strip()
+    if m not in _MODULE_IDS:
+        return jsonify({"ok": False, "error": "Unknown module"}), 400
+    db_exec("UPDATE app_users SET landing_module=? WHERE username=?", (m, current_user()))
+    return jsonify({"ok": True})
+
+# ── Admin briefing ─────────────────────────────────────────────────────────
+@app.route("/api/brief/admin", methods=["GET"])
+def api_brief_admin():
+    """Operational picture: who called, how much, what came of it, and whether
+    the underlying data is healthy. Built entirely from data already held."""
+    try:
+        days = max(1, min(365, int(request.args.get("days", 30))))
+    except Exception:
+        days = 30
+    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+    rows = db_query("SELECT caller, outcome, stage, duration_sec, timestamp FROM call_log "
+                    "WHERE timestamp >= ?", (cutoff,)) or []
+    by_caller = {}
+    outcomes, per_day = {}, {}
+    meetings = meaningful = 0
+    total_secs = 0
+    for caller, outcome, stage, dur, ts in rows:
+        c = (caller or "(unattributed)").strip() or "(unattributed)"
+        d = by_caller.setdefault(c, {"calls": 0, "minutes": 0.0, "meetings": 0, "meaningful": 0})
+        d["calls"] += 1
+        secs = dur or 0
+        total_secs += secs
+        d["minutes"] += secs / 60.0
+        if outcome == "Meeting secured" or stage == "Meeting secured":
+            d["meetings"] += 1; meetings += 1
+        if secs >= 120 and (outcome in _CR_MEANINGFUL_OUTCOMES or stage in _CR_MEANINGFUL_STAGES):
+            d["meaningful"] += 1; meaningful += 1
+        outcomes[outcome or "(none)"] = outcomes.get(outcome or "(none)", 0) + 1
+        day = utc_to_display_str(ts, "%Y-%m-%d")
+        if day: per_day[day] = per_day.get(day, 0) + 1
+
+    callers = [{"caller": k, "calls": v["calls"], "minutes": round(v["minutes"], 1),
+                "meetings": v["meetings"], "meaningful": v["meaningful"],
+                "conversion": round(100.0 * v["meetings"] / v["calls"], 1) if v["calls"] else 0}
+               for k, v in by_caller.items()]
+    callers.sort(key=lambda x: -x["calls"])
+
+    # Data health — the things that quietly degrade a calling operation.
+    total_calls = db_query("SELECT COUNT(*) FROM call_log")
+    total_calls = total_calls[0][0] if total_calls else 0
+    no_outcome = db_query("SELECT COUNT(*) FROM call_log WHERE outcome IS NULL OR TRIM(outcome) = ''")
+    no_caller = db_query("SELECT COUNT(*) FROM call_log WHERE called_by IS NULL OR TRIM(called_by) = ''")
+    overdue = db_query("SELECT COUNT(*) FROM follow_ups WHERE completed=0 AND follow_up_at < ?",
+                       (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),))
+    accounts = db_query("SELECT COUNT(*) FROM app_users WHERE disabled=0")
+
+    return jsonify({"ok": True, "days": days,
+                    "totals": {"calls": len(rows), "minutes": round(total_secs / 60.0, 1),
+                               "meetings": meetings, "meaningful": meaningful,
+                               "active_callers": len(by_caller)},
+                    "callers": callers,
+                    "outcomes": sorted([{"outcome": k, "count": v} for k, v in outcomes.items()],
+                                       key=lambda x: -x["count"])[:12],
+                    "per_day": [{"day": k, "calls": per_day[k]} for k in sorted(per_day)],
+                    "health": {
+                        "total_calls": total_calls,
+                        "calls_without_outcome": (no_outcome[0][0] if no_outcome else 0),
+                        "calls_without_caller": (no_caller[0][0] if no_caller else 0),
+                        "overdue_followups": (overdue[0][0] if overdue else 0),
+                        "active_accounts": (accounts[0][0] if accounts else 0),
+                    }})
+
+# ── Finance briefing ───────────────────────────────────────────────────────
+@app.route("/api/brief/finance", methods=["GET"])
+def api_brief_finance():
+    """Pipeline from the calling data, plus invoices and targets entered here.
+    The pipeline half needs no new data — meetings secured ARE the pipeline."""
+    try:
+        days = max(1, min(365, int(request.args.get("days", 90))))
+    except Exception:
+        days = 90
+    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+    rows = db_query("SELECT reg_number, outcome, stage, timestamp, caller FROM call_log "
+                    "WHERE timestamp >= ?", (cutoff,)) or []
+    meetings, interested = [], 0
+    for reg, outcome, stage, ts, caller in rows:
+        if outcome == "Meeting secured" or stage == "Meeting secured":
+            meetings.append({"reg_number": reg, "caller": caller or "",
+                             "date": utc_to_display_str(ts, "%Y-%m-%d") or ""})
+        elif outcome == "Interested" or stage == "Interested":
+            interested += 1
+
+    inv = db_query("SELECT id, client_name, reference, amount, issued_date, due_date, "
+                   "paid_date, status, notes FROM finance_invoices ORDER BY issued_date DESC") or []
+    invoices = [{"id": r[0], "client_name": r[1], "reference": r[2], "amount": r[3] or 0,
+                 "issued_date": r[4], "due_date": r[5], "paid_date": r[6],
+                 "status": r[7] or "unpaid", "notes": r[8]} for r in inv]
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    billed = sum(i["amount"] for i in invoices)
+    paid = sum(i["amount"] for i in invoices if i["status"] == "paid")
+    outstanding = billed - paid
+    overdue_amt = sum(i["amount"] for i in invoices
+                      if i["status"] != "paid" and (i["due_date"] or "9999") < today)
+
+    tg = db_query("SELECT id, period, metric, target_value FROM finance_targets ORDER BY period DESC") or []
+    targets = [{"id": r[0], "period": r[1], "metric": r[2], "target_value": r[3] or 0} for r in tg]
+
+    return jsonify({"ok": True, "days": days,
+                    "pipeline": {"meetings_secured": len(meetings),
+                                 "interested": interested,
+                                 "recent_meetings": meetings[:20]},
+                    "invoices": invoices,
+                    "invoice_totals": {"billed": round(billed, 2), "paid": round(paid, 2),
+                                       "outstanding": round(outstanding, 2),
+                                       "overdue": round(overdue_amt, 2)},
+                    "targets": targets})
+
+@app.route("/api/finance/invoice", methods=["POST"])
+def api_finance_invoice():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    if str(d.get("action", "")) == "delete":
+        db_exec("DELETE FROM finance_invoices WHERE id=?", (int(d.get("id") or 0),))
+        return jsonify({"ok": True})
+    if str(d.get("action", "")) == "mark_paid":
+        db_exec("UPDATE finance_invoices SET status='paid', paid_date=? WHERE id=?",
+                (datetime.utcnow().strftime("%Y-%m-%d"), int(d.get("id") or 0)))
+        return jsonify({"ok": True})
+    client_name = str(d.get("client_name", "")).strip()[:80]
+    if not client_name:
+        return jsonify({"ok": False, "error": "Client name is required"}), 400
+    try:
+        amount = float(d.get("amount") or 0)
+    except Exception:
+        return jsonify({"ok": False, "error": "Amount must be a number"}), 400
+    db_exec("INSERT INTO finance_invoices(client_name, reference, amount, issued_date, due_date, "
+            "status, notes, created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (client_name, str(d.get("reference", ""))[:40], amount,
+             str(d.get("issued_date", ""))[:10], str(d.get("due_date", ""))[:10],
+             "unpaid", str(d.get("notes", ""))[:200],
+             datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+    return jsonify({"ok": True})
+
+@app.route("/api/finance/target", methods=["POST"])
+def api_finance_target():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    if str(d.get("action", "")) == "delete":
+        db_exec("DELETE FROM finance_targets WHERE id=?", (int(d.get("id") or 0),))
+        return jsonify({"ok": True})
+    period = str(d.get("period", "")).strip()[:20]
+    metric = str(d.get("metric", "")).strip()[:40]
+    if not period or not metric:
+        return jsonify({"ok": False, "error": "Period and metric are required"}), 400
+    try:
+        val = float(d.get("target_value") or 0)
+    except Exception:
+        return jsonify({"ok": False, "error": "Target must be a number"}), 400
+    db_exec("INSERT INTO finance_targets(period, metric, target_value, created_at) VALUES(?,?,?,?)",
+            (period, metric, val, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+    return jsonify({"ok": True})
 
 @app.route("/api/settings/theme", methods=["GET"])
 def get_theme_setting():
@@ -3055,6 +3283,12 @@ LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8">
     <label>Password</label>
     <input type="password" name="password" autocomplete="current-password">
     {TOTP_FIELD}
+    <label>Open</label>
+    <select name="module" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #d5d9e0;border-radius:6px;font-size:14px;background:#fff">
+      <option value="prospects">&#128269; Prospect Generator</option>
+      <option value="admin">&#128203; Admin Briefing</option>
+      <option value="finance">&#128183; Finance Briefing</option>
+    </select>
     <div class="row"><input type="checkbox" name="remember" id="r" checked><label for="r" style="margin:0;font-weight:400">Keep me signed in on this device</label></div>
     <button type="submit">Sign in</button>
   </form>
@@ -3110,6 +3344,14 @@ def login_page():
     session["auth_user"] = user["username"]
     session["auth_admin"] = user["is_admin"]
     db_exec("UPDATE app_users SET last_login=? WHERE username=?", (_auth_now(), user["username"]))
+    # The module choice is where to LAND, not what you're allowed to see — you
+    # can switch freely once inside. It's remembered so the next sign-in
+    # defaults to wherever you last worked.
+    chosen = str(request.form.get("module", "")).strip()
+    if chosen in _MODULE_IDS:
+        db_exec("UPDATE app_users SET landing_module=? WHERE username=?", (chosen, user["username"]))
+        if next_url == "/":
+            next_url = "/?module=" + chosen
     resp = make_response(redirect(next_url))
     if remember:
         raw = _auth_issue_token(user["username"])
