@@ -7014,6 +7014,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.39", date:"2026-08", title:"Fixed the slow reports and the AI coach error \u2014 both were the same root cause",
+    changes:[
+      "The AI coach and the report slowness turned out to be one problem. Working out which charity types convert best called a lookup that downloaded and parsed the ENTIRE national charity classification file \u2014 1.7 million rows, around 269,000 charities \u2014 into memory. It only ever needed the few hundred charities actually called. On a longer date range that either took long enough to time out or used enough memory to restart the server; when that happened Render returned an error page instead of data, which is exactly what produced \u201cUnexpected token '<', \\\"<!doctype\\\"\u201d.",
+      "It now uses the bounded lookup already built for Custom Report \u2014 the same few hundred charities, read once and cached. Same answers, a fraction of the work.",
+      "Found while fixing it: that loader was defined TWICE in the file, so the second copy silently replaced the first. Both are now removed, so nothing can trigger the whole-country download again.",
+      "API errors now come back as proper messages rather than an HTML error page \u2014 so if something does go wrong you'll see what happened instead of a JSON parsing error that tells you nothing.",
+      "The minimised follow-ups reminder can now be dragged anywhere and remembers where you put it. It was pinned over the nav bar, covering About and Sign out with no way to move it; it now starts in the bottom corner, clear of everything. Dragging it no longer counts as a click, so moving it won't reopen the reminder.",
+    ]},
   { v:"2.38", date:"2026-07", title:"AI Performance Coach now reads the 9 Mountains brochures; Admin renamed to Settings",
     changes:[
       "The \ud83e\udde0 AI Performance Coach now has the nine 9 Mountains brochures as reference material \u2014 Welcome, Service Delivery, Finance, Fundraising, IT, Marketing, Legal, HR and Strategic Planning \u2014 so it can answer accurately about what 9 Mountains actually offers instead of generalising. This applies to both the initial coaching report and the follow-up conversation.",
@@ -8939,6 +8947,63 @@ function aiDocAction(id, action){
   if(action==='delete' && !confirm('Remove this document from the AI coach\u2019s reference material?')) return;
   fetch('/api/ai/documents',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({id,action})}).then(r=>r.json()).then(()=>loadAiDocs()).catch(()=>{});
+}
+// ── Draggable follow-up reminder pill ──────────────────────────────────────
+// It sat at a fixed spot over the nav bar, covering About and Sign out with no
+// way to move it. Now it can be dragged anywhere and remembers where it was
+// put. A drag is distinguished from a click by distance, so dragging it no
+// longer reopens the reminder window by accident.
+let _pillDrag=null;
+function startPillDrag(e){
+  const pill=document.getElementById('reminderMinPill');
+  if(!pill) return;
+  const r=pill.getBoundingClientRect();
+  _pillDrag={dx:e.clientX-r.left, dy:e.clientY-r.top, moved:false};
+  document.addEventListener('mousemove', movePillDrag);
+  document.addEventListener('mouseup', endPillDrag);
+  e.preventDefault();
+}
+function movePillDrag(e){
+  if(!_pillDrag) return;
+  const pill=document.getElementById('reminderMinPill');
+  if(!pill) return;
+  _pillDrag.moved=true;
+  // Clamped to the viewport so it can't be dragged somewhere unreachable.
+  const w=pill.offsetWidth, h=pill.offsetHeight;
+  const left=Math.max(4, Math.min(e.clientX-_pillDrag.dx, window.innerWidth-w-4));
+  const top =Math.max(4, Math.min(e.clientY-_pillDrag.dy, window.innerHeight-h-4));
+  pill.style.left=left+'px'; pill.style.top=top+'px';
+  pill.style.right='auto'; pill.style.bottom='auto';
+}
+function endPillDrag(){
+  document.removeEventListener('mousemove', movePillDrag);
+  document.removeEventListener('mouseup', endPillDrag);
+  if(_pillDrag && _pillDrag.moved){
+    const pill=document.getElementById('reminderMinPill');
+    if(pill){
+      try{ localStorage.setItem('reminderPillPos', JSON.stringify({left:pill.style.left, top:pill.style.top})); }catch(e){}
+    }
+    // Swallow the click that follows a drag, so moving it doesn't reopen it.
+    const swallow=ev=>{ ev.stopPropagation(); ev.preventDefault(); };
+    document.addEventListener('click', swallow, {capture:true, once:true});
+  }
+  _pillDrag=null;
+}
+function restorePillPosition(){
+  const pill=document.getElementById('reminderMinPill');
+  if(!pill) return;
+  try{
+    const p=JSON.parse(localStorage.getItem('reminderPillPos')||'null');
+    if(p && p.left && p.top){
+      // Only restore if it's still on screen — a saved position from a larger
+      // monitor would otherwise put it out of reach.
+      const l=parseInt(p.left,10), t=parseInt(p.top,10);
+      if(l>=0 && t>=0 && l<window.innerWidth-40 && t<window.innerHeight-20){
+        pill.style.left=p.left; pill.style.top=p.top;
+        pill.style.right='auto'; pill.style.bottom='auto';
+      }
+    }
+  }catch(e){}
 }
 function crApplyTheme(theme){
   let effective = theme;
@@ -11668,6 +11733,7 @@ document.getElementById('mx-modal').addEventListener('click',function(e){
 // Load users first — initCaller() is called inside loadUsers() after users arrive
 loadThemeSetting();   // confirm the server's theme, in case an admin changed it
 crLoadModules();      // build the module switcher and land on the chosen module
+restorePillPosition();
 loadUsers();
 restoreWrap();
 setTimeout(setupResizableTables,300);
@@ -11889,6 +11955,6 @@ fetch('/api/rc/config').then(r=>r.json()).then(d=>{
   <div id="reminderList" style="max-height:260px;overflow-y:auto"></div>
   <div id="reminderActionBar" style="display:none;padding:10px;border-top:1px solid #eee;gap:6px;flex-wrap:wrap;align-items:center"></div>
 </div>
-<div id="reminderMinPill" onclick="maximizeReminderWindow()" title="Click to reopen" style="display:none;position:fixed;top:76px;right:18px;z-index:1460;background:linear-gradient(135deg,#e8b339,#c4952b);color:#1e3a5f;border-radius:20px;padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.22);align-items:center;gap:6px">🔔 <span id="reminderMinCount">0</span> follow-up<span id="reminderMinPlural">s</span> due</div>
+<div id="reminderMinPill" onclick="maximizeReminderWindow()" onmousedown="startPillDrag(event)" title="Click to reopen · drag to move" style="display:none;position:fixed;bottom:20px;right:18px;z-index:1460;background:linear-gradient(135deg,#e8b339,#c4952b);color:#1e3a5f;border-radius:20px;padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.22);align-items:center;gap:6px">🔔 <span id="reminderMinCount">0</span> follow-up<span id="reminderMinPlural">s</span> due</div>
 </body>
 </html>

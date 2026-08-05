@@ -2078,6 +2078,23 @@ COACH_SYSTEM_PROMPT = (
     "Be CONCISE — short punchy sentences, no padding. Use UK English."
 )
 
+@app.errorhandler(500)
+def _json_500(e):
+    """API routes must fail as JSON. Flask's default 500 is an HTML page, and
+    the browser then reports "Unexpected token '<'" — which tells the user
+    nothing about what actually went wrong."""
+    if (request.path or "").startswith("/api/"):
+        return jsonify({"ok": False, "error": "The server hit an error handling that request. "
+                                              "If it keeps happening, check the Render logs."}), 500
+    return e
+
+@app.errorhandler(504)
+def _json_504(e):
+    if (request.path or "").startswith("/api/"):
+        return jsonify({"ok": False, "error": "That took too long and timed out. "
+                                              "Try a shorter date range."}), 504
+    return e
+
 @app.route("/api/ai/coach", methods=["POST"])
 def ai_coach():
     """Generate AI performance coaching for a caller based on their call history in a date range."""
@@ -7669,30 +7686,11 @@ def _multi_keys(mapping, text_or_list):
 _classif_cache = {}
 _classif_loaded = False
 
-def load_classif_cache():
-    """Load charity classification (what/who/how) from CC bulk file into memory."""
-    global _classif_cache, _classif_loaded
-    if _classif_loaded: return
-    try:
-        cols = {"registered_charity_number","classification_code","classification_type"}
-        for row in stream_zip_csv(CLASSIF_URL, cols):
-            reg  = row.get("registered_charity_number","").strip()
-            code = row.get("classification_code","").strip()
-            ctype = row.get("classification_type","").strip().lower()
-            if not reg or not code: continue
-            if reg not in _classif_cache:
-                _classif_cache[reg] = {"what":[],"who":[],"how":[]}
-            if ctype == "what":
-                _classif_cache[reg]["what"].append(code)
-            elif ctype == "who":
-                _classif_cache[reg]["who"].append(code)
-            elif ctype == "how":
-                _classif_cache[reg]["how"].append(code)
-        _classif_loaded = True
-        print(f"Classif cache loaded: {len(_classif_cache)} charities")
-    except Exception as e:
-        print(f"load_classif_cache error: {e}")
-        _classif_loaded = True  # Don't retry on error
+# load_classif_cache() removed. It downloaded and parsed the entire national
+# classification file into memory (~269,000 charities) and was defined twice,
+# so the second silently replaced the first. Its only consumer,
+# get_charity_classification(), now uses the bounded called-charities map.
+
 
 
 
@@ -7825,26 +7823,11 @@ def enrich_charity_from_cc(c):
 _classif_cache = {}
 _classif_loaded = False
 
-def load_classif_cache():
-    global _classif_cache, _classif_loaded
-    if _classif_loaded: return
-    try:
-        cols = {"registered_charity_number","classification_code","classification_type"}
-        for row in stream_zip_csv(CLASSIF_URL, cols):
-            reg   = row.get("registered_charity_number","").strip()
-            code  = row.get("classification_code","").strip()
-            ctype = row.get("classification_type","").strip().lower()
-            if not reg or not code: continue
-            if reg not in _classif_cache:
-                _classif_cache[reg] = {"what":[],"who":[],"how":[]}
-            if "what" in ctype:   _classif_cache[reg]["what"].append(code)
-            elif "who" in ctype:  _classif_cache[reg]["who"].append(code)
-            elif "how" in ctype:  _classif_cache[reg]["how"].append(code)
-        _classif_loaded = True
-        print(f"Classif cache: {len(_classif_cache)} charities")
-    except Exception as e:
-        print(f"load_classif_cache: {e}")
-        _classif_loaded = True
+# load_classif_cache() removed. It downloaded and parsed the entire national
+# classification file into memory (~269,000 charities) and was defined twice,
+# so the second silently replaced the first. Its only consumer,
+# get_charity_classification(), now uses the bounded called-charities map.
+
 
 # CC classification code → name (from CC bulk schema)
 CC_CODE_MAP = {
@@ -7874,16 +7857,23 @@ CC_CODE_MAP = {
 }
 
 def get_charity_classification(reg_no):
-    """Get what/who/how strings for a charity reg number."""
-    load_classif_cache()
-    entry = _classif_cache.get(str(reg_no), {})
-    def codes_to_str(codes):
-        return ",".join(CC_CODE_MAP.get(c, c) for c in codes if c)
-    return {
-        "what": codes_to_str(entry.get("what",[])),
-        "who":  codes_to_str(entry.get("who",[])),
-        "how":  codes_to_str(entry.get("how",[])),
-    }
+    """What/who/how for one charity.
+
+    This used to call load_classif_cache(), which downloads and parses the
+    ENTIRE national classification file — 1.7 million rows, ~269,000 charities
+    — into memory. Its only caller is the AI coach, which asks about the few
+    hundred charities that have actually been called, so the whole country was
+    being loaded to answer a handful of lookups. That is why generating a
+    report or coaching was slow to the point of timing out, and why the
+    instance ran out of memory: when it did, Render returned an HTML error
+    page, which is what produced the "Unexpected token '<'" message in the UI.
+
+    It now uses the same bounded, cached map already built for Custom Report
+    (called charities only). Kept for the small number of places that want a
+    single charity's classification."""
+    reg = str(reg_no).strip()
+    c = _get_called_classification_map().get(reg, {})
+    return {"what": c.get("what", ""), "who": c.get("who", ""), "how": c.get("how", "")}
 
 # ── Bounded, on-demand enrichment for CSV export only ────────────────────────────
 # IMPORTANT: earlier versions of this code cached the ENTIRE national Region/Local
