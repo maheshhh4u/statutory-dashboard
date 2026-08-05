@@ -7014,6 +7014,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.40", date:"2026-08", title:"Make the AI coach failure diagnosable, and stop optional features breaking it",
+    changes:[
+      "The coach was still failing, and the real problem was that nothing said WHY \u2014 the server logged nothing useful, so there was no way to tell what had gone wrong. Unhandled errors now print a full trace to the Render logs, and the message shown in the app names the actual error rather than a generic apology.",
+      "The brochure reference material is an enhancement, not a requirement, so a failure there can no longer take the whole coach down with it. If it can't be loaded the coach carries on without it and notes why in the logs.",
+      "Together these mean the next attempt either works, or tells us exactly what to fix instead of guessing again.",
+    ]},
   { v:"2.39", date:"2026-08", title:"Fixed the slow reports and the AI coach error \u2014 both were the same root cause",
     changes:[
       "The AI coach and the report slowness turned out to be one problem. Working out which charity types convert best called a lookup that downloaded and parsed the ENTIRE national charity classification file \u2014 1.7 million rows, around 269,000 charities \u2014 into memory. It only ever needed the few hundred charities actually called. On a longer date range that either took long enough to time out or used enough memory to restart the server; when that happened Render returned an error page instead of data, which is exactly what produced \u201cUnexpected token '<', \\\"<!doctype\\\"\u201d.",

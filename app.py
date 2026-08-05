@@ -2078,15 +2078,35 @@ COACH_SYSTEM_PROMPT = (
     "Be CONCISE — short punchy sentences, no padding. Use UK English."
 )
 
-@app.errorhandler(500)
-def _json_500(e):
-    """API routes must fail as JSON. Flask's default 500 is an HTML page, and
-    the browser then reports "Unexpected token '<'" — which tells the user
-    nothing about what actually went wrong."""
+def _coach_docs_safe(question):
+    """Brochure context, but never fatal. A failure here should cost the coach
+    its reference material, not the whole answer."""
+    try:
+        return _ai_doc_prompt_block(question)
+    except Exception:
+        import traceback; print(f"[coach] brochure context failed (continuing without it): {traceback.format_exc()}")
+        return ""
+
+@app.errorhandler(Exception)
+def _json_unhandled(e):
+    """API routes must fail as JSON, and the reason must reach the logs.
+
+    Previously an unhandled exception produced Flask's HTML error page (hence
+    "Unexpected token '<'" in the browser) with nothing useful printed, so
+    there was no way to tell what had actually gone wrong. This logs the full
+    traceback to Render and returns the exception type and message to the
+    caller — enough to diagnose without a second round trip."""
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e            # 404s, 401s etc. keep their normal behaviour
+    import traceback
+    tb = traceback.format_exc()
+    print(f"[error] {request.method} {request.path}\n{tb}")
     if (request.path or "").startswith("/api/"):
-        return jsonify({"ok": False, "error": "The server hit an error handling that request. "
-                                              "If it keeps happening, check the Render logs."}), 500
-    return e
+        return jsonify({"ok": False,
+                        "error": f"{type(e).__name__}: {str(e)[:300]}",
+                        "hint": "The full trace is in the Render logs."}), 500
+    return "Internal server error", 500
 
 @app.errorhandler(504)
 def _json_504(e):
@@ -2115,8 +2135,13 @@ def ai_coach():
     # The coach advises on selling 9 Mountains' services, so the brochures are
     # part of its brief. Keyed on the caller's best-performing charity types so
     # the passages selected are the ones relevant to what they actually call.
-    system_prompt = COACH_SYSTEM_PROMPT + _ai_doc_prompt_block(
-        (stats_summary or "") + " " + " ".join(str(t) for t in (type_ranked or [])[:5]))
+    try:
+        _docs = _ai_doc_prompt_block(
+            (stats_summary or "") + " " + " ".join(str(t) for t in (type_ranked or [])[:5]))
+    except Exception as _e:
+        import traceback; print(f"[coach] brochure context failed (continuing without it): {traceback.format_exc()}")
+        _docs = ""
+    system_prompt = COACH_SYSTEM_PROMPT + _docs
     user_prompt = (
         "Review this performance data and write a SHORT, scannable coaching report — "
         "written as the opening of a two-way conversation, not a final verdict. "
@@ -4492,7 +4517,7 @@ def ai_coach_chat():
         return jsonify({"ok": False, "error": err}), 400
 
     messages = [
-        {"role": "system", "content": COACH_SYSTEM_PROMPT + _ai_doc_prompt_block(message) + " "
+        {"role": "system", "content": COACH_SYSTEM_PROMPT + _coach_docs_safe(message) + " "
          "You already gave the caller an initial coaching report (shown below) and they may now be "
          "pushing back, adding context, or asking a follow-up question. Take what they say seriously — "
          "if they explain a reason behind a number (e.g. \"that week was mostly hard-to-reach trusts\"), "
