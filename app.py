@@ -270,6 +270,21 @@ def db_init():
             target_value REAL,
             created_at TEXT
         )""")
+        # Reference documents the AI coach draws on (the 9 Mountains brochures).
+        # The extracted text is cached in the database rather than re-fetched
+        # per question: fetching nine PDFs on every AI call would be slow, and
+        # would break entirely if the website were briefly unreachable.
+        client.execute("""CREATE TABLE IF NOT EXISTS ai_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            label TEXT,
+            url TEXT UNIQUE,
+            enabled INTEGER DEFAULT 1,
+            content TEXT,
+            chars INTEGER DEFAULT 0,
+            status TEXT,
+            fetched_at TEXT,
+            created_at TEXT
+        )""")
         # Simple key-value store for app-wide settings (e.g. display timezone)
         client.execute("""CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
@@ -526,6 +541,192 @@ def _module_allowed(username, module_id):
     """Currently everyone may open every module. The hook exists so access can
     be restricted per account later without touching the modules themselves."""
     return module_id in _MODULE_IDS
+
+# ══ AI reference documents (9 Mountains brochures) ═════════════════════════
+# The coach answers about 9 Mountains' own services, so it needs the
+# brochures. Their text is fetched once and cached in the database; the
+# relevant parts are then injected into the AI prompt. Only the passages that
+# match the question are sent, not all nine documents — a full set would be
+# tens of thousands of tokens on every call, which is slow and expensive.
+AI_DOC_DEFAULTS = [
+    ("Welcome",            "https://9mountains.co.uk/_resources/default/9-Mountains-Welcome-Brochure.pdf"),
+    ("Service Delivery",   "https://9mountains.co.uk/_resources/default/9-Mountains-Service-Delivery-Brochure.pdf"),
+    ("Finance",            "https://9mountains.co.uk/_resources/default/9-Mountains-Finance-Brochure.pdf"),
+    ("Fundraising",        "https://9mountains.co.uk/_resources/default/9-Mountains-Fundraising-Brochure.pdf"),
+    ("IT",                 "https://9mountains.co.uk/_resources/default/9-Mountains-IT-Brochure.pdf"),
+    ("Marketing",          "https://9mountains.co.uk/_resources/default/9-Mountains-Marketing-Brochure.pdf"),
+    ("Legal",              "https://9mountains.co.uk/_resources/default/9-Mountains-Legal-Brochure.pdf"),
+    ("Human Resources",    "https://9mountains.co.uk/_resources/default/9-Mountains-HR-brochure.pdf"),
+    ("Strategic Planning", "https://9mountains.co.uk/_resources/default/9-Mountains-Strategic-Planning-Brochure.pdf"),
+]
+AI_DOC_MAX_CHARS = 60000      # per document, to bound memory on a 512MB instance
+AI_DOC_CONTEXT_CHARS = 9000   # total injected into any one prompt
+
+def _ai_docs_seed():
+    """Adds the standard brochures the first time, without disturbing any the
+    user has since added or removed."""
+    have = {r[0] for r in (db_query("SELECT url FROM ai_documents") or [])}
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    for label, url in AI_DOC_DEFAULTS:
+        if url not in have:
+            db_exec("INSERT OR IGNORE INTO ai_documents(label, url, enabled, status, created_at) "
+                    "VALUES(?,?,?,?,?)", (label, url, 1, "not fetched", now))
+
+def _ai_doc_extract(url):
+    """Downloads a PDF (or HTML page) and returns its plain text.
+    Returns (text, status). Never raises — a document that can't be read is
+    reported rather than breaking the coach."""
+    try:
+        r = requests.get(url, timeout=45, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; 9M-Dashboard/1.0)"})
+        if r.status_code != 200:
+            return "", f"HTTP {r.status_code}"
+        raw = r.content
+        if raw[:4] == b"%PDF" or url.lower().endswith(".pdf"):
+            try:
+                from pypdf import PdfReader
+            except Exception:
+                try:
+                    from PyPDF2 import PdfReader   # older name, in case pypdf isn't present
+                except Exception:
+                    return "", "PDF library not installed (add 'pypdf' to requirements.txt)"
+            try:
+                reader = PdfReader(io.BytesIO(raw))
+                parts = []
+                for page in reader.pages:
+                    try: parts.append(page.extract_text() or "")
+                    except Exception: continue
+                text = "\n".join(parts)
+            except Exception as e:
+                return "", f"Could not read PDF: {str(e)[:80]}"
+        else:
+            text = re.sub(r"<script.*?</script>|<style.*?</style>", " ", r.text, flags=re.S | re.I)
+            text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        if not text:
+            return "", "No text found (the PDF may be scanned images rather than text)"
+        return text[:AI_DOC_MAX_CHARS], "ok"
+    except Exception as e:
+        return "", f"Fetch failed: {str(e)[:100]}"
+
+def _ai_docs_refresh(only_missing=False):
+    _ai_docs_seed()
+    rows = db_query("SELECT id, label, url, content FROM ai_documents WHERE enabled=1") or []
+    done = []
+    for did, label, url, content in rows:
+        if only_missing and content:
+            continue
+        text, status = _ai_doc_extract(url)
+        db_exec("UPDATE ai_documents SET content=?, chars=?, status=?, fetched_at=? WHERE id=?",
+                (text, len(text), status, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), did))
+        done.append({"label": label, "status": status, "chars": len(text)})
+    return done
+
+def _ai_doc_context(question, max_chars=AI_DOC_CONTEXT_CHARS):
+    """Selects the passages most relevant to the question. Simple keyword
+    scoring over paragraphs — deliberately not embeddings, which would mean
+    another dependency and another API call per question for a set of
+    documents this small."""
+    rows = db_query("SELECT label, content FROM ai_documents WHERE enabled=1 AND content IS NOT NULL "
+                    "AND TRIM(content) <> ''") or []
+    if not rows:
+        return ""
+    words = [w for w in re.findall(r"[a-zA-Z]{4,}", (question or "").lower())
+             if w not in ("what","when","which","that","this","with","from","have","they","been","about","would","could","should","there","their","your","ours")]
+    scored = []
+    for label, content in rows:
+        for para in re.split(r"\n\s*\n", content or ""):
+            p = para.strip()
+            if len(p) < 60:
+                continue
+            low = p.lower()
+            lab = (label or "").lower()
+            # Count DISTINCT matching words rather than total occurrences: raw
+            # counts favour whichever paragraph is longest, which made a
+            # fundraising question match the finance brochure simply because
+            # that paragraph repeated common words more often.
+            hits = sum(1 for w in words if w in low)
+            # A brochure whose own title matches the question is very likely
+            # the right one — "fundraising support" should reach the
+            # Fundraising brochure ahead of a passing mention elsewhere.
+            label_hits = sum(1 for w in words if w in lab)
+            score = hits + (3 * label_hits)
+            scored.append((score, label, p))
+    if not scored:
+        return ""
+    scored.sort(key=lambda x: -x[0])
+    # If nothing matched, fall back to the opening of each brochure so the AI
+    # still knows what 9 Mountains does rather than answering from thin air.
+    if scored[0][0] == 0:
+        out, used = [], 0
+        for label, content in rows:
+            snippet = (content or "")[:1200].strip()
+            if snippet:
+                out.append(f"[{label} brochure]\n{snippet}")
+                used += len(snippet)
+            if used >= max_chars: break
+        return "\n\n".join(out)
+    out, used = [], 0
+    for score, label, para in scored:
+        if score <= 0 or used + len(para) > max_chars:
+            continue
+        out.append(f"[{label} brochure]\n{para}")
+        used += len(para)
+        if used >= max_chars:
+            break
+    return "\n\n".join(out)
+
+def _ai_doc_prompt_block(question):
+    ctx = _ai_doc_context(question)
+    if not ctx:
+        return ""
+    return ("\n\n=== 9 MOUNTAINS REFERENCE MATERIAL (from the official brochures) ===\n"
+            "Use this as the authoritative description of what 9 Mountains offers. When a question "
+            "concerns 9 Mountains' own services, pricing, approach or specialisms, answer from this "
+            "material and say which brochure it came from. If the material does not cover the "
+            "question, say so plainly rather than inventing an answer.\n\n"
+            + ctx + "\n=== END REFERENCE MATERIAL ===\n")
+
+@app.route("/api/ai/documents", methods=["GET"])
+def api_ai_documents():
+    _ai_docs_seed()
+    rows = db_query("SELECT id, label, url, enabled, chars, status, fetched_at FROM ai_documents ORDER BY id") or []
+    return jsonify({"ok": True, "documents": [
+        {"id": r[0], "label": r[1], "url": r[2], "enabled": bool(r[3]),
+         "chars": r[4] or 0, "status": r[5] or "", "fetched_at": r[6] or ""} for r in rows]})
+
+@app.route("/api/ai/documents", methods=["POST"])
+def api_ai_documents_manage():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    action = str(d.get("action", "")).strip()
+
+    if action == "refresh":
+        results = _ai_docs_refresh()
+        okc = sum(1 for r in results if r["status"] == "ok")
+        return jsonify({"ok": True, "results": results,
+                        "message": f"{okc} of {len(results)} document(s) read successfully."})
+    if action == "add":
+        url = str(d.get("url", "")).strip()
+        label = str(d.get("label", "")).strip()[:60] or url.split("/")[-1][:60]
+        if not url.lower().startswith(("http://", "https://")):
+            return jsonify({"ok": False, "error": "Enter a full URL starting with http:// or https://"}), 400
+        db_exec("INSERT OR IGNORE INTO ai_documents(label, url, enabled, status, created_at) VALUES(?,?,?,?,?)",
+                (label, url, 1, "not fetched", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+        text, status = _ai_doc_extract(url)
+        db_exec("UPDATE ai_documents SET content=?, chars=?, status=?, fetched_at=? WHERE url=?",
+                (text, len(text), status, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), url))
+        return jsonify({"ok": True, "status": status, "chars": len(text)})
+    if action == "toggle":
+        db_exec("UPDATE ai_documents SET enabled = CASE enabled WHEN 1 THEN 0 ELSE 1 END WHERE id=?",
+                (int(d.get("id") or 0),))
+        return jsonify({"ok": True})
+    if action == "delete":
+        db_exec("DELETE FROM ai_documents WHERE id=?", (int(d.get("id") or 0),))
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "Unknown action"}), 400
 
 @app.route("/api/modules", methods=["GET"])
 def api_modules():
@@ -1894,7 +2095,11 @@ def ai_coach():
     if err:
         return jsonify({"ok": False, "error": err}), 400
 
-    system_prompt = COACH_SYSTEM_PROMPT
+    # The coach advises on selling 9 Mountains' services, so the brochures are
+    # part of its brief. Keyed on the caller's best-performing charity types so
+    # the passages selected are the ones relevant to what they actually call.
+    system_prompt = COACH_SYSTEM_PROMPT + _ai_doc_prompt_block(
+        (stats_summary or "") + " " + " ".join(str(t) for t in (type_ranked or [])[:5]))
     user_prompt = (
         "Review this performance data and write a SHORT, scannable coaching report — "
         "written as the opening of a two-way conversation, not a final verdict. "
@@ -3306,9 +3511,31 @@ def _login_render(error="", username="", next_url="/", need_totp=False):
             .replace("{TOTP_FIELD}", totp))
     return Response(html, mimetype="text/html")
 
+_ai_docs_started = [False]
+def _ai_docs_bootstrap():
+    """Fetches any brochure that has no cached text yet, in the background.
+    Done on first sign-in rather than at import time so a slow or unreachable
+    website can never delay the app starting."""
+    if _ai_docs_started[0]:
+        return
+    _ai_docs_started[0] = True
+    def _w():
+        try:
+            done = _ai_docs_refresh(only_missing=True)
+            if done:
+                ok = sum(1 for d in done if d["status"] == "ok")
+                print(f"[ai-docs] fetched {ok}/{len(done)} reference documents")
+                for d in done:
+                    if d["status"] != "ok":
+                        print(f"[ai-docs]   FAILED {d['label']}: {d['status']}")
+        except Exception as e:
+            print(f"[ai-docs] bootstrap error: {e}")
+    threading.Thread(target=_w, daemon=True).start()
+
 @app.route("/login", methods=["GET", "POST"])
 def login_page():
     _auth_bootstrap()
+    _ai_docs_bootstrap()
     next_url = request.values.get("next") or "/"
     if not next_url.startswith("/"):
         next_url = "/"          # never redirect off-site after sign-in
@@ -4248,7 +4475,7 @@ def ai_coach_chat():
         return jsonify({"ok": False, "error": err}), 400
 
     messages = [
-        {"role": "system", "content": COACH_SYSTEM_PROMPT + " "
+        {"role": "system", "content": COACH_SYSTEM_PROMPT + _ai_doc_prompt_block(message) + " "
          "You already gave the caller an initial coaching report (shown below) and they may now be "
          "pushing back, adding context, or asking a follow-up question. Take what they say seriously — "
          "if they explain a reason behind a number (e.g. \"that week was mostly hard-to-reach trusts\"), "

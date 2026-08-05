@@ -374,7 +374,7 @@ select:focus{outline:none;border-color:var(--green)}
       <span style="font-size:11px;color:rgba(255,255,255,.5)">Calling as:</span>
       <span id="caller-display" title="Taken from your login — change it on the Account page" style="font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.1);color:#fff;min-width:100px;text-align:center">…</span>
     </div>
-    <button onclick="openAdmin()" style="font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);cursor:pointer">⚙ Admin</button>
+    <button onclick="openAdmin()" style="font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);cursor:pointer">⚙ Settings</button>
     <div style="font-size:11px;color:rgba(255,255,255,.4)" id="hdrDate"></div>
   </div>
 </header>
@@ -1802,11 +1802,13 @@ select:focus{outline:none;border-color:var(--green)}
 <!-- Admin modal -->
 <div class="modal-bg" id="admin-modal">
   <div class="modal" style="max-width:540px;max-height:85vh;overflow-y:auto">
-    <h3>⚙ Admin — Settings</h3>
+    <h3>⚙ Settings</h3>
 
     <div style="display:flex;gap:4px;border-bottom:2px solid var(--s2);margin-bottom:16px">
       <button type="button" class="admin-tab-btn active" id="admin-tab-btn-timezone" onclick="switchAdminTab('timezone')"
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--navy);border-bottom:2px solid var(--navy);margin-bottom:-2px">🌍 Timezone</button>
+      <button type="button" class="admin-tab-btn" id="admin-tab-btn-aidocs" onclick="switchAdminTab('aidocs')"
+        style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">🧠 AI Documents</button>
       <button type="button" class="admin-tab-btn" id="admin-tab-btn-appearance" onclick="switchAdminTab('appearance')"
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">🎨 Appearance</button>
       <button type="button" class="admin-tab-btn" id="admin-tab-btn-sql" onclick="switchAdminTab('sql')"
@@ -1815,6 +1817,20 @@ select:focus{outline:none;border-color:var(--green)}
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">📋 Dropdowns</button>
     </div>
 
+    <div id="admin-tab-panel-aidocs" style="display:none">
+      <p style="font-size:13px;color:var(--t2);margin:0 0 12px">
+        Documents the 🧠 AI Performance Coach reads before answering, so it can speak accurately about
+        9 Mountains' own services. The text is read once and stored — press Refresh after a brochure is updated.
+      </p>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+        <input id="aidoc-label" placeholder="name e.g. Fundraising" style="width:160px">
+        <input id="aidoc-url" placeholder="https://9mountains.co.uk/....pdf" style="flex:1;min-width:240px">
+        <button class="btn btn-outline btn-sm" onclick="addAiDoc()">+ Add</button>
+        <button class="btn btn-green btn-sm" onclick="refreshAiDocs()">↻ Refresh all</button>
+      </div>
+      <div id="aidoc-status" style="font-size:12px;color:var(--t3);margin-bottom:10px"></div>
+      <div id="aidoc-list"></div>
+    </div>
     <div id="admin-tab-panel-appearance" style="display:none">
       <p style="font-size:13px;color:var(--t2);margin:0 0 12px">Sets the colour theme for everyone using the dashboard. "Follow device" uses each person's own system setting, so it can differ per user.</p>
       <div style="display:flex;flex-direction:column;gap:8px;max-width:420px">
@@ -6998,6 +7014,16 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.38", date:"2026-07", title:"AI Performance Coach now reads the 9 Mountains brochures; Admin renamed to Settings",
+    changes:[
+      "The \ud83e\udde0 AI Performance Coach now has the nine 9 Mountains brochures as reference material \u2014 Welcome, Service Delivery, Finance, Fundraising, IT, Marketing, Legal, HR and Strategic Planning \u2014 so it can answer accurately about what 9 Mountains actually offers instead of generalising. This applies to both the initial coaching report and the follow-up conversation.",
+      "Only the passages relevant to the question are sent to the AI, not all nine documents \u2014 the full set would be tens of thousands of words on every question, which is slow and costly. The brochure whose subject matches the question is weighted highest, so a fundraising question reaches the Fundraising brochure rather than a passing mention elsewhere.",
+      "The AI is told to answer from the brochures and name which one it used, and to say plainly when the brochures don\u2019t cover something rather than inventing an answer.",
+      "New \ud83e\udde0 AI Documents tab in Settings: the nine brochures are listed with a tick to include or exclude each, you can add your own URLs, and Refresh re-reads them after a brochure is updated. Each shows whether it was read successfully and how much text was found, so a broken link or a scanned-image PDF is visible rather than silently producing a coach that knows nothing.",
+      "Brochure text is read once and stored, then re-used \u2014 fetching nine PDFs per question would be slow, and would stop the coach working entirely if the website were briefly unreachable.",
+      "Renamed the Admin menu to Settings, as requested.",
+      "IMPORTANT for deployment: this needs the 'pypdf' package. Add a line reading pypdf to requirements.txt before deploying, or the brochures will show \u201cPDF library not installed\u201d and the coach will carry on working exactly as it did before.",
+    ]},
   { v:"2.37", date:"2026-07", title:"Three modules: Prospect Generator, Admin Briefing and Finance Briefing",
     changes:[
       "The dashboard is now three views over the SAME database rather than one. Pick which to open at sign-in, and switch freely from the dropdown in the top bar \u2014 no signing out, since these are views rather than separate applications. Your choice is remembered for next time.",
@@ -8859,6 +8885,61 @@ function targetAction(id, action){
   fetch('/api/finance/target',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({id,action})}).then(r=>r.json()).then(()=>loadFinanceBrief()).catch(()=>{});
 }
+// ── AI reference documents ─────────────────────────────────────────────────
+function loadAiDocs(){
+  const list=document.getElementById('aidoc-list');
+  if(!list) return;
+  list.innerHTML='<div class="loading-txt">Loading…</div>';
+  fetch('/api/ai/documents').then(r=>r.json()).then(d=>{
+    if(!d.ok){ list.innerHTML='<div class="err-box">'+esc(d.error||'Could not load')+'</div>'; return; }
+    list.innerHTML=(d.documents||[]).map(doc=>{
+      const ok=doc.status==='ok';
+      const badge=ok
+        ? `<span style="color:var(--green);font-size:11px">\u2713 ${doc.chars.toLocaleString()} chars</span>`
+        : `<span style="color:var(--red);font-size:11px" title="${esc(doc.status)}">\u26a0 ${esc(doc.status||'not fetched')}</span>`;
+      return `<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--s2);font-size:12.5px">
+        <input type="checkbox" ${doc.enabled?'checked':''} onchange="aiDocAction(${doc.id},'toggle')" title="Include this document">
+        <span style="width:150px;font-weight:600">${esc(doc.label)}</span>
+        <span style="flex:1;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(doc.url)}">${esc(doc.url)}</span>
+        ${badge}
+        <span onclick="aiDocAction(${doc.id},'delete')" title="Remove" style="cursor:pointer;color:#bbb">\u2715</span>
+      </div>`;
+    }).join('') || '<span style="font-size:12px;color:var(--t3)">No documents.</span>';
+  }).catch(e=>{ list.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
+}
+function refreshAiDocs(){
+  const st=document.getElementById('aidoc-status');
+  st.textContent='Reading documents… this can take up to a minute the first time.';
+  st.style.color='var(--t3)';
+  fetch('/api/ai/documents',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'refresh'})}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ st.textContent='\u26a0 '+(d.error||'Failed'); st.style.color='var(--red)'; return; }
+      const failed=(d.results||[]).filter(r=>r.status!=='ok');
+      st.textContent=d.message+(failed.length?' Failed: '+failed.map(f=>f.label+' ('+f.status+')').join(', '):'');
+      st.style.color=failed.length?'var(--orange)':'var(--green)';
+      loadAiDocs();
+    }).catch(e=>{ st.textContent='\u26a0 '+e.message; st.style.color='var(--red)'; });
+}
+function addAiDoc(){
+  const st=document.getElementById('aidoc-status');
+  st.textContent='Reading…'; st.style.color='var(--t3)';
+  fetch('/api/ai/documents',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'add', label:document.getElementById('aidoc-label').value,
+      url:document.getElementById('aidoc-url').value})}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ st.textContent='\u26a0 '+(d.error||'Failed'); st.style.color='var(--red)'; return; }
+      st.textContent = d.status==='ok' ? ('\u2713 Added \u2014 '+d.chars.toLocaleString()+' characters read.')
+                                       : ('\u26a0 Added, but could not read it: '+d.status);
+      st.style.color = d.status==='ok' ? 'var(--green)' : 'var(--orange)';
+      document.getElementById('aidoc-label').value='';
+      document.getElementById('aidoc-url').value='';
+      loadAiDocs();
+    }).catch(e=>{ st.textContent='\u26a0 '+e.message; st.style.color='var(--red)'; });
+}
+function aiDocAction(id, action){
+  if(action==='delete' && !confirm('Remove this document from the AI coach\u2019s reference material?')) return;
+  fetch('/api/ai/documents',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id,action})}).then(r=>r.json()).then(()=>loadAiDocs()).catch(()=>{});
+}
 function crApplyTheme(theme){
   let effective = theme;
   if(theme==='auto'){
@@ -8907,7 +8988,7 @@ function loadUsers(){
 }
 
 function switchAdminTab(tab){
-  const tabs=['timezone','appearance','sql','dropdowns'];
+  const tabs=['timezone','aidocs','appearance','sql','dropdowns'];
   tabs.forEach(t=>{
     const panel=document.getElementById('admin-tab-panel-'+t);
     const btn=document.getElementById('admin-tab-btn-'+t);
@@ -9121,6 +9202,7 @@ function openAdmin(){
   updateCallerDisplay();
   loadTimezoneSetting();
   loadThemeSetting();
+  loadAiDocs();
 }
 function closeAdmin(){document.getElementById('admin-modal').classList.remove('open');}
 function loadTimezoneSetting(){
