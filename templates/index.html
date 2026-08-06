@@ -1830,6 +1830,15 @@ select:focus{outline:none;border-color:var(--green)}
         <label>Password</label><input id="em-password" type="password" placeholder="leave blank to keep the saved one" autocomplete="new-password">
         <label>Display name</label><input id="em-from" placeholder="optional, e.g. Muhanna at 9 Mountains">
         <div style="grid-column:1/-1;border-top:1px solid var(--border);margin:6px 0 2px;padding-top:8px;font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Outgoing (SMTP)</div>
+        <label>Quick setup</label>
+        <select id="em-preset" onchange="applyEmailPreset(this.value)">
+          <option value="">Choose a provider&hellip;</option>
+          <option value="outlook">Outlook / Office 365 &mdash; port 587 (blocked on Render free)</option>
+          <option value="brevo">Brevo &mdash; port 2525 (works on Render free)</option>
+          <option value="sendgrid">SendGrid &mdash; port 2525 (works on Render free)</option>
+          <option value="mailgun">Mailgun &mdash; port 2525 (works on Render free)</option>
+          <option value="mailjet">Mailjet &mdash; port 2525 (works on Render free)</option>
+        </select>
         <label>Server</label><input id="em-smtp-host" value="smtp-mail.outlook.com">
         <label>Port &amp; security</label>
         <span style="display:flex;gap:6px"><input id="em-smtp-port" type="number" value="587" style="width:90px">
@@ -1848,6 +1857,15 @@ select:focus{outline:none;border-color:var(--green)}
       </div>
       <div id="em-status" style="font-size:12.5px;margin-top:10px"></div>
       <div style="font-size:11.5px;color:var(--t3);margin:12px 0 0;line-height:1.55;border-top:1px solid var(--border);padding-top:10px">
+        <p style="margin:0 0 8px;color:var(--t2)"><strong>Sending on Render&rsquo;s free plan &mdash; the workaround:</strong>
+        Render blocks ports 25, 465 and 587, but <strong>not port 2525</strong>. Most relay providers offer 2525 for exactly
+        this reason. So: sign up for a free relay (Brevo gives 300 emails/day, Mailjet 200/day), verify
+        <em>your</em> 9 Mountains address as a sender with them, then pick that provider above and use the SMTP username and
+        key they give you in place of the mailbox password. This is still ordinary SMTP &mdash; only the server and port change,
+        and mail still arrives showing your own address.</p>
+        <p style="margin:0 0 8px;color:var(--t2)"><strong>Receiving already works.</strong> IMAP on 993 and POP on 995 aren&rsquo;t
+        blocked, so <em>Test incoming</em> should connect to Outlook directly &mdash; assuming Microsoft hasn&rsquo;t disabled
+        password sign-in on the tenant (see below).</p>
         <strong>Two things that commonly stop this working, neither of which is a wrong password:</strong>
         <p style="margin:6px 0 0"><strong>1. Render blocks outbound email on free plans.</strong> Ports 25, 465 and 587 are
         blocked for free web services, so <em>Test outgoing</em> will time out no matter what is entered here. It needs either a
@@ -7055,6 +7073,16 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.44", date:"2026-08", title:"Workaround for sending email on Render's free plan \u2014 still plain SMTP",
+    changes:[
+      "Render blocks ports 25, 465 and 587 \u2014 but NOT port 2525, and the major relay providers all offer 2525 precisely because blocks like this are common. So sending still works over ordinary SMTP; only the server and port change.",
+      "New Quick setup list in the Email tab: Brevo, SendGrid, Mailgun and Mailjet all pre-filled on port 2525, plus Outlook direct for comparison. Picking one fills in the server settings and explains which credentials that provider expects \u2014 they each differ, and using the mailbox password instead of their SMTP key is the usual first mistake.",
+      "Mail still arrives showing your own 9 Mountains address, as long as that address is verified as a sender with the relay \u2014 which takes a couple of minutes and is a one-off.",
+      "Free tiers are enough for follow-ups: Brevo allows 300 emails a day, Mailjet 200.",
+      "Receiving needed no workaround at all: IMAP on 993 and POP on 995 aren't blocked, so incoming connects to Outlook directly.",
+      "The failure message now points at this workaround rather than just naming the problem.",
+      "Still worth knowing: this sidesteps Render's block, not Microsoft's. If the tenant has password sign-in disabled, incoming from Outlook will still refuse \u2014 the Graph API registration remains the fix for that side.",
+    ]},
   { v:"2.43", date:"2026-08", title:"Found why the email test hangs: Render blocks outbound SMTP on free plans",
     changes:[
       "The long wait then \u201cFailed to fetch\u201d wasn\u2019t a settings problem. Render blocks outbound traffic to SMTP ports 25, 465 and 587 for FREE web services \u2014 a change they made on 26 September 2025 \u2014 so the connection never gets answered and eventually times out. No password or Outlook setting can change that.",
@@ -9076,6 +9104,29 @@ function restorePillPosition(){
   }catch(e){}
 }
 // ── Per-user email settings ────────────────────────────────────────────────
+// Relay presets. Port 2525 is the point: Render blocks 25, 465 and 587 on free
+// plans but not 2525, and the major relay providers all offer it because this
+// kind of block is common. Mail still shows the sender's own address, provided
+// that address is verified with the relay.
+const EMAIL_PRESETS = {
+  outlook:  {host:'smtp-mail.outlook.com', port:587,  sec:'starttls',
+             note:'Outlook direct. Will time out on Render\u2019s free plan \u2014 port 587 is blocked.'},
+  brevo:    {host:'smtp-relay.brevo.com',  port:2525, sec:'starttls',
+             note:'Use the SMTP login and key from Brevo (Settings \u2192 SMTP & API), not your mailbox password. Verify your 9M address as a sender first.'},
+  sendgrid: {host:'smtp.sendgrid.net',     port:2525, sec:'starttls',
+             note:'Username is literally "apikey"; the password is the API key. Verify your sender address in SendGrid first.'},
+  mailgun:  {host:'smtp.mailgun.org',      port:2525, sec:'starttls',
+             note:'Use the SMTP credentials from your Mailgun domain, not your mailbox password.'},
+  mailjet:  {host:'in-v3.mailjet.com',     port:2525, sec:'starttls',
+             note:'Username is the API key, password is the secret key. Verify your sender address in Mailjet first.'},
+};
+function applyEmailPreset(key){
+  const p=EMAIL_PRESETS[key];
+  if(!p) return;
+  const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.value=v; };
+  set('em-smtp-host',p.host); set('em-smtp-port',p.port); set('em-smtp-sec',p.sec);
+  emailStatus(esc(p.note), key==='outlook' ? 'warn' : 'ok');
+}
 function loadEmailSettings(){
   const warn=document.getElementById('email-warn');
   fetch('/api/email/settings').then(r=>r.json()).then(d=>{

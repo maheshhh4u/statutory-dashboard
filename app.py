@@ -1055,11 +1055,12 @@ def _email_connection_hint(err_text, port, which):
     timed_out = any(k in t for k in ("timed out", "timeout", "connection refused",
                                      "network is unreachable", "errno 110", "errno 111"))
     if timed_out and which == "smtp" and int(port or 0) in _SMTP_BLOCKED_PORTS:
-        return ("This is almost certainly Render's outbound block, not your settings. Render blocks "
-                "outbound SMTP on ports 25, 465 and 587 for FREE web services, so the connection never "
-                "answers. Options: upgrade the Render service to a paid instance, or send via an API "
-                "over HTTPS instead \u2014 the Microsoft Graph app registration already requested from IT "
-                "would do exactly that, and isn't affected by this block.")
+        return ("This is Render's outbound block, not your settings \u2014 ports 25, 465 and 587 are blocked "
+                "for free web services. Port 2525 is NOT blocked, so the workaround is to send through a "
+                "relay on 2525: pick one from the Quick setup list above (Brevo, SendGrid, Mailgun or "
+                "Mailjet all offer it free), verify your own address with them as a sender, and use the "
+                "SMTP key they give you instead of your mailbox password. Mail still arrives from your "
+                "own address, and it's still ordinary SMTP.")
     if timed_out:
         return ("The server didn't answer. Check the host and port, and whether outbound access to that "
                 "port is allowed from Render.")
