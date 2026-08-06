@@ -285,6 +285,19 @@ def db_init():
             fetched_at TEXT,
             created_at TEXT
         )""")
+        # Per-user mail settings. Deliberately one row per user and never
+        # shared: a mailbox password is personal, and one person should not be
+        # able to send as another. The password is stored encrypted, not in
+        # readable form, and is never sent back to the browser.
+        client.execute("""CREATE TABLE IF NOT EXISTS user_email_settings (
+            username TEXT PRIMARY KEY,
+            email_address TEXT,
+            display_from TEXT,
+            smtp_host TEXT, smtp_port INTEGER, smtp_security TEXT,
+            imap_host TEXT, imap_port INTEGER, imap_security TEXT,
+            secret_enc TEXT,
+            updated_at TEXT
+        )""")
         # Simple key-value store for app-wide settings (e.g. display timezone)
         client.execute("""CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
@@ -904,6 +917,189 @@ def api_finance_target():
     db_exec("INSERT INTO finance_targets(period, metric, target_value, created_at) VALUES(?,?,?,?)",
             (period, metric, val, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
     return jsonify({"ok": True})
+
+# ══ Per-user email settings ════════════════════════════════════════════════
+# Only the fields that are actually needed are stored. POP is deliberately not
+# offered: it downloads and removes mail from the server, which would interfere
+# with Outlook, whereas IMAP reads it in place. Anything the app needs to do
+# with incoming mail is a read.
+#
+# The password is encrypted at rest using SECRET_KEY, and is never returned to
+# the browser — the UI is only ever told whether one is set.
+EMAIL_DEFAULTS = {
+    "smtp_host": "smtp-mail.outlook.com", "smtp_port": 587, "smtp_security": "starttls",
+    "imap_host": "outlook.office365.com", "imap_port": 993, "imap_security": "ssl",
+}
+
+def _email_fernet():
+    """Key derived from SECRET_KEY so there's nothing extra to configure.
+    If SECRET_KEY isn't set the stored secret becomes unreadable after a
+    restart, which is one more reason it must be set in Render."""
+    try:
+        from cryptography.fernet import Fernet
+    except Exception:
+        return None
+    key = (os.environ.get("SECRET_KEY") or "").encode()
+    if not key:
+        return None
+    return Fernet(_b64.urlsafe_b64encode(hashlib.sha256(key).digest()))
+
+def _email_encrypt(plain):
+    f = _email_fernet()
+    if not f or not plain:
+        return ""
+    try:
+        return f.encrypt(plain.encode()).decode()
+    except Exception:
+        return ""
+
+def _email_decrypt(token):
+    f = _email_fernet()
+    if not f or not token:
+        return ""
+    try:
+        return f.decrypt(token.encode()).decode()
+    except Exception:
+        return ""
+
+def _email_settings_for(username):
+    r = db_query("SELECT email_address, display_from, smtp_host, smtp_port, smtp_security, "
+                 "imap_host, imap_port, imap_security, secret_enc, updated_at "
+                 "FROM user_email_settings WHERE username=?", (username,))
+    if not r:
+        return dict(EMAIL_DEFAULTS, email_address="", display_from="", secret_enc="", updated_at="")
+    v = r[0]
+    return {"email_address": v[0] or "", "display_from": v[1] or "",
+            "smtp_host": v[2] or EMAIL_DEFAULTS["smtp_host"], "smtp_port": v[3] or 587,
+            "smtp_security": v[4] or "starttls",
+            "imap_host": v[5] or EMAIL_DEFAULTS["imap_host"], "imap_port": v[6] or 993,
+            "imap_security": v[7] or "ssl",
+            "secret_enc": v[8] or "", "updated_at": v[9] or ""}
+
+@app.route("/api/email/settings", methods=["GET"])
+def api_email_settings_get():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    cfg = _email_settings_for(current_user())
+    cfg.pop("secret_enc", None)          # never leaves the server
+    cfg["has_password"] = bool(_email_settings_for(current_user())["secret_enc"])
+    cfg["encryption_available"] = bool(_email_fernet())
+    return jsonify({"ok": True, "settings": cfg})
+
+@app.route("/api/email/settings", methods=["POST"])
+def api_email_settings_save():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    me = current_user()
+    existing = _email_settings_for(me)
+    email_address = str(d.get("email_address", "")).strip()[:120]
+    if email_address and "@" not in email_address:
+        return jsonify({"ok": False, "error": "That doesn't look like an email address"}), 400
+    pw = str(d.get("password", ""))
+    if pw and not _email_fernet():
+        return jsonify({"ok": False, "error":
+                        "Can't store the password securely: SECRET_KEY isn't set on the server, "
+                        "or the cryptography package is missing. Add 'cryptography' to "
+                        "requirements.txt and set SECRET_KEY in Render."}), 400
+    # An empty password field means "leave it as it was", not "clear it" —
+    # otherwise simply saving a port change would wipe the stored password.
+    secret_enc = _email_encrypt(pw) if pw else existing["secret_enc"]
+    if str(d.get("clear_password", "")) == "1":
+        secret_enc = ""
+
+    def _port(v, fallback):
+        try: return max(1, min(65535, int(v)))
+        except Exception: return fallback
+
+    db_exec("DELETE FROM user_email_settings WHERE username=?", (me,))
+    db_exec("INSERT INTO user_email_settings(username, email_address, display_from, smtp_host, "
+            "smtp_port, smtp_security, imap_host, imap_port, imap_security, secret_enc, updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (me, email_address, str(d.get("display_from", ""))[:80],
+             str(d.get("smtp_host", "")).strip()[:120] or EMAIL_DEFAULTS["smtp_host"],
+             _port(d.get("smtp_port"), 587),
+             str(d.get("smtp_security", "starttls")).lower()[:10],
+             str(d.get("imap_host", "")).strip()[:120] or EMAIL_DEFAULTS["imap_host"],
+             _port(d.get("imap_port"), 993),
+             str(d.get("imap_security", "ssl")).lower()[:10],
+             secret_enc, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+    return jsonify({"ok": True})
+
+def _email_basic_auth_hint(err_text):
+    """Microsoft turned off username-and-password sign-in for IMAP/POP, and
+    SMTP AUTH is off by default per mailbox. That produces a confusing
+    authentication error, so name the actual cause rather than leaving someone
+    to assume they typed the password wrong."""
+    t = (err_text or "").lower()
+    if any(k in t for k in ("authenticationfailed", "basic authentication", "5.7.139",
+                            "5.7.57", "login failed", "authenticate", "auth")):
+        return ("Microsoft has switched off username-and-password sign-in for Outlook mail. "
+                "Ask IT to enable SMTP AUTH for this mailbox, or use the Graph API app "
+                "registration instead — that's the supported route.")
+    return ""
+
+@app.route("/api/email/test", methods=["POST"])
+def api_email_test():
+    """Tests outgoing (SMTP) or incoming (IMAP) with the saved settings."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    which = str((request.json or {}).get("which", "smtp")).lower()
+    cfg = _email_settings_for(current_user())
+    pw = _email_decrypt(cfg["secret_enc"])
+    if not cfg["email_address"] or not pw:
+        return jsonify({"ok": False, "error": "Enter your email address and password, then Save, before testing."}), 400
+
+    if which == "imap":
+        import imaplib
+        try:
+            if cfg["imap_security"] == "ssl":
+                M = imaplib.IMAP4_SSL(cfg["imap_host"], cfg["imap_port"], timeout=25)
+            else:
+                M = imaplib.IMAP4(cfg["imap_host"], cfg["imap_port"], timeout=25)
+                M.starttls()
+            try:
+                M.login(cfg["email_address"], pw)
+                M.select("INBOX")
+                typ, data = M.search(None, "ALL")
+                count = len(data[0].split()) if data and data[0] else 0
+                M.logout()
+                return jsonify({"ok": True, "message": f"Connected to {cfg['imap_host']} and opened the inbox ({count} messages)."})
+            finally:
+                try: M.shutdown()
+                except Exception: pass
+        except Exception as e:
+            msg = str(e)[:300]
+            return jsonify({"ok": False, "error": f"IMAP failed: {msg}",
+                            "hint": _email_basic_auth_hint(msg)}), 400
+
+    import smtplib
+    from email.mime.text import MIMEText
+    to_addr = str((request.json or {}).get("to") or cfg["email_address"]).strip()
+    try:
+        if cfg["smtp_security"] == "ssl":
+            S = smtplib.SMTP_SSL(cfg["smtp_host"], cfg["smtp_port"], timeout=25)
+        else:
+            S = smtplib.SMTP(cfg["smtp_host"], cfg["smtp_port"], timeout=25)
+            S.ehlo()
+            if cfg["smtp_security"] == "starttls":
+                S.starttls(); S.ehlo()
+        try:
+            S.login(cfg["email_address"], pw)
+            msg = MIMEText("This is a test message from the 9 Mountains dashboard. "
+                           "If you received it, outgoing email is working.")
+            msg["Subject"] = "9 Mountains dashboard — test email"
+            msg["From"] = cfg["display_from"] or cfg["email_address"]
+            msg["To"] = to_addr
+            S.sendmail(cfg["email_address"], [to_addr], msg.as_string())
+            return jsonify({"ok": True, "message": f"Test email sent to {to_addr}."})
+        finally:
+            try: S.quit()
+            except Exception: pass
+    except Exception as e:
+        msg = str(e)[:300]
+        return jsonify({"ok": False, "error": f"SMTP failed: {msg}",
+                        "hint": _email_basic_auth_hint(msg)}), 400
 
 @app.route("/api/settings/theme", methods=["GET"])
 def get_theme_setting():

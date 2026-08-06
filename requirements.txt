@@ -8,3 +8,4 @@ libsql-client==0.3.1
 openpyxl
 pypdf
 pypdf
+cryptography

@@ -1807,6 +1807,8 @@ select:focus{outline:none;border-color:var(--green)}
     <div style="display:flex;gap:4px;border-bottom:2px solid var(--s2);margin-bottom:16px">
       <button type="button" class="admin-tab-btn active" id="admin-tab-btn-timezone" onclick="switchAdminTab('timezone')"
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--navy);border-bottom:2px solid var(--navy);margin-bottom:-2px">🌍 Timezone</button>
+      <button type="button" class="admin-tab-btn" id="admin-tab-btn-email" onclick="switchAdminTab('email')"
+        style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">&#9993; Email</button>
       <button type="button" class="admin-tab-btn" id="admin-tab-btn-aidocs" onclick="switchAdminTab('aidocs')"
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">🧠 AI Documents</button>
       <button type="button" class="admin-tab-btn" id="admin-tab-btn-appearance" onclick="switchAdminTab('appearance')"
@@ -1817,6 +1819,40 @@ select:focus{outline:none;border-color:var(--green)}
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">📋 Dropdowns</button>
     </div>
 
+    <div id="admin-tab-panel-email" style="display:none">
+      <p style="font-size:13px;color:var(--t2);margin:0 0 4px">
+        Your own mailbox settings, used to send follow-ups and read replies. <strong>These are private to you</strong> &mdash;
+        nobody else can see or use them, and the password is encrypted and never shown again once saved.
+      </p>
+      <div id="email-warn" style="display:none;font-size:12px;background:var(--goldl);border:1px solid var(--gold);border-radius:6px;padding:8px 10px;margin-bottom:10px"></div>
+      <div style="display:grid;grid-template-columns:150px 1fr;gap:8px 10px;align-items:center;max-width:560px;font-size:13px">
+        <label>Email address</label><input id="em-address" placeholder="you@9mountains.co.uk" autocomplete="off">
+        <label>Password</label><input id="em-password" type="password" placeholder="leave blank to keep the saved one" autocomplete="new-password">
+        <label>Display name</label><input id="em-from" placeholder="optional, e.g. Muhanna at 9 Mountains">
+        <div style="grid-column:1/-1;border-top:1px solid var(--border);margin:6px 0 2px;padding-top:8px;font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Outgoing (SMTP)</div>
+        <label>Server</label><input id="em-smtp-host" value="smtp-mail.outlook.com">
+        <label>Port &amp; security</label>
+        <span style="display:flex;gap:6px"><input id="em-smtp-port" type="number" value="587" style="width:90px">
+          <select id="em-smtp-sec"><option value="starttls">STARTTLS</option><option value="ssl">SSL/TLS</option><option value="none">None</option></select></span>
+        <div style="grid-column:1/-1;border-top:1px solid var(--border);margin:6px 0 2px;padding-top:8px;font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Incoming (IMAP)</div>
+        <label>Server</label><input id="em-imap-host" value="outlook.office365.com">
+        <label>Port &amp; security</label>
+        <span style="display:flex;gap:6px"><input id="em-imap-port" type="number" value="993" style="width:90px">
+          <select id="em-imap-sec"><option value="ssl">SSL/TLS</option><option value="starttls">STARTTLS</option></select></span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px">
+        <button class="btn btn-green btn-sm" onclick="saveEmailSettings()">Save</button>
+        <button class="btn btn-outline btn-sm" onclick="testEmail('smtp')">&#9993; Test outgoing</button>
+        <button class="btn btn-outline btn-sm" onclick="testEmail('imap')">&#128229; Test incoming</button>
+        <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="clearEmailPassword()">Clear password</button>
+      </div>
+      <div id="em-status" style="font-size:12.5px;margin-top:10px"></div>
+      <p style="font-size:11.5px;color:var(--t3);margin:10px 0 0;line-height:1.5">
+        Note: Microsoft has switched off username-and-password sign-in for Outlook mail on most tenants. If the tests fail
+        with an authentication error, that&rsquo;s why &mdash; it isn&rsquo;t a wrong password. The supported route is the Graph API
+        app registration, which needs setting up by IT.
+      </p>
+    </div>
     <div id="admin-tab-panel-aidocs" style="display:none">
       <p style="font-size:13px;color:var(--t2);margin:0 0 12px">
         Documents the 🧠 AI Performance Coach reads before answering, so it can speak accurately about
@@ -7014,6 +7050,16 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.41", date:"2026-08", title:"Per-user email settings in Settings, with tests for sending and receiving",
+    changes:[
+      "New \u2709 Email tab in Settings. Each person enters their own mailbox details \u2014 address, password, display name, and the outgoing and incoming server settings, all editable with the Outlook defaults pre-filled.",
+      "Settings are private per user: nobody can see or use anyone else's, which also means nobody can send email as a colleague. The password is encrypted before storage and never sent back to the browser \u2014 the page is only told whether one is saved.",
+      "Two test buttons: Test outgoing sends a real email to yourself, Test incoming connects and opens the inbox, reporting how many messages it found. Both report the actual server error when they fail rather than just \u201cfailed\u201d.",
+      "Leaving the password box blank keeps the saved one, so changing a port doesn't silently wipe the password. There's a separate button to remove it deliberately.",
+      "POP isn't offered, despite being in the settings list: POP downloads and removes mail from the server, which would interfere with Outlook, whereas IMAP reads it in place. Everything the dashboard needs to do with incoming mail is a read.",
+      "IMPORTANT \u2014 the settings supplied say both \u201cOAuth2/Modern Auth\u201d and \u201cyour Microsoft account password\u201d, and those are contradictory. Microsoft has switched off username-and-password sign-in for IMAP/POP, and SMTP AUTH is off by default per mailbox. So these tests will probably fail with an authentication error on a standard tenant \u2014 that's the tenant policy, not a wrong password, and the app now says so explicitly instead of leaving you guessing. The supported route is the Graph API app registration already requested from IT.",
+      "Deployment: this needs 'cryptography' in requirements.txt and SECRET_KEY set in Render. Without both, the page says so and refuses to store a password rather than saving it insecurely.",
+    ]},
   { v:"2.40", date:"2026-08", title:"Make the AI coach failure diagnosable, and stop optional features breaking it",
     changes:[
       "The coach was still failing, and the real problem was that nothing said WHY \u2014 the server logged nothing useful, so there was no way to tell what had gone wrong. Unhandled errors now print a full trace to the Render logs, and the message shown in the app names the actual error rather than a generic apology.",
@@ -9011,6 +9057,68 @@ function restorePillPosition(){
     }
   }catch(e){}
 }
+// ── Per-user email settings ────────────────────────────────────────────────
+function loadEmailSettings(){
+  const warn=document.getElementById('email-warn');
+  fetch('/api/email/settings').then(r=>r.json()).then(d=>{
+    if(!d.ok) return;
+    const c=d.settings||{};
+    const set=(id,v)=>{ const e=document.getElementById(id); if(e && v!==undefined && v!==null && v!=='') e.value=v; };
+    set('em-address',c.email_address); set('em-from',c.display_from);
+    set('em-smtp-host',c.smtp_host); set('em-smtp-port',c.smtp_port); set('em-smtp-sec',c.smtp_security);
+    set('em-imap-host',c.imap_host); set('em-imap-port',c.imap_port); set('em-imap-sec',c.imap_security);
+    const pw=document.getElementById('em-password');
+    if(pw) pw.placeholder = c.has_password ? 'saved — leave blank to keep it' : 'your mailbox password';
+    if(warn){
+      if(!c.encryption_available){
+        warn.style.display='block';
+        warn.innerHTML='\u26a0 Passwords can\u2019t be stored securely yet: SECRET_KEY isn\u2019t set on the server, or the '+
+          '<code>cryptography</code> package is missing from requirements.txt. Fix that before saving a password.';
+      } else { warn.style.display='none'; }
+    }
+  }).catch(()=>{});
+}
+function emailStatus(msg, kind){
+  const st=document.getElementById('em-status');
+  if(!st) return;
+  st.innerHTML=msg;
+  st.style.color = kind==='ok' ? 'var(--green)' : (kind==='warn' ? 'var(--orange)' : 'var(--red)');
+}
+function emailPayload(){
+  const g=id=>(document.getElementById(id)||{}).value||'';
+  return {email_address:g('em-address'), password:g('em-password'), display_from:g('em-from'),
+          smtp_host:g('em-smtp-host'), smtp_port:g('em-smtp-port'), smtp_security:g('em-smtp-sec'),
+          imap_host:g('em-imap-host'), imap_port:g('em-imap-port'), imap_security:g('em-imap-sec')};
+}
+function saveEmailSettings(){
+  emailStatus('Saving…','warn');
+  fetch('/api/email/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(emailPayload())}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ emailStatus('\u26a0 '+esc(d.error||'Could not save')); return; }
+      // Clear the password box once saved so it isn't left on screen.
+      const pw=document.getElementById('em-password'); if(pw) pw.value='';
+      emailStatus('\u2713 Saved. Use the test buttons to check it works.','ok');
+      loadEmailSettings();
+    }).catch(e=>emailStatus('\u26a0 '+esc(e.message)));
+}
+function clearEmailPassword(){
+  if(!confirm('Remove the saved mailbox password?')) return;
+  const body=Object.assign(emailPayload(),{clear_password:'1',password:''});
+  fetch('/api/email/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)}).then(r=>r.json()).then(()=>{
+      emailStatus('\u2713 Password removed.','ok'); loadEmailSettings();
+    }).catch(e=>emailStatus('\u26a0 '+esc(e.message)));
+}
+function testEmail(which){
+  emailStatus(which==='imap' ? 'Connecting to the mail server…' : 'Sending a test email…','warn');
+  fetch('/api/email/test',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({which})}).then(r=>r.json()).then(d=>{
+      if(d.ok){ emailStatus('\u2713 '+esc(d.message),'ok'); return; }
+      // The hint explains Microsoft's basic-auth block, which is by far the
+      // most likely reason this fails — worth showing prominently.
+      emailStatus('\u26a0 '+esc(d.error||'Test failed')+(d.hint?'<br><span style="color:var(--t2)">'+esc(d.hint)+'</span>':''));
+    }).catch(e=>emailStatus('\u26a0 '+esc(e.message)));
+}
 function crApplyTheme(theme){
   let effective = theme;
   if(theme==='auto'){
@@ -9059,7 +9167,7 @@ function loadUsers(){
 }
 
 function switchAdminTab(tab){
-  const tabs=['timezone','aidocs','appearance','sql','dropdowns'];
+  const tabs=['timezone','email','aidocs','appearance','sql','dropdowns'];
   tabs.forEach(t=>{
     const panel=document.getElementById('admin-tab-panel-'+t);
     const btn=document.getElementById('admin-tab-btn-'+t);
@@ -9274,6 +9382,7 @@ function openAdmin(){
   loadTimezoneSetting();
   loadThemeSetting();
   loadAiDocs();
+  loadEmailSettings();
 }
 function closeAdmin(){document.getElementById('admin-modal').classList.remove('open');}
 function loadTimezoneSetting(){
