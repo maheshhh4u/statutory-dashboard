@@ -7050,6 +7050,11 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.42", date:"2026-08", title:"Email settings now say WHICH prerequisite is missing",
+    changes:[
+      "The error when saving a mailbox password listed two possible causes and left you to work out which applied. It now checks them separately and names the actual one \u2014 either the 'cryptography' package isn't installed, or SECRET_KEY isn't set \u2014 with the specific steps to fix that one.",
+      "The warning banner at the top of the Email tab shows the same detail, so the problem is visible before you try to save rather than after.",
+    ]},
   { v:"2.41", date:"2026-08", title:"Per-user email settings in Settings, with tests for sending and receiving",
     changes:[
       "New \u2709 Email tab in Settings. Each person enters their own mailbox details \u2014 address, password, display name, and the outgoing and incoming server settings, all editable with the Outlook defaults pre-filled.",
@@ -9072,8 +9077,8 @@ function loadEmailSettings(){
     if(warn){
       if(!c.encryption_available){
         warn.style.display='block';
-        warn.innerHTML='\u26a0 Passwords can\u2019t be stored securely yet: SECRET_KEY isn\u2019t set on the server, or the '+
-          '<code>cryptography</code> package is missing from requirements.txt. Fix that before saving a password.';
+        warn.innerHTML='<strong>\u26a0 Passwords can\u2019t be stored securely yet.</strong><br>'+
+          esc(c.encryption_detail||'Server encryption is unavailable.');
       } else { warn.style.display='none'; }
     }
   }).catch(()=>{});
@@ -9094,7 +9099,12 @@ function saveEmailSettings(){
   emailStatus('Saving…','warn');
   fetch('/api/email/settings',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(emailPayload())}).then(r=>r.json()).then(d=>{
-      if(!d.ok){ emailStatus('\u26a0 '+esc(d.error||'Could not save')); return; }
+      if(!d.ok){
+        emailStatus('\u26a0 '+esc(d.error||'Could not save')+
+          (d.detail?'<br><span style="color:var(--t2)">'+esc(d.detail)+'</span>':''));
+        loadEmailSettings();   // refresh the banner so it shows the same detail
+        return;
+      }
       // Clear the password box once saved so it isn't left on screen.
       const pw=document.getElementById('em-password'); if(pw) pw.value='';
       emailStatus('\u2713 Saved. Use the test buttons to check it works.','ok');

@@ -931,17 +931,31 @@ EMAIL_DEFAULTS = {
     "imap_host": "outlook.office365.com", "imap_port": 993, "imap_security": "ssl",
 }
 
+def _email_crypto_status():
+    """Which of the two prerequisites is missing, so the message can name the
+    actual problem instead of listing both and leaving you to work it out."""
+    try:
+        from cryptography.fernet import Fernet   # noqa: F401
+        have_lib = True
+    except Exception as e:
+        return {"ok": False, "reason": "library",
+                "detail": f"The 'cryptography' package isn't installed on the server ({str(e)[:80]}). "
+                          "Add a line reading 'cryptography' to requirements.txt, then redeploy."}
+    if not (os.environ.get("SECRET_KEY") or "").strip():
+        return {"ok": False, "reason": "secret_key",
+                "detail": "SECRET_KEY isn't set on the server. In Render, open the service, go to "
+                          "Environment, add SECRET_KEY with any long random value, and redeploy. "
+                          "(It's also what keeps everyone signed in across deploys.)"}
+    return {"ok": True, "reason": "", "detail": ""}
+
 def _email_fernet():
     """Key derived from SECRET_KEY so there's nothing extra to configure.
     If SECRET_KEY isn't set the stored secret becomes unreadable after a
     restart, which is one more reason it must be set in Render."""
-    try:
-        from cryptography.fernet import Fernet
-    except Exception:
+    if not _email_crypto_status()["ok"]:
         return None
+    from cryptography.fernet import Fernet
     key = (os.environ.get("SECRET_KEY") or "").encode()
-    if not key:
-        return None
     return Fernet(_b64.urlsafe_b64encode(hashlib.sha256(key).digest()))
 
 def _email_encrypt(plain):
@@ -983,7 +997,9 @@ def api_email_settings_get():
     cfg = _email_settings_for(current_user())
     cfg.pop("secret_enc", None)          # never leaves the server
     cfg["has_password"] = bool(_email_settings_for(current_user())["secret_enc"])
-    cfg["encryption_available"] = bool(_email_fernet())
+    _st = _email_crypto_status()
+    cfg["encryption_available"] = _st["ok"]
+    cfg["encryption_detail"] = _st["detail"]
     return jsonify({"ok": True, "settings": cfg})
 
 @app.route("/api/email/settings", methods=["POST"])
@@ -997,11 +1013,12 @@ def api_email_settings_save():
     if email_address and "@" not in email_address:
         return jsonify({"ok": False, "error": "That doesn't look like an email address"}), 400
     pw = str(d.get("password", ""))
-    if pw and not _email_fernet():
-        return jsonify({"ok": False, "error":
-                        "Can't store the password securely: SECRET_KEY isn't set on the server, "
-                        "or the cryptography package is missing. Add 'cryptography' to "
-                        "requirements.txt and set SECRET_KEY in Render."}), 400
+    if pw:
+        st = _email_crypto_status()
+        if not st["ok"]:
+            return jsonify({"ok": False,
+                            "error": "Can't store the password securely yet.",
+                            "detail": st["detail"], "reason": st["reason"]}), 400
     # An empty password field means "leave it as it was", not "clear it" —
     # otherwise simply saving a port change would wipe the stored password.
     secret_enc = _email_encrypt(pw) if pw else existing["secret_enc"]
