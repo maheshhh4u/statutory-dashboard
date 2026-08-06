@@ -1043,6 +1043,28 @@ def api_email_settings_save():
              secret_enc, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
     return jsonify({"ok": True})
 
+_SMTP_BLOCKED_PORTS = {25, 465, 587}
+
+def _email_connection_hint(err_text, port, which):
+    """A connection that times out on an SMTP port is almost always Render's
+    outbound block, not a mistyped setting. Render blocks ports 25, 465 and
+    587 on free web services (since 26 Sept 2025), so the connection simply
+    never answers. Saying so directly saves hours of checking credentials that
+    were fine all along."""
+    t = (err_text or "").lower()
+    timed_out = any(k in t for k in ("timed out", "timeout", "connection refused",
+                                     "network is unreachable", "errno 110", "errno 111"))
+    if timed_out and which == "smtp" and int(port or 0) in _SMTP_BLOCKED_PORTS:
+        return ("This is almost certainly Render's outbound block, not your settings. Render blocks "
+                "outbound SMTP on ports 25, 465 and 587 for FREE web services, so the connection never "
+                "answers. Options: upgrade the Render service to a paid instance, or send via an API "
+                "over HTTPS instead \u2014 the Microsoft Graph app registration already requested from IT "
+                "would do exactly that, and isn't affected by this block.")
+    if timed_out:
+        return ("The server didn't answer. Check the host and port, and whether outbound access to that "
+                "port is allowed from Render.")
+    return ""
+
 def _email_basic_auth_hint(err_text):
     """Microsoft turned off username-and-password sign-in for IMAP/POP, and
     SMTP AUTH is off by default per mailbox. That produces a confusing
@@ -1071,9 +1093,9 @@ def api_email_test():
         import imaplib
         try:
             if cfg["imap_security"] == "ssl":
-                M = imaplib.IMAP4_SSL(cfg["imap_host"], cfg["imap_port"], timeout=25)
+                M = imaplib.IMAP4_SSL(cfg["imap_host"], cfg["imap_port"], timeout=12)
             else:
-                M = imaplib.IMAP4(cfg["imap_host"], cfg["imap_port"], timeout=25)
+                M = imaplib.IMAP4(cfg["imap_host"], cfg["imap_port"], timeout=12)
                 M.starttls()
             try:
                 M.login(cfg["email_address"], pw)
@@ -1088,16 +1110,17 @@ def api_email_test():
         except Exception as e:
             msg = str(e)[:300]
             return jsonify({"ok": False, "error": f"IMAP failed: {msg}",
-                            "hint": _email_basic_auth_hint(msg)}), 400
+                            "hint": _email_connection_hint(msg, cfg["imap_port"], "imap")
+                                    or _email_basic_auth_hint(msg)}), 400
 
     import smtplib
     from email.mime.text import MIMEText
     to_addr = str((request.json or {}).get("to") or cfg["email_address"]).strip()
     try:
         if cfg["smtp_security"] == "ssl":
-            S = smtplib.SMTP_SSL(cfg["smtp_host"], cfg["smtp_port"], timeout=25)
+            S = smtplib.SMTP_SSL(cfg["smtp_host"], cfg["smtp_port"], timeout=12)
         else:
-            S = smtplib.SMTP(cfg["smtp_host"], cfg["smtp_port"], timeout=25)
+            S = smtplib.SMTP(cfg["smtp_host"], cfg["smtp_port"], timeout=12)
             S.ehlo()
             if cfg["smtp_security"] == "starttls":
                 S.starttls(); S.ehlo()
@@ -1116,7 +1139,8 @@ def api_email_test():
     except Exception as e:
         msg = str(e)[:300]
         return jsonify({"ok": False, "error": f"SMTP failed: {msg}",
-                        "hint": _email_basic_auth_hint(msg)}), 400
+                        "hint": _email_connection_hint(msg, cfg["smtp_port"], "smtp")
+                                or _email_basic_auth_hint(msg)}), 400
 
 @app.route("/api/settings/theme", methods=["GET"])
 def get_theme_setting():

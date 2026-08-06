@@ -1847,11 +1847,16 @@ select:focus{outline:none;border-color:var(--green)}
         <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="clearEmailPassword()">Clear password</button>
       </div>
       <div id="em-status" style="font-size:12.5px;margin-top:10px"></div>
-      <p style="font-size:11.5px;color:var(--t3);margin:10px 0 0;line-height:1.5">
-        Note: Microsoft has switched off username-and-password sign-in for Outlook mail on most tenants. If the tests fail
-        with an authentication error, that&rsquo;s why &mdash; it isn&rsquo;t a wrong password. The supported route is the Graph API
-        app registration, which needs setting up by IT.
-      </p>
+      <div style="font-size:11.5px;color:var(--t3);margin:12px 0 0;line-height:1.55;border-top:1px solid var(--border);padding-top:10px">
+        <strong>Two things that commonly stop this working, neither of which is a wrong password:</strong>
+        <p style="margin:6px 0 0"><strong>1. Render blocks outbound email on free plans.</strong> Ports 25, 465 and 587 are
+        blocked for free web services, so <em>Test outgoing</em> will time out no matter what is entered here. It needs either a
+        paid Render instance, or sending via an API over HTTPS instead. Incoming (IMAP, port 993) isn&rsquo;t affected by this.</p>
+        <p style="margin:6px 0 0"><strong>2. Microsoft has switched off password sign-in for Outlook mail</strong> on most
+        tenants, so even without the block above, a password may be rejected.</p>
+        <p style="margin:6px 0 0">The Graph API app registration already requested from IT solves both at once &mdash; it sends
+        over HTTPS, so Render doesn&rsquo;t block it, and it&rsquo;s the method Microsoft actually supports.</p>
+      </div>
     </div>
     <div id="admin-tab-panel-aidocs" style="display:none">
       <p style="font-size:13px;color:var(--t2);margin:0 0 12px">
@@ -7050,6 +7055,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.43", date:"2026-08", title:"Found why the email test hangs: Render blocks outbound SMTP on free plans",
+    changes:[
+      "The long wait then \u201cFailed to fetch\u201d wasn\u2019t a settings problem. Render blocks outbound traffic to SMTP ports 25, 465 and 587 for FREE web services \u2014 a change they made on 26 September 2025 \u2014 so the connection never gets answered and eventually times out. No password or Outlook setting can change that.",
+      "The test now gives up after 12 seconds instead of hanging, and says exactly this when it does. Previously it tied up the server for the whole wait, which also slowed everything else down, since the app runs a single worker.",
+      "The Email tab now explains both known blockers up front rather than after a failed test: Render\u2019s port block, and Microsoft having switched off password sign-in for Outlook mail.",
+      "Useful detail: incoming (IMAP on port 993) is NOT on Render\u2019s blocked list, so Test incoming may well work even while Test outgoing cannot.",
+      "The practical fix is the Graph API app registration already requested from IT \u2014 it sends over HTTPS, so Render doesn\u2019t block it, and it\u2019s the method Microsoft still supports. One change solves both problems. The alternative is upgrading the Render service to a paid instance, which lifts the port block but leaves the Microsoft one.",
+    ]},
   { v:"2.42", date:"2026-08", title:"Email settings now say WHICH prerequisite is missing",
     changes:[
       "The error when saving a mailbox password listed two possible causes and left you to work out which applied. It now checks them separately and names the actual one \u2014 either the 'cryptography' package isn't installed, or SECRET_KEY isn't set \u2014 with the specific steps to fix that one.",
