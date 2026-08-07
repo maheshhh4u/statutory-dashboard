@@ -2513,6 +2513,9 @@ function runAiAnalysis(pg, reg){
 
 function openCallModal(pg,reg,name,ccPhone){
   window._callCtx={pg:pg, reg:String(reg), name:name||''};
+  // Remembered so the timer can be tied to this specific charity, and so the
+  // RingCentral hook knows which call it belongs to.
+  window._activeCallReg=String(reg);
   const overridePhone=phoneOverrides[reg]||'';
   const currentPhone=overridePhone||ccPhone||'';
   const caller=currentCaller||localStorage.getItem(LS_CALLER)||'';
@@ -2619,6 +2622,14 @@ function openCallModal(pg,reg,name,ccPhone){
   `;
   showModal('<span style="color:var(--gold)">☎</span> New Call · '+esc(name||reg), html);
   restoreCallDraftIfAny(String(reg));
+  // If a call is already in progress for this charity (the window was closed
+  // and reopened, or the page reloaded), carry the timer on from its real
+  // start rather than showing a blank one.
+  if(resumeCallTimerIfActive(String(reg))){
+    const cs=document.getElementById('call-status');
+    if(cs){ cs.style.display='block'; cs.style.background='#eef9f1'; cs.style.color='#1d7a3a';
+            cs.innerHTML='\u23f1 <strong>Call still in progress</strong> \u2014 timer resumed.'; }
+  }
 }
 
 function copyCallWebsite(site, btn){
@@ -2686,30 +2697,95 @@ function restoreCallDraftIfAny(reg){
   }
 }
 
+// ── Call timer ─────────────────────────────────────────────────────────────
+// The start time is written to localStorage, not just held in a variable.
+// Previously it existed only in memory, so closing the call window, a reload
+// or a browser crash lost it completely and the call was saved with no
+// duration. Persisting it means the timer can be picked up again exactly
+// where it was, and the elapsed time is still recoverable afterwards.
+//
+// It also now starts from RingCentral's own connect time when RC provides one
+// (window._rcCallStartMs), so the dashboard shows the same elapsed time as the
+// RC widget rather than counting from whenever the browser noticed.
+const CALL_TIMER_KEY='activeCallTimer';
 let _callTimerStart=null, _callTimerInterval=null;
-function startCallTimer(){
-  _callTimerStart=Date.now();
+
+function _saveActiveCall(startMs, reg){
+  try{ localStorage.setItem(CALL_TIMER_KEY, JSON.stringify({startMs, reg:String(reg||''), savedAt:Date.now()})); }catch(e){}
+}
+function _readActiveCall(){
+  try{
+    const v=JSON.parse(localStorage.getItem(CALL_TIMER_KEY)||'null');
+    if(!v || !v.startMs) return null;
+    // A timer older than 4 hours is stale — a call was never that long, and it
+    // almost certainly means the browser was closed mid-call and reopened the
+    // next day. Better to show nothing than a wildly wrong figure.
+    if(Date.now()-v.startMs > 4*3600*1000){ _clearActiveCall(); return null; }
+    return v;
+  }catch(e){ return null; }
+}
+function _clearActiveCall(){ try{ localStorage.removeItem(CALL_TIMER_KEY); }catch(e){} }
+
+function _paintCallTimer(){
+  if(!_callTimerStart) return;
+  const sec=Math.max(0, Math.floor((Date.now()-_callTimerStart)/1000));
+  const m=Math.floor(sec/60), ss=sec%60;
+  const tstr=m+':'+String(ss).padStart(2,'0');
+  const td=document.getElementById('call-timer-display');
+  if(td) td.textContent='⏱ Timer: '+tstr;
+  const dur=document.getElementById('call-duration');
+  if(dur) dur.value=tstr;
+  const dk=document.getElementById('dock-timer');
+  if(dk) dk.textContent=tstr;
+}
+function startCallTimer(reg){
+  // Prefer RingCentral's connect time so the two clocks agree; if a timer is
+  // already running for this call, keep its original start rather than
+  // restarting from zero.
+  const existing=_readActiveCall();
+  if(existing && (!reg || String(existing.reg)===String(reg))){
+    _callTimerStart=existing.startMs;
+  } else {
+    _callTimerStart = window._rcCallStartMs || Date.now();
+  }
+  _saveActiveCall(_callTimerStart, reg || (existing && existing.reg) || '');
   if(_callTimerInterval) clearInterval(_callTimerInterval);
-  _callTimerInterval=setInterval(()=>{
-    const sec=Math.floor((Date.now()-_callTimerStart)/1000);
-    const m=Math.floor(sec/60),s=sec%60;
-    const tstr=m+':'+String(s).padStart(2,'0');
-    const td=document.getElementById('call-timer-display');
-    if(td) td.textContent='⏱ Timer: '+tstr;
-    const dur=document.getElementById('call-duration');
-    if(dur) dur.value=tstr;
-    const dk=document.getElementById('dock-timer');
-    if(dk) dk.textContent=tstr;
-  },1000);
+  _paintCallTimer();                       // show immediately, don't wait a second
+  _callTimerInterval=setInterval(_paintCallTimer, 1000);
+}
+// Called when the call window is opened: if a call is still running, carry on
+// from where it was instead of showing a blank timer.
+function resumeCallTimerIfActive(reg){
+  const a=_readActiveCall();
+  if(!a) return false;
+  if(reg && String(a.reg) && String(a.reg)!==String(reg)) return false;
+  _callTimerStart=a.startMs;
+  if(_callTimerInterval) clearInterval(_callTimerInterval);
+  _paintCallTimer();
+  _callTimerInterval=setInterval(_paintCallTimer, 1000);
+  window._callTimerRunning=true;
+  return true;
+}
+// The elapsed seconds, taken from the stored start time rather than read back
+// out of the on-screen field — that field can be blank if the window was
+// closed while the call was running.
+function activeCallElapsedSec(){
+  const a=_readActiveCall();
+  const start=_callTimerStart || (a && a.startMs);
+  if(!start) return 0;
+  return Math.max(0, Math.floor((Date.now()-start)/1000));
 }
 function stopCallTimer(){
   // Stop counting but KEEP the elapsed value in the duration field so it can be saved.
   if(_callTimerInterval){clearInterval(_callTimerInterval);_callTimerInterval=null;}
+  _paintCallTimer();      // make sure the final value is on screen
   _callTimerStart=null;
 }
 function resetCallTimer(){
   if(_callTimerInterval){clearInterval(_callTimerInterval);_callTimerInterval=null;}
   _callTimerStart=null;
+  _clearActiveCall();     // the call is finished and saved
+  window._callTimerRunning=false;
   const td=document.getElementById('call-timer-display');if(td)td.textContent='';
   const dur=document.getElementById('call-duration');if(dur)dur.value='';
 }
@@ -2785,6 +2861,17 @@ function saveCall(pg,reg,ccPhone){
     const parts=durStr.split(':').map(s=>parseInt(s)||0);
     if(parts.length===2) durSec=parts[0]*60+parts[1];
     else if(parts.length===1) durSec=parts[0];
+  }
+  // If the field is empty or zero but a timer was running, use the stored
+  // start time instead. This is what rescues a call whose window was closed
+  // accidentally or lost to a crash — the duration is still recorded and still
+  // syncs to Maximizer, rather than being saved as zero.
+  if(!durSec){
+    const recovered=activeCallElapsedSec();
+    if(recovered>0){
+      durSec=recovered;
+      console.log('[call] duration recovered from stored start time:', durSec, 'sec');
+    }
   }
   // Save phone override if different from CC
   if(phone && phone!==ccPhone){
@@ -7073,6 +7160,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.45", date:"2026-08", title:"Call timer fixed \u2014 survives the window closing, and now matches the RingCentral widget",
+    changes:[
+      "Three separate faults, which together explain why the timer seemed unreliable. First: the start time was only held in memory, so closing the call window, reloading, or a browser crash lost it entirely and the call saved with no duration. It's now stored, so it survives all three.",
+      "Second: the timer counted from the moment the browser noticed the call, not from when it actually connected \u2014 even though RingCentral tells us the real connect time. It now starts from RingCentral's own time, so the two clocks agree.",
+      "Third: the saved duration was read back out of the on-screen field, which is blank if the window was closed mid-call. It now falls back to the stored start time, so the duration is still recorded and still syncs to Maximizer even if the window was shut by accident.",
+      "Reopening the call window during a call now picks the timer up where it was, with a \u201cCall still in progress \u2014 timer resumed\u201d note, instead of showing a blank timer.",
+      "A timer more than four hours old is discarded rather than resumed \u2014 no call runs that long, and it almost certainly means the browser was closed mid-call and reopened much later. Better to record nothing than something wildly wrong.",
+    ]},
   { v:"2.44", date:"2026-08", title:"Workaround for sending email on Render's free plan \u2014 still plain SMTP",
     changes:[
       "Render blocks ports 25, 465 and 587 \u2014 but NOT port 2525, and the major relay providers all offer 2525 precisely because blocks like this are common. So sending still works over ordinary SMTP; only the server and port change.",
@@ -11975,8 +12070,13 @@ function _initRcWidget(clientId, serverUrl){
         // Store the exact connect time from RC (falls back to Date.now if not provided)
         if(!window._callTimerRunning){
           window._rcCallStartMs = call.startTime ? new Date(call.startTime).getTime() : Date.now();
-          startCallTimer();
+          startCallTimer(window._activeCallReg);
           window._callTimerRunning=true;
+        } else if(!_callTimerInterval){
+          // RC still reports the call as connected but nothing is ticking —
+          // the window was reopened after being closed mid-call. Pick it up
+          // again rather than leaving a frozen timer.
+          resumeCallTimerIfActive(window._activeCallReg);
         }
       } else if(status==='NoCall'||status===''){
         if(window._callTimerRunning){
