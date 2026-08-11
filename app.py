@@ -298,6 +298,68 @@ def db_init():
             secret_enc TEXT,
             updated_at TEXT
         )""")
+        # ── CRM ────────────────────────────────────────────────────────────
+        # "owner" separates Vantage Fundraising records from 9 Mountains ones.
+        # Both organisations use the same address book today, and much of the
+        # existing Maximizer data is VF trust-fundraising work — separating it
+        # from the first row is far cheaper than untangling it later.
+        #
+        # reg_number links an organisation to a Charity Commission record where
+        # one exists, so prospecting data and CRM data describe the same body
+        # rather than drifting into two versions of the truth.
+        client.execute("""CREATE TABLE IF NOT EXISTS crm_orgs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            owner TEXT DEFAULT '9M',
+            reg_number TEXT,
+            org_type TEXT,
+            phone TEXT, email TEXT, website TEXT,
+            address TEXT, city TEXT, postcode TEXT,
+            notes TEXT,
+            created_by TEXT, created_at TEXT, updated_at TEXT
+        )""")
+        client.execute("""CREATE TABLE IF NOT EXISTS crm_contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id INTEGER,
+            first_name TEXT, last_name TEXT,
+            job_title TEXT,
+            email TEXT, phone TEXT, mobile TEXT,
+            is_primary INTEGER DEFAULT 0,
+            notes TEXT,
+            created_by TEXT, created_at TEXT, updated_at TEXT
+        )""")
+        client.execute("""CREATE TABLE IF NOT EXISTS crm_opportunities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id INTEGER,
+            contact_id INTEGER,
+            title TEXT,
+            owner TEXT DEFAULT '9M',
+            stage TEXT,
+            value REAL DEFAULT 0,
+            probability INTEGER DEFAULT 0,
+            expected_close TEXT,
+            status TEXT DEFAULT 'open',
+            source TEXT,
+            notes TEXT,
+            created_by TEXT, created_at TEXT, updated_at TEXT
+        )""")
+        # Notes against any record type. One table rather than three keeps the
+        # history view simple and means a new record type doesn't need its own
+        # notes table.
+        client.execute("""CREATE TABLE IF NOT EXISTS crm_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT,      -- org | contact | opportunity
+            entity_id INTEGER,
+            body TEXT,
+            author TEXT,
+            created_at TEXT
+        )""")
+        for _ix in ("CREATE INDEX IF NOT EXISTS ix_crm_contacts_org ON crm_contacts(org_id)",
+                    "CREATE INDEX IF NOT EXISTS ix_crm_opps_org ON crm_opportunities(org_id)",
+                    "CREATE INDEX IF NOT EXISTS ix_crm_notes_entity ON crm_notes(entity_type, entity_id)",
+                    "CREATE INDEX IF NOT EXISTS ix_crm_orgs_reg ON crm_orgs(reg_number)"):
+            try: client.execute(_ix)
+            except Exception: pass
         # Simple key-value store for app-wide settings (e.g. display timezone)
         client.execute("""CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
@@ -548,9 +610,9 @@ CR_MODULES = [
     {"id": "prospects", "label": "Prospect Generator", "icon": "\U0001F50D", "status": "live",
      "description": "Finds leads from live Charity Commission data and feeds the calling pipeline",
      "detail": "Daily Calling \u00b7 Prospect Lists \u00b7 Charity Search \u00b7 Newly Registered \u00b7 Late Accounts"},
-    {"id": "crm", "label": "CRM", "icon": "\U0001F4C7", "status": "planned",
-     "description": "Address book, opportunities and notes \u2014 replacing Maximizer",
-     "detail": "Organisations & contacts \u00b7 Opportunities pipeline \u00b7 Notes & history \u00b7 SharePoint document links"},
+    {"id": "crm", "label": "CRM", "icon": "\U0001F4C7", "status": "live",
+     "description": "Address book, opportunities and notes",
+     "detail": "Organisations & contacts \u00b7 Opportunities pipeline \u00b7 Notes & history"},
     {"id": "admin", "label": "Admin Briefing", "icon": "\U0001F4CB", "status": "live",
      "description": "Team activity, coverage and data health",
      "detail": "Calls per caller \u00b7 Conversion \u00b7 Daily volume \u00b7 Data quality checks"},
@@ -763,6 +825,268 @@ def api_ai_documents_manage():
         db_exec("DELETE FROM ai_documents WHERE id=?", (int(d.get("id") or 0),))
         return jsonify({"ok": True})
     return jsonify({"ok": False, "error": "Unknown action"}), 400
+
+# ══ CRM ════════════════════════════════════════════════════════════════════
+CRM_STAGES = ["Lead", "Qualified", "Proposal", "Negotiation", "Won", "Lost"]
+CRM_OWNERS = ["9M", "VF", "Both"]
+
+def _crm_now():
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+def _crm_note_count(entity_type, entity_id):
+    r = db_query("SELECT COUNT(*) FROM crm_notes WHERE entity_type=? AND entity_id=?",
+                 (entity_type, entity_id))
+    return r[0][0] if r else 0
+
+@app.route("/api/crm/orgs", methods=["GET"])
+def api_crm_orgs():
+    """Address book list. Search matches name, postcode or charity number so a
+    caller can find a record however they happen to remember it."""
+    q = (request.args.get("q") or "").strip().lower()
+    owner = (request.args.get("owner") or "").strip()
+    sql = ("SELECT id, name, owner, reg_number, org_type, phone, email, city, postcode, updated_at "
+           "FROM crm_orgs WHERE 1=1")
+    params = []
+    if owner in CRM_OWNERS:
+        # "Both" records belong to each organisation, so they show under either.
+        sql += " AND (owner=? OR owner='Both')"
+        params.append(owner)
+    if q:
+        sql += " AND (LOWER(name) LIKE ? OR LOWER(postcode) LIKE ? OR reg_number LIKE ?)"
+        params += [f"%{q}%", f"%{q}%", f"%{q}%"]
+    sql += " ORDER BY name LIMIT 300"
+    rows = db_query(sql, tuple(params)) or []
+    out = []
+    for r in rows:
+        c = db_query("SELECT COUNT(*) FROM crm_contacts WHERE org_id=?", (r[0],))
+        o = db_query("SELECT COUNT(*) FROM crm_opportunities WHERE org_id=? AND status='open'", (r[0],))
+        out.append({"id": r[0], "name": r[1], "owner": r[2], "reg_number": r[3] or "",
+                    "org_type": r[4] or "", "phone": r[5] or "", "email": r[6] or "",
+                    "city": r[7] or "", "postcode": r[8] or "", "updated_at": r[9] or "",
+                    "contacts": (c[0][0] if c else 0), "open_opps": (o[0][0] if o else 0)})
+    return jsonify({"ok": True, "orgs": out, "owners": CRM_OWNERS, "stages": CRM_STAGES})
+
+@app.route("/api/crm/org/<int:oid>", methods=["GET"])
+def api_crm_org_detail(oid):
+    r = db_query("SELECT id, name, owner, reg_number, org_type, phone, email, website, address, "
+                 "city, postcode, notes, created_by, created_at, updated_at FROM crm_orgs WHERE id=?", (oid,))
+    if not r:
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    v = r[0]
+    org = {"id": v[0], "name": v[1], "owner": v[2], "reg_number": v[3] or "", "org_type": v[4] or "",
+           "phone": v[5] or "", "email": v[6] or "", "website": v[7] or "", "address": v[8] or "",
+           "city": v[9] or "", "postcode": v[10] or "", "notes": v[11] or "",
+           "created_by": v[12] or "", "created_at": v[13] or "", "updated_at": v[14] or ""}
+    contacts = [{"id": c[0], "first_name": c[1] or "", "last_name": c[2] or "", "job_title": c[3] or "",
+                 "email": c[4] or "", "phone": c[5] or "", "mobile": c[6] or "", "is_primary": bool(c[7])}
+                for c in (db_query("SELECT id, first_name, last_name, job_title, email, phone, mobile, "
+                                   "is_primary FROM crm_contacts WHERE org_id=? ORDER BY is_primary DESC, last_name",
+                                   (oid,)) or [])]
+    opps = [{"id": o[0], "title": o[1] or "", "stage": o[2] or "", "value": o[3] or 0,
+             "probability": o[4] or 0, "expected_close": o[5] or "", "status": o[6] or "open",
+             "owner": o[7] or ""}
+            for o in (db_query("SELECT id, title, stage, value, probability, expected_close, status, owner "
+                               "FROM crm_opportunities WHERE org_id=? ORDER BY id DESC", (oid,)) or [])]
+    notes = [{"id": n[0], "body": n[1] or "", "author": n[2] or "", "created_at": n[3] or ""}
+             for n in (db_query("SELECT id, body, author, created_at FROM crm_notes "
+                                "WHERE entity_type='org' AND entity_id=? ORDER BY id DESC LIMIT 50", (oid,)) or [])]
+    # Any calls already logged against the same charity — the point of keeping
+    # reg_number on both sides is that CRM and prospecting show one history.
+    calls = []
+    if org["reg_number"]:
+        calls = [{"outcome": c[0] or "", "caller": c[1] or "",
+                  "date": utc_to_display_str(c[2], "%Y-%m-%d %H:%M") or "", "duration_sec": c[3] or 0}
+                 for c in (db_query("SELECT outcome, caller, timestamp, duration_sec FROM call_log "
+                                    "WHERE reg_number=? ORDER BY id DESC LIMIT 20",
+                                    (org["reg_number"],)) or [])]
+    return jsonify({"ok": True, "org": org, "contacts": contacts, "opportunities": opps,
+                    "notes": notes, "calls": calls, "stages": CRM_STAGES, "owners": CRM_OWNERS})
+
+@app.route("/api/crm/org", methods=["POST"])
+def api_crm_org_save():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    oid = d.get("id")
+    if str(d.get("action", "")) == "delete":
+        if not oid: return jsonify({"ok": False, "error": "No record"}), 400
+        # Children go too, otherwise contacts and opportunities are orphaned
+        # and would show nowhere while still occupying the database.
+        db_exec("DELETE FROM crm_contacts WHERE org_id=?", (int(oid),))
+        db_exec("DELETE FROM crm_opportunities WHERE org_id=?", (int(oid),))
+        db_exec("DELETE FROM crm_notes WHERE entity_type='org' AND entity_id=?", (int(oid),))
+        db_exec("DELETE FROM crm_orgs WHERE id=?", (int(oid),))
+        return jsonify({"ok": True})
+    name = str(d.get("name", "")).strip()[:160]
+    if not name:
+        return jsonify({"ok": False, "error": "Organisation name is required"}), 400
+    owner = str(d.get("owner", "9M")).strip()
+    if owner not in CRM_OWNERS: owner = "9M"
+    vals = (name, owner, str(d.get("reg_number", "")).strip()[:20], str(d.get("org_type", ""))[:60],
+            str(d.get("phone", ""))[:40], str(d.get("email", ""))[:120], str(d.get("website", ""))[:200],
+            str(d.get("address", ""))[:250], str(d.get("city", ""))[:80], str(d.get("postcode", ""))[:12],
+            str(d.get("notes", ""))[:2000], _crm_now())
+    if oid:
+        db_exec("UPDATE crm_orgs SET name=?, owner=?, reg_number=?, org_type=?, phone=?, email=?, "
+                "website=?, address=?, city=?, postcode=?, notes=?, updated_at=? WHERE id=?",
+                vals + (int(oid),))
+        return jsonify({"ok": True, "id": int(oid)})
+    db_exec("INSERT INTO crm_orgs(name, owner, reg_number, org_type, phone, email, website, address, "
+            "city, postcode, notes, updated_at, created_by, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            vals + (current_user(), _crm_now()))
+    r = db_query("SELECT id FROM crm_orgs WHERE name=? ORDER BY id DESC LIMIT 1", (name,))
+    return jsonify({"ok": True, "id": (r[0][0] if r else None)})
+
+@app.route("/api/crm/contact", methods=["POST"])
+def api_crm_contact_save():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    cid = d.get("id")
+    if str(d.get("action", "")) == "delete":
+        db_exec("DELETE FROM crm_notes WHERE entity_type='contact' AND entity_id=?", (int(cid or 0),))
+        db_exec("DELETE FROM crm_contacts WHERE id=?", (int(cid or 0),))
+        return jsonify({"ok": True})
+    org_id = int(d.get("org_id") or 0)
+    if not org_id:
+        return jsonify({"ok": False, "error": "A contact must belong to an organisation"}), 400
+    last = str(d.get("last_name", "")).strip()[:80]
+    first = str(d.get("first_name", "")).strip()[:80]
+    if not (first or last):
+        return jsonify({"ok": False, "error": "Enter at least a first or last name"}), 400
+    is_primary = 1 if d.get("is_primary") else 0
+    if is_primary:
+        # Only one primary contact per organisation, or "who do we call" has no
+        # single answer.
+        db_exec("UPDATE crm_contacts SET is_primary=0 WHERE org_id=?", (org_id,))
+    vals = (org_id, first, last, str(d.get("job_title", ""))[:100], str(d.get("email", ""))[:120],
+            str(d.get("phone", ""))[:40], str(d.get("mobile", ""))[:40], is_primary,
+            str(d.get("notes", ""))[:1000], _crm_now())
+    if cid:
+        db_exec("UPDATE crm_contacts SET org_id=?, first_name=?, last_name=?, job_title=?, email=?, "
+                "phone=?, mobile=?, is_primary=?, notes=?, updated_at=? WHERE id=?", vals + (int(cid),))
+    else:
+        db_exec("INSERT INTO crm_contacts(org_id, first_name, last_name, job_title, email, phone, "
+                "mobile, is_primary, notes, updated_at, created_by, created_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", vals + (current_user(), _crm_now()))
+    return jsonify({"ok": True})
+
+@app.route("/api/crm/opportunities", methods=["GET"])
+def api_crm_opportunities():
+    """Pipeline view, grouped by stage — the shape a sales conversation
+    actually takes."""
+    owner = (request.args.get("owner") or "").strip()
+    sql = ("SELECT o.id, o.title, o.stage, o.value, o.probability, o.expected_close, o.status, "
+           "o.owner, o.org_id, g.name FROM crm_opportunities o "
+           "LEFT JOIN crm_orgs g ON g.id = o.org_id WHERE o.status='open'")
+    params = []
+    if owner in CRM_OWNERS:
+        sql += " AND (o.owner=? OR o.owner='Both')"
+        params.append(owner)
+    sql += " ORDER BY o.expected_close"
+    rows = db_query(sql, tuple(params)) or []
+    opps = [{"id": r[0], "title": r[1] or "", "stage": r[2] or "Lead", "value": r[3] or 0,
+             "probability": r[4] or 0, "expected_close": r[5] or "", "status": r[6] or "open",
+             "owner": r[7] or "", "org_id": r[8], "org_name": r[9] or ""} for r in rows]
+    by_stage = {st: [o for o in opps if o["stage"] == st] for st in CRM_STAGES}
+    total = sum(o["value"] for o in opps)
+    # Weighted value is the honest number for a forecast: a £10k deal at 20%
+    # is not £10k of expected income.
+    weighted = sum(o["value"] * (o["probability"] / 100.0) for o in opps)
+    return jsonify({"ok": True, "opportunities": opps, "stages": CRM_STAGES,
+                    "by_stage": {k: len(v) for k, v in by_stage.items()},
+                    "stage_value": {k: round(sum(o["value"] for o in v), 2) for k, v in by_stage.items()},
+                    "total_value": round(total, 2), "weighted_value": round(weighted, 2),
+                    "owners": CRM_OWNERS})
+
+@app.route("/api/crm/opportunity", methods=["POST"])
+def api_crm_opportunity_save():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    pid = d.get("id")
+    act = str(d.get("action", ""))
+    if act == "delete":
+        db_exec("DELETE FROM crm_notes WHERE entity_type='opportunity' AND entity_id=?", (int(pid or 0),))
+        db_exec("DELETE FROM crm_opportunities WHERE id=?", (int(pid or 0),))
+        return jsonify({"ok": True})
+    if act in ("won", "lost"):
+        db_exec("UPDATE crm_opportunities SET status=?, stage=?, probability=?, updated_at=? WHERE id=?",
+                (act, "Won" if act == "won" else "Lost", 100 if act == "won" else 0, _crm_now(), int(pid or 0)))
+        return jsonify({"ok": True})
+    if act == "stage":
+        st = str(d.get("stage", "")).strip()
+        if st not in CRM_STAGES:
+            return jsonify({"ok": False, "error": "Unknown stage"}), 400
+        db_exec("UPDATE crm_opportunities SET stage=?, updated_at=? WHERE id=?", (st, _crm_now(), int(pid or 0)))
+        return jsonify({"ok": True})
+    title = str(d.get("title", "")).strip()[:160]
+    org_id = int(d.get("org_id") or 0)
+    if not title or not org_id:
+        return jsonify({"ok": False, "error": "An opportunity needs a title and an organisation"}), 400
+    stage = str(d.get("stage", "Lead")).strip()
+    if stage not in CRM_STAGES: stage = "Lead"
+    owner = str(d.get("owner", "9M")).strip()
+    if owner not in CRM_OWNERS: owner = "9M"
+    try: value = float(d.get("value") or 0)
+    except Exception: value = 0.0
+    try: prob = max(0, min(100, int(d.get("probability") or 0)))
+    except Exception: prob = 0
+    vals = (org_id, (int(d.get("contact_id")) if d.get("contact_id") else None), title, owner, stage,
+            value, prob, str(d.get("expected_close", ""))[:10], str(d.get("source", ""))[:60],
+            str(d.get("notes", ""))[:2000], _crm_now())
+    if pid:
+        db_exec("UPDATE crm_opportunities SET org_id=?, contact_id=?, title=?, owner=?, stage=?, value=?, "
+                "probability=?, expected_close=?, source=?, notes=?, updated_at=? WHERE id=?", vals + (int(pid),))
+    else:
+        db_exec("INSERT INTO crm_opportunities(org_id, contact_id, title, owner, stage, value, probability, "
+                "expected_close, source, notes, updated_at, created_by, created_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", vals + (current_user(), _crm_now()))
+    return jsonify({"ok": True})
+
+@app.route("/api/crm/note", methods=["POST"])
+def api_crm_note_add():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    if str(d.get("action", "")) == "delete":
+        db_exec("DELETE FROM crm_notes WHERE id=?", (int(d.get("id") or 0),))
+        return jsonify({"ok": True})
+    et = str(d.get("entity_type", "")).strip()
+    if et not in ("org", "contact", "opportunity"):
+        return jsonify({"ok": False, "error": "Unknown record type"}), 400
+    body = str(d.get("body", "")).strip()[:4000]
+    if not body:
+        return jsonify({"ok": False, "error": "The note is empty"}), 400
+    u = _auth_get_user(current_user())
+    db_exec("INSERT INTO crm_notes(entity_type, entity_id, body, author, created_at) VALUES(?,?,?,?,?)",
+            (et, int(d.get("entity_id") or 0), body, _auth_caller_name(u) or current_user(), _crm_now()))
+    return jsonify({"ok": True})
+
+@app.route("/api/crm/import_charity", methods=["POST"])
+def api_crm_import_charity():
+    """Creates an address-book record from a charity already in the
+    prospecting data, so a promising call becomes a CRM record without
+    retyping anything."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    reg = str((request.json or {}).get("reg_number", "")).strip()
+    if not reg:
+        return jsonify({"ok": False, "error": "No charity number given"}), 400
+    existing = db_query("SELECT id FROM crm_orgs WHERE reg_number=?", (reg,))
+    if existing:
+        return jsonify({"ok": True, "id": existing[0][0], "existing": True})
+    ov = _contact_overrides.get(reg) or {}
+    nm = ""
+    for v in _called_log.values():
+        if str(v.get("reg_number")) == reg and v.get("name"):
+            nm = v["name"]; break
+    db_exec("INSERT INTO crm_orgs(name, owner, reg_number, phone, email, website, created_by, "
+            "created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            (nm or f"Charity {reg}", "9M", reg, ov.get("phone", ""), ov.get("email", ""),
+             ov.get("website", ""), current_user(), _crm_now(), _crm_now()))
+    r = db_query("SELECT id FROM crm_orgs WHERE reg_number=?", (reg,))
+    return jsonify({"ok": True, "id": (r[0][0] if r else None), "existing": False})
 
 @app.route("/api/modules", methods=["GET"])
 def api_modules():

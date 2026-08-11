@@ -46,6 +46,9 @@
      from their own x/y/w/h, not from the container's height. --cr-page-h is
      set by crSetPageSize(). */
   #cr-gridstack { height: var(--cr-page-h, 720px) !important; }
+  /* Small label used in the CRM for owner (9M / VF / Both) and primary contact. */
+  .tagpill{display:inline-block;font-size:10.5px;font-weight:700;color:var(--navy);
+    background:var(--navy-pale);border-radius:10px;padding:1px 8px;vertical-align:middle}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/gridstack@13/dist/gridstack-all.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1019,6 +1022,31 @@ select:focus{outline:none;border-color:var(--green)}
       All applications share the same data &mdash; a call logged in one appears everywhere.
     </p>
   </div>
+</section>
+
+<!-- CRM: address book and opportunities. Deliberately light to begin with —
+     organisations, contacts, a pipeline and notes. -->
+<section id="tab-crm" class="section">
+  <div class="card" style="padding:14px 16px;margin-bottom:12px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <h2 style="margin:0;font-size:17px">&#128455; CRM</h2>
+      <span id="crm-view-tabs" style="display:flex;gap:4px;margin-left:8px">
+        <button class="btn btn-sm" id="crm-tab-book" onclick="crmSetView('book')">Address Book</button>
+        <button class="btn btn-outline btn-sm" id="crm-tab-pipe" onclick="crmSetView('pipe')">Opportunities</button>
+      </span>
+      <span style="flex:1"></span>
+      <label style="font-size:12px;color:var(--t3)">Show
+        <select id="crm-owner" onchange="crmReload()" style="margin-left:5px">
+          <option value="">Everything</option>
+          <option value="9M">9 Mountains</option>
+          <option value="VF">Vantage Fundraising</option>
+        </select>
+      </label>
+      <input id="crm-search" placeholder="Search name, postcode or charity no." oninput="crmSearchDebounced()" style="width:230px">
+      <button class="btn btn-green btn-sm" onclick="crmNewOrg()">+ Organisation</button>
+    </div>
+  </div>
+  <div id="crm-body"><div class="loading-txt" style="padding:20px">Loading&hellip;</div></div>
 </section>
 
 <section id="tab-adminbrief" class="section">
@@ -7179,6 +7207,16 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.47", date:"2026-08", title:"CRM \u2014 address book and opportunities (first cut)",
+    changes:[
+      "The CRM is live in the launcher. Address Book holds organisations with their contacts; Opportunities shows the pipeline by stage with total and weighted values. Notes can be added against any record.",
+      "Every organisation, contact and opportunity carries an owner \u2014 9 Mountains, Vantage Fundraising, or Both \u2014 with a filter at the top. This was built in from the first record deliberately: both organisations share Maximizer today and much of that data is VF trust-fundraising work, and separating it later would mean touching every row.",
+      "An organisation can hold a charity number, which links it to the prospecting side. Where one is set, the organisation page shows the calls already logged against that charity \u2014 so CRM and calling describe one history rather than drifting into two versions of the same organisation.",
+      "The pipeline shows a weighted forecast (value \u00d7 probability) alongside the raw total, because a \u00a310k deal at 20% isn't \u00a310k of expected income and a forecast that pretends otherwise isn't useful.",
+      "Deleting an organisation removes its contacts, opportunities and notes too, rather than leaving them orphaned and invisible.",
+      "Honest scope note: editing uses simple prompts for now rather than designed forms. That's deliberate for a first cut \u2014 it keeps the whole thing to one release and proves the data model before investing in richer screens. Documents aren't included either, since those stay linked from SharePoint as you're already doing.",
+      "Still to come before this could replace Maximizer: proper edit forms, CSV import of the existing data, calculated fields, and the reliability work (paid Turso plan, backups) discussed separately.",
+    ]},
   { v:"2.46", date:"2026-08", title:"App launcher \u2014 a front door for the whole platform",
     changes:[
       "New launcher page listing every application as a card. Pick \u201cAll applications\u201d at sign-in to land there, or reach it any time from the switcher in the top bar.",
@@ -8904,6 +8942,7 @@ function clearRemembered(){
 // views rather than separate applications.
 const CR_MODULE_TABS = {
   launcher:  ['launcher'],
+  crm:       ['crm'],
   prospects: ['home','calling','prospects','search','new','late','old','milestones'],
   admin:     ['adminbrief'],
   finance:   ['financebrief'],
@@ -8979,6 +9018,7 @@ function crSwitchModule(mod, initial){
   const firstBtn=Array.from(document.querySelectorAll('nav.nav .nav-btn'))
     .find(b=>(b.getAttribute('onclick')||'').includes(`switchTab('${first}'`));
   switchTab(first, firstBtn||null);
+  if(mod==='crm') crmReload();
   if(mod==='admin') loadAdminBrief();
   if(mod==='finance') loadFinanceBrief();
   if(!initial){
@@ -8986,6 +9026,261 @@ function crSwitchModule(mod, initial){
     fetch('/api/modules/landing',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({module:mod})}).catch(()=>{});
   }
+}
+// CRM record detail. Rendered into the same panel rather than a modal, so the
+// contact list, pipeline and notes for one organisation are all visible at
+// once — which is how someone actually uses an address book entry.
+function crmOpenOrg(id){
+  const body=document.getElementById('crm-body');
+  body.innerHTML='<div class="loading-txt" style="padding:20px">Loading…</div>';
+  fetch('/api/crm/org/'+id).then(r=>r.json()).then(d=>{
+    if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Not found')+'</div>'; return; }
+    const o=d.org; _crmStages=d.stages||[]; _crmOwners=d.owners||[];
+    const field=(l,v)=>v?`<div style="margin-bottom:5px"><span style="color:var(--t3);font-size:11px">${l}</span><br>${esc(v)}</div>`:'';
+    body.innerHTML=`
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <button class="btn btn-outline btn-sm" onclick="crmReload()">\u2190 Back</button>
+        <h2 style="margin:0;font-size:19px">${esc(o.name)}</h2>
+        <span class="tagpill">${esc(o.owner)}</span>
+        <span style="flex:1"></span>
+        <button class="btn btn-outline btn-sm" onclick="crmEditOrg(${o.id})">Edit</button>
+        <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="crmDeleteOrg(${o.id})">Delete</button>
+      </div>
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:14px;align-items:start">
+        <div>
+          <div class="card" style="padding:14px 16px;margin-bottom:12px;font-size:12.5px">
+            <h3 style="margin:0 0 9px;font-size:13px">Details</h3>
+            ${field('Charity number',o.reg_number)}${field('Type',o.org_type)}
+            ${field('Phone',o.phone)}${field('Email',o.email)}${field('Website',o.website)}
+            ${field('Address',[o.address,o.city,o.postcode].filter(Boolean).join(', '))}
+            ${o.notes?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--s2);white-space:pre-wrap">${esc(o.notes)}</div>`:''}
+          </div>
+          <div class="card" style="padding:14px 16px">
+            <div style="display:flex;align-items:center;margin-bottom:9px">
+              <h3 style="margin:0;font-size:13px">Contacts</h3><span style="flex:1"></span>
+              <button class="btn btn-outline btn-sm" onclick="crmNewContact(${o.id})">+ Add</button>
+            </div>
+            ${(d.contacts||[]).map(c=>`<div style="padding:7px 0;border-bottom:1px solid var(--s2);font-size:12.5px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <strong>${esc((c.first_name+' '+c.last_name).trim())}</strong>
+                ${c.is_primary?'<span class="tagpill">primary</span>':''}
+                <span style="flex:1"></span>
+                <span onclick="crmEditContact(${c.id},${o.id})" style="cursor:pointer;color:var(--t3);font-size:11px">edit</span>
+              </div>
+              ${c.job_title?`<div style="color:var(--t3);font-size:11.5px">${esc(c.job_title)}</div>`:''}
+              <div style="color:var(--t2);font-size:11.5px">${[c.email,c.phone,c.mobile].filter(Boolean).map(esc).join(' \u00b7 ')||''}</div>
+            </div>`).join('') || '<div style="font-size:12px;color:var(--t3)">No contacts yet.</div>'}
+          </div>
+        </div>
+        <div>
+          <div class="card" style="padding:14px 16px;margin-bottom:12px">
+            <div style="display:flex;align-items:center;margin-bottom:9px">
+              <h3 style="margin:0;font-size:13px">Opportunities</h3><span style="flex:1"></span>
+              <button class="btn btn-outline btn-sm" onclick="crmNewOpp(${o.id})">+ Add</button>
+            </div>
+            ${(d.opportunities||[]).map(p=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--s2);font-size:12.5px">
+              <span style="flex:1"><strong>${esc(p.title)}</strong>
+                <span style="color:var(--t3);font-size:11px"> \u00b7 ${esc(p.stage)}${p.status!=='open'?' ('+esc(p.status)+')':''}</span></span>
+              <span>${crmMoney(p.value)}</span>
+              <span style="color:var(--t3);font-size:11px">${p.probability}%</span>
+              <span onclick="crmEditOpp(${p.id})" style="cursor:pointer;color:var(--t3);font-size:11px">edit</span>
+            </div>`).join('') || '<div style="font-size:12px;color:var(--t3)">No opportunities yet.</div>'}
+          </div>
+          <div class="card" style="padding:14px 16px;margin-bottom:12px">
+            <h3 style="margin:0 0 9px;font-size:13px">Notes</h3>
+            <div style="display:flex;gap:6px;margin-bottom:9px">
+              <textarea id="crm-note-body" rows="2" placeholder="Add a note…" style="flex:1;font-size:12.5px"></textarea>
+              <button class="btn btn-outline btn-sm" onclick="crmAddNote('org',${o.id})">Add</button>
+            </div>
+            ${(d.notes||[]).map(n=>`<div style="padding:7px 0;border-bottom:1px solid var(--s2);font-size:12.5px">
+              <div style="white-space:pre-wrap">${esc(n.body)}</div>
+              <div style="color:var(--t3);font-size:11px;margin-top:2px">${esc(n.author)} \u00b7 ${esc(n.created_at)}</div>
+            </div>`).join('') || '<div style="font-size:12px;color:var(--t3)">No notes yet.</div>'}
+          </div>
+          ${(d.calls||[]).length?`<div class="card" style="padding:14px 16px">
+            <h3 style="margin:0 0 9px;font-size:13px">Recent calls</h3>
+            <p style="font-size:11px;color:var(--t3);margin:0 0 8px">From the prospecting side \u2014 same charity number, one history.</p>
+            ${d.calls.map(c=>`<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--s2);font-size:12px">
+              <span style="flex:1">${esc(c.outcome||'\u2014')}</span>
+              <span style="color:var(--t3)">${esc(c.caller)}</span>
+              <span style="color:var(--t3)">${esc(c.date)}</span></div>`).join('')}
+          </div>`:''}
+        </div>
+      </div>`;
+  }).catch(e=>{ body.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
+}
+function crmAddNote(type,id){
+  const el=document.getElementById('crm-note-body');
+  const body=(el&&el.value||'').trim();
+  if(!body) return;
+  fetch('/api/crm/note',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({entity_type:type, entity_id:id, body})})
+    .then(r=>r.json()).then(d=>{ if(!d.ok){alert(d.error||'Failed');return;} crmOpenOrg(id); })
+    .catch(e=>alert(e.message));
+}
+// Simple prompt-driven forms. Deliberate for a first cut: it keeps the whole
+// CRM to one release and proves the data model before investing in richer
+// editing screens.
+function crmNewOrg(){ crmOrgForm({}); }
+function crmEditOrg(id){
+  fetch('/api/crm/org/'+id).then(r=>r.json()).then(d=>{ if(d.ok) crmOrgForm(d.org); });
+}
+function crmOrgForm(o){
+  const name=prompt('Organisation name:', o.name||''); if(name===null||!name.trim()) return;
+  const owner=prompt('Owner \u2014 9M, VF or Both:', o.owner||'9M'); if(owner===null) return;
+  const reg=prompt('Charity number (optional \u2014 links to prospecting data):', o.reg_number||'');
+  const phone=prompt('Phone:', o.phone||'');
+  const email=prompt('Email:', o.email||'');
+  const city=prompt('Town/city:', o.city||'');
+  const postcode=prompt('Postcode:', o.postcode||'');
+  fetch('/api/crm/org',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:o.id, name, owner, reg_number:reg, phone, email, city, postcode,
+                         website:o.website||'', address:o.address||'', org_type:o.org_type||'', notes:o.notes||''})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ alert(d.error||'Failed'); return; }
+      o.id ? crmOpenOrg(o.id) : crmReload();
+    }).catch(e=>alert(e.message));
+}
+function crmDeleteOrg(id){
+  if(!confirm('Delete this organisation, along with its contacts, opportunities and notes?')) return;
+  fetch('/api/crm/org',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id, action:'delete'})}).then(()=>crmReload()).catch(()=>{});
+}
+function crmNewContact(orgId){ crmContactForm({org_id:orgId}); }
+function crmEditContact(id, orgId){
+  fetch('/api/crm/org/'+orgId).then(r=>r.json()).then(d=>{
+    const c=(d.contacts||[]).find(x=>x.id===id); if(c){ c.org_id=orgId; crmContactForm(c); }
+  });
+}
+function crmContactForm(c){
+  const first=prompt('First name:', c.first_name||''); if(first===null) return;
+  const last=prompt('Last name:', c.last_name||''); if(last===null) return;
+  const title=prompt('Job title:', c.job_title||'');
+  const email=prompt('Email:', c.email||'');
+  const phone=prompt('Phone:', c.phone||'');
+  const primary=confirm('Make this the primary contact for the organisation?');
+  fetch('/api/crm/contact',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:c.id, org_id:c.org_id, first_name:first, last_name:last,
+                         job_title:title, email, phone, mobile:c.mobile||'', is_primary:primary})})
+    .then(r=>r.json()).then(d=>{ if(!d.ok){alert(d.error||'Failed');return;} crmOpenOrg(c.org_id); })
+    .catch(e=>alert(e.message));
+}
+function crmNewOpp(orgId){ crmOppForm({org_id:orgId}); }
+function crmEditOpp(id){
+  fetch('/api/crm/opportunities').then(r=>r.json()).then(d=>{
+    const o=(d.opportunities||[]).find(x=>x.id===id);
+    if(o) crmOppForm(o); else alert('That opportunity is closed \u2014 open it from its organisation.');
+  });
+}
+function crmOppForm(o){
+  const title=prompt('Opportunity title:', o.title||''); if(title===null||!title.trim()) return;
+  const stage=prompt('Stage \u2014 '+(_crmStages.join(', ')||'Lead'), o.stage||'Lead'); if(stage===null) return;
+  const value=prompt('Value (\u00a3):', o.value||0);
+  const prob=prompt('Probability (0-100):', o.probability||0);
+  const close=prompt('Expected close (YYYY-MM-DD):', o.expected_close||'');
+  const owner=prompt('Owner \u2014 9M, VF or Both:', o.owner||'9M');
+  fetch('/api/crm/opportunity',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:o.id, org_id:o.org_id, title, stage, value, probability:prob,
+                         expected_close:close, owner, notes:o.notes||''})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ alert(d.error||'Failed'); return; }
+      o.org_id && _crmView!=='pipe' ? crmOpenOrg(o.org_id) : crmReload();
+    }).catch(e=>alert(e.message));
+}
+// ══ CRM ════════════════════════════════════════════════════════════════════
+let _crmView='book', _crmSearchTimer=null, _crmStages=[], _crmOwners=[];
+const crmMoney=v=>'\u00a3'+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:0});
+function crmSetView(v){
+  _crmView=v;
+  const b=document.getElementById('crm-tab-book'), p=document.getElementById('crm-tab-pipe');
+  if(b) b.className='btn btn-sm'+(v==='book'?'':' btn-outline');
+  if(p) p.className='btn btn-sm'+(v==='pipe'?'':' btn-outline');
+  const srch=document.getElementById('crm-search');
+  if(srch) srch.style.display = v==='book' ? '' : 'none';   // search is for the address book
+  crmReload();
+}
+function crmSearchDebounced(){
+  clearTimeout(_crmSearchTimer);
+  _crmSearchTimer=setTimeout(crmReload, 250);   // wait for typing to settle
+}
+function crmReload(){ _crmView==='pipe' ? crmLoadPipeline() : crmLoadBook(); }
+
+function crmLoadBook(){
+  const body=document.getElementById('crm-body');
+  const q=(document.getElementById('crm-search')||{}).value||'';
+  const owner=(document.getElementById('crm-owner')||{}).value||'';
+  body.innerHTML='<div class="loading-txt" style="padding:20px">Loading…</div>';
+  fetch(`/api/crm/orgs?q=${encodeURIComponent(q)}&owner=${encodeURIComponent(owner)}`)
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Could not load')+'</div>'; return; }
+      _crmStages=d.stages||[]; _crmOwners=d.owners||[];
+      if(!(d.orgs||[]).length){
+        body.innerHTML='<div class="card" style="padding:26px;text-align:center;color:var(--t3)">'+
+          (q?'No organisations match that search.':'No organisations yet. Use <strong>+ Organisation</strong> to add the first one.')+'</div>';
+        return;
+      }
+      body.innerHTML='<div class="card" style="padding:0;overflow:auto">'+
+        '<table style="width:100%;border-collapse:collapse;font-size:12.5px">'+
+        '<thead><tr>'+['Organisation','Owner','Charity no.','Contacts','Open opps','Phone','Location',''].map(h=>
+          `<th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);color:var(--t3);font-size:11px;text-transform:uppercase;position:sticky;top:0;background:var(--surface)">${h}</th>`).join('')+
+        '</tr></thead><tbody>'+
+        d.orgs.map(o=>`<tr style="cursor:pointer" onclick="crmOpenOrg(${o.id})"
+            onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='transparent'">
+          <td style="padding:8px 10px;border-bottom:1px solid var(--s2)"><strong>${esc(o.name)}</strong></td>
+          <td style="padding:8px 10px;border-bottom:1px solid var(--s2)"><span class="tagpill">${esc(o.owner)}</span></td>
+          <td style="padding:8px 10px;border-bottom:1px solid var(--s2);color:var(--t3)">${esc(o.reg_number||'—')}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid var(--s2)">${o.contacts}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid var(--s2)">${o.open_opps||'—'}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid var(--s2)">${esc(o.phone||'—')}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid var(--s2);color:var(--t3)">${esc([o.city,o.postcode].filter(Boolean).join(', ')||'—')}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid var(--s2);text-align:right;color:var(--t3)">›</td>
+        </tr>`).join('')+'</tbody></table></div>';
+    }).catch(e=>{ body.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
+}
+
+function crmLoadPipeline(){
+  const body=document.getElementById('crm-body');
+  const owner=(document.getElementById('crm-owner')||{}).value||'';
+  body.innerHTML='<div class="loading-txt" style="padding:20px">Loading…</div>';
+  fetch('/api/crm/opportunities?owner='+encodeURIComponent(owner)).then(r=>r.json()).then(d=>{
+    if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Could not load')+'</div>'; return; }
+    _crmStages=d.stages||[];
+    const open=d.stages.filter(s=>s!=='Won'&&s!=='Lost');
+    body.innerHTML=`
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+        <div class="card" style="padding:14px 16px;flex:1;min-width:170px">
+          <div style="font-size:22px;font-weight:800;color:var(--navy)">${crmMoney(d.total_value)}</div>
+          <div style="font-size:12px;color:var(--t2);font-weight:600">Total pipeline</div></div>
+        <div class="card" style="padding:14px 16px;flex:1;min-width:170px">
+          <div style="font-size:22px;font-weight:800;color:var(--green)">${crmMoney(d.weighted_value)}</div>
+          <div style="font-size:12px;color:var(--t2);font-weight:600">Weighted forecast</div>
+          <div style="font-size:11px;color:var(--t3);margin-top:2px">Value \u00d7 probability</div></div>
+        <div class="card" style="padding:14px 16px;flex:1;min-width:170px">
+          <div style="font-size:22px;font-weight:800;color:var(--navy)">${d.opportunities.length}</div>
+          <div style="font-size:12px;color:var(--t2);font-weight:600">Open opportunities</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px">
+        ${open.map(st=>`<div class="card" style="padding:12px 13px">
+          <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:9px">
+            <strong style="font-size:13px">${esc(st)}</strong>
+            <span style="font-size:11px;color:var(--t3)">${d.by_stage[st]||0}</span>
+            <span style="flex:1"></span>
+            <span style="font-size:11.5px;color:var(--t2)">${crmMoney(d.stage_value[st]||0)}</span>
+          </div>
+          ${d.opportunities.filter(o=>o.stage===st).map(o=>`
+            <div onclick="crmEditOpp(${o.id})" style="border:1px solid var(--border);border-radius:6px;padding:8px 9px;margin-bottom:7px;cursor:pointer;background:var(--surface)">
+              <div style="font-size:12.5px;font-weight:600;margin-bottom:2px">${esc(o.title)}</div>
+              <div style="font-size:11px;color:var(--t3);margin-bottom:4px">${esc(o.org_name||'')}</div>
+              <div style="display:flex;align-items:center;gap:6px;font-size:11.5px">
+                <span style="font-weight:700">${crmMoney(o.value)}</span>
+                <span style="color:var(--t3)">${o.probability}%</span>
+                <span style="flex:1"></span>
+                <span style="color:var(--t3)">${esc(o.expected_close||'')}</span>
+              </div>
+            </div>`).join('') || '<div style="font-size:11.5px;color:var(--t3);padding:4px 0">—</div>'}
+        </div>`).join('')}
+      </div>`;
+  }).catch(e=>{ body.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
 }
 // ── Admin briefing ─────────────────────────────────────────────────────────
 function loadAdminBrief(){
