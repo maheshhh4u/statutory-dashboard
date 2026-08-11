@@ -1002,6 +1002,25 @@ select:focus{outline:none;border-color:var(--green)}
 </section>
 <!-- MILESTONES TAB -->
 <!-- Admin Briefing: 9M's own operational picture, from data already held. -->
+<!-- App launcher: the front door to the whole suite. Shown before any single
+     application, so the platform reads as a set of tools rather than one
+     dashboard with extras bolted on. -->
+<section id="tab-launcher" class="section">
+  <div style="max-width:1080px;margin:0 auto;padding:8px 0 30px">
+    <div style="text-align:center;margin-bottom:26px">
+      <img src="/static/9m-mark.png" alt="9 Mountains" style="height:56px;margin-bottom:12px">
+      <h1 style="margin:0 0 6px;font-size:26px;color:var(--navy)">9 Mountains Platform</h1>
+      <p id="launcher-greeting" style="margin:0;font-size:13.5px;color:var(--t2)">Choose an application to get started</p>
+    </div>
+    <div id="launcher-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px">
+      <div class="loading-txt" style="padding:20px">Loading&hellip;</div>
+    </div>
+    <p style="text-align:center;font-size:11.5px;color:var(--t3);margin:26px 0 0">
+      All applications share the same data &mdash; a call logged in one appears everywhere.
+    </p>
+  </div>
+</section>
+
 <section id="tab-adminbrief" class="section">
   <div class="card" style="padding:16px 18px;margin-bottom:14px">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -7160,6 +7179,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.46", date:"2026-08", title:"App launcher \u2014 a front door for the whole platform",
+    changes:[
+      "New launcher page listing every application as a card. Pick \u201cAll applications\u201d at sign-in to land there, or reach it any time from the switcher in the top bar.",
+      "Live now: Prospect Generator, Admin Briefing, Finance Briefing. Listed as planned: CRM (address book, opportunities, notes \u2014 replacing Maximizer), Sales Generator, Marketing Generator and Charity Health Check.",
+      "Planned applications are shown greyed out with a \u201cPlanned\u201d label and a summary of what they'll cover. They can't be opened \u2014 there's nothing behind them yet \u2014 but showing them makes the shape of the platform visible to the team and in a client conversation, without pretending anything is finished.",
+      "Adding an application later is a few lines in one list: it appears in the launcher, the switcher and the sign-in page automatically.",
+      "The nav bar hides on the launcher, so it reads as a front door rather than another tab.",
+    ]},
   { v:"2.45", date:"2026-08", title:"Call timer fixed \u2014 survives the window closing, and now matches the RingCentral widget",
     changes:[
       "Three separate faults, which together explain why the timer seemed unreliable. First: the start time was only held in memory, so closing the call window, reloading, or a browser crash lost it entirely and the call saved with no duration. It's now stored, so it survives all three.",
@@ -8876,22 +8903,54 @@ function clearRemembered(){
 // shows another — no reload, no re-authentication, because the modules are
 // views rather than separate applications.
 const CR_MODULE_TABS = {
+  launcher:  ['launcher'],
   prospects: ['home','calling','prospects','search','new','late','old','milestones'],
   admin:     ['adminbrief'],
   finance:   ['financebrief'],
 };
+let _crAllModules=[];
 let _crModule = 'prospects';
 function crLoadModules(){
   fetch('/api/modules').then(r=>r.json()).then(d=>{
     if(!d.ok) return;
+    _crAllModules=d.all_modules||[];
     const sel=document.getElementById('module-switcher');
     if(sel){
-      sel.innerHTML=(d.modules||[]).map(m=>`<option value="${m.id}">${m.icon} ${esc(m.label)}</option>`).join('');
+      // The launcher is always reachable from the switcher, so there's a way
+      // back to the front door from inside any application.
+      sel.innerHTML='<option value="launcher">\u2630 All applications</option>'+
+        (d.modules||[]).map(m=>`<option value="${m.id}">${m.icon} ${esc(m.label)}</option>`).join('');
     }
+    const g=document.getElementById('launcher-greeting');
+    if(g && d.display_name) g.textContent='Welcome back, '+d.display_name.split(' ')[0]+' \u2014 choose an application to get started';
+    renderLauncher();
     // ?module= from the login page wins; otherwise the remembered landing.
     const q=new URLSearchParams(location.search).get('module');
     crSwitchModule((q && CR_MODULE_TABS[q]) ? q : (d.landing||'prospects'), true);
   }).catch(()=>{});
+}
+function renderLauncher(){
+  const grid=document.getElementById('launcher-grid');
+  if(!grid) return;
+  grid.innerHTML=(_crAllModules||[]).map(m=>{
+    const live=m.status==='live';
+    // Planned apps are shown but not clickable — visible roadmap without
+    // implying they work.
+    return `<div ${live?`onclick="crSwitchModule('${m.id}')"`:''}
+      style="border:1px solid var(--border);border-radius:10px;padding:18px 18px 16px;background:var(--surface);
+             ${live?'cursor:pointer':'opacity:.62'};transition:box-shadow .15s,transform .15s"
+      ${live?`onmouseover="this.style.boxShadow='0 6px 20px rgba(30,58,95,.13)';this.style.transform='translateY(-2px)'"
+              onmouseout="this.style.boxShadow='none';this.style.transform='none'"`:''}>
+      <div style="display:flex;align-items:center;gap:9px;margin-bottom:7px">
+        <span style="font-size:21px">${m.icon}</span>
+        <span style="font-size:15.5px;font-weight:700;color:var(--navy)">${esc(m.label)}</span>
+        ${live?'':'<span style="margin-left:auto;font-size:10px;font-weight:700;color:var(--t3);background:var(--s2);border-radius:10px;padding:2px 8px;text-transform:uppercase">Planned</span>'}
+      </div>
+      <div style="font-size:12.5px;color:var(--t2);line-height:1.45;margin-bottom:8px">${esc(m.description||'')}</div>
+      <div style="font-size:11px;color:var(--t3);line-height:1.45">${esc(m.detail||'')}</div>
+      ${live?'<div style="margin-top:11px;font-size:12px;font-weight:700;color:var(--navy)">Open \u2192</div>':''}
+    </div>`;
+  }).join('');
 }
 function crSwitchModule(mod, initial){
   if(!CR_MODULE_TABS[mod]) mod='prospects';
@@ -8905,6 +8964,17 @@ function crSwitchModule(mod, initial){
     const m=/switchTab\('([a-z]+)'/.exec(oc);
     if(m) btn.style.display = allowed.includes(m[1]) ? '' : 'none';
   });
+  // The launcher has no nav tabs of its own — it IS the page — so the whole
+  // nav bar is hidden while it's showing.
+  const nav=document.querySelector('nav.nav');
+  if(nav) nav.style.display = (mod==='launcher') ? 'none' : '';
+  if(mod==='launcher'){
+    document.querySelectorAll('section.section').forEach(el=>el.classList.remove('active'));
+    const sec=document.getElementById('tab-launcher');
+    if(sec) sec.classList.add('active');
+    renderLauncher();
+    return;   // nothing else to set up, and the launcher isn't a landing choice
+  }
   const first=allowed[0];
   const firstBtn=Array.from(document.querySelectorAll('nav.nav .nav-btn'))
     .find(b=>(b.getAttribute('onclick')||'').includes(`switchTab('${first}'`));

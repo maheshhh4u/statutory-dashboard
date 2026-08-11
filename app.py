@@ -540,20 +540,43 @@ def display_date_range_to_utc(date_from, date_to):
 # everyone through, as asked. Restricting later means changing that function
 # and storing per-user permissions — not rewriting the modules. Building the
 # check now is the whole point: retrofitting one is what gets expensive.
+# Every application in the suite. "status" drives how the launcher presents
+# each one: live apps open, planned ones are shown greyed out with what they'll
+# do. Listing what's coming is deliberate — it makes the shape of the platform
+# visible to the team and in a client demo, without pretending it's finished.
 CR_MODULES = [
-    {"id": "prospects", "label": "Prospect Generator", "icon": "\U0001F50D",
-     "description": "Finds leads and feeds the pipeline"},
-    {"id": "admin", "label": "Admin Briefing", "icon": "\U0001F4CB",
-     "description": "Team activity, coverage and data health"},
-    {"id": "finance", "label": "Finance Briefing", "icon": "\U0001F4B7",
-     "description": "Pipeline value, invoices and targets"},
+    {"id": "prospects", "label": "Prospect Generator", "icon": "\U0001F50D", "status": "live",
+     "description": "Finds leads from live Charity Commission data and feeds the calling pipeline",
+     "detail": "Daily Calling \u00b7 Prospect Lists \u00b7 Charity Search \u00b7 Newly Registered \u00b7 Late Accounts"},
+    {"id": "crm", "label": "CRM", "icon": "\U0001F4C7", "status": "planned",
+     "description": "Address book, opportunities and notes \u2014 replacing Maximizer",
+     "detail": "Organisations & contacts \u00b7 Opportunities pipeline \u00b7 Notes & history \u00b7 SharePoint document links"},
+    {"id": "admin", "label": "Admin Briefing", "icon": "\U0001F4CB", "status": "live",
+     "description": "Team activity, coverage and data health",
+     "detail": "Calls per caller \u00b7 Conversion \u00b7 Daily volume \u00b7 Data quality checks"},
+    {"id": "finance", "label": "Finance Briefing", "icon": "\U0001F4B7", "status": "live",
+     "description": "Pipeline value, invoices and targets",
+     "detail": "Meetings secured \u00b7 Billed / paid / outstanding \u00b7 Targets"},
+    {"id": "sales", "label": "Sales Generator", "icon": "\U0001F4C8", "status": "planned",
+     "description": "Turns prospects into conversations and meetings",
+     "detail": "Call scripting \u00b7 Sequences \u00b7 Meeting booking \u00b7 Outcome coaching"},
+    {"id": "marketing", "label": "Marketing Generator", "icon": "\U0001F4E3", "status": "planned",
+     "description": "Campaign and content support for 9M and clients",
+     "detail": "Email campaigns \u00b7 Content planning \u00b7 Social scheduling"},
+    {"id": "health", "label": "Charity Health Check", "icon": "\U0001FA7A", "status": "planned",
+     "description": "Scored view of a charity's financial and governance position",
+     "detail": "Income & expenditure trends \u00b7 Reserves \u00b7 Filing history \u00b7 Risk flags"},
 ]
 _MODULE_IDS = {m["id"] for m in CR_MODULES}
 
+_LIVE_MODULE_IDS = {m["id"] for m in CR_MODULES if m.get("status") == "live"}
+
 def _module_allowed(username, module_id):
-    """Currently everyone may open every module. The hook exists so access can
-    be restricted per account later without touching the modules themselves."""
-    return module_id in _MODULE_IDS
+    """Currently everyone may open every LIVE module. The hook exists so access
+    can be restricted per account later without touching the modules
+    themselves. Planned modules are listed in the launcher but can't be opened,
+    since there's nothing behind them yet."""
+    return module_id in _LIVE_MODULE_IDS
 
 # ══ AI reference documents (9 Mountains brochures) ═════════════════════════
 # The coach answers about 9 Mountains' own services, so it needs the
@@ -748,9 +771,14 @@ def api_modules():
     if u:
         r = db_query("SELECT landing_module FROM app_users WHERE username=?", (u["username"],))
         landing = (r[0][0] if r and r[0][0] else "") or ""
+    # "modules" is what the in-app switcher offers (live and permitted only).
+    # "all_modules" is everything, for the launcher, which shows what's coming
+    # as well as what's ready.
     return jsonify({"ok": True,
                     "modules": [m for m in CR_MODULES if _module_allowed(current_user(), m["id"])],
-                    "landing": landing if landing in _MODULE_IDS else "prospects"})
+                    "all_modules": CR_MODULES,
+                    "landing": landing if landing in (_LIVE_MODULE_IDS | {"launcher"}) else "prospects",
+                    "display_name": (u["display_name"] if u else "") or ""})
 
 @app.route("/api/modules/landing", methods=["POST"])
 def api_set_landing_module():
@@ -3770,6 +3798,7 @@ LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8">
     {TOTP_FIELD}
     <label>Open</label>
     <select name="module" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #d5d9e0;border-radius:6px;font-size:14px;background:#fff">
+      <option value="launcher">&#9776; All applications</option>
       <option value="prospects">&#128269; Prospect Generator</option>
       <option value="admin">&#128203; Admin Briefing</option>
       <option value="finance">&#128183; Finance Briefing</option>
@@ -3855,7 +3884,7 @@ def login_page():
     # can switch freely once inside. It's remembered so the next sign-in
     # defaults to wherever you last worked.
     chosen = str(request.form.get("module", "")).strip()
-    if chosen in _MODULE_IDS:
+    if chosen in (_LIVE_MODULE_IDS | {"launcher"}):
         db_exec("UPDATE app_users SET landing_module=? WHERE username=?", (chosen, user["username"]))
         if next_url == "/":
             next_url = "/?module=" + chosen
