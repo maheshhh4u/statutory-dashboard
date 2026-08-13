@@ -322,6 +322,7 @@ def db_init():
             city TEXT, county TEXT, postcode TEXT, country TEXT,
             is_charity INTEGER DEFAULT 0,
             source TEXT,
+            cc_what TEXT, cc_who TEXT, cc_how TEXT, cc_policies TEXT,
             notes TEXT,
             created_by TEXT, created_at TEXT, updated_at TEXT
         )""")
@@ -329,7 +330,8 @@ def db_init():
         # rather than requiring the table to be rebuilt.
         for _col in ("suffix TEXT", "phone2 TEXT", "phone3 TEXT", "email2 TEXT", "email3 TEXT",
                      "main_contact TEXT", "address2 TEXT", "county TEXT", "country TEXT",
-                     "is_charity INTEGER DEFAULT 0", "source TEXT"):
+                     "is_charity INTEGER DEFAULT 0", "source TEXT",
+                     "cc_what TEXT", "cc_who TEXT", "cc_how TEXT", "cc_policies TEXT"):
             try: client.execute(f"ALTER TABLE crm_orgs ADD COLUMN {_col}")
             except Exception: pass   # already present
         client.execute("""CREATE TABLE IF NOT EXISTS crm_contacts (
@@ -852,6 +854,82 @@ def _crm_note_count(entity_type, entity_id):
                  (entity_type, entity_id))
     return r[0][0] if r else 0
 
+# The Charity Commission stores names in capitals, which reads as shouting in a
+# CRM. Title-casing alone would mangle the parts that genuinely are capitals
+# (UK, CIO, NHS) and lower-case the small words that shouldn't lead a name, so
+# both are handled explicitly.
+_NAME_ALL_CAPS = {
+    "UK", "GB", "USA", "EU", "CIO", "CIC", "LLP", "PLC", "NHS", "BBC", "RAF", "YMCA", "YWCA",
+    "RSPCA", "RNLI", "NSPCC", "PTA", "PTFA", "CE", "COFE", "RC", "SEN", "SEND", "LGBT", "LGBTQ",
+    "AFC", "FC", "RFC", "CC", "AC", "TA", "VC", "MS", "MND", "HIV", "AIDS", "ADHD", "ASD",
+    "II", "III", "IV", "VI", "VII", "VIII", "IX", "XI", "XII", "AONB", "CVS", "PCC", "WI",
+}
+_NAME_LOWER = {"and", "of", "the", "for", "in", "on", "at", "to", "a", "an", "or",
+               "de", "van", "von", "upon", "under", "cum", "le", "la"}
+
+def _crm_proper_name(raw):
+    """Turns 'THE ROYAL SOCIETY FOR THE PROTECTION OF BIRDS (UK) CIO' into
+    'The Royal Society for the Protection of Birds (UK) CIO'."""
+    txt = (raw or "").strip()
+    if not txt:
+        return ""
+    # A name already in mixed case was presumably entered deliberately.
+    if txt != txt.upper():
+        return txt
+    words = re.split(r"(\s+)", txt.lower())
+    out, first_word = [], True
+    for w in words:
+        if not w.strip():
+            out.append(w); continue
+        # Split off surrounding punctuation so "(uk)" and "u.k.," still match.
+        m = re.match(r"^([^\w]*)(.*?)([^\w]*)$", w, re.S)
+        pre, core, post = m.group(1), m.group(2), m.group(3)
+        if not core:
+            out.append(w); first_word = False; continue
+        up = core.upper()
+        if up in _NAME_ALL_CAPS or up.replace(".", "") in _NAME_ALL_CAPS:
+            new = up
+        elif core in _NAME_LOWER and not first_word:
+            new = core
+        elif "'" in core:
+            # O'brien -> O'Brien, but a possessive stays lower: mary's -> Mary's,
+            # not Mary'S. A single trailing letter after the apostrophe is a
+            # possessive or contraction, never the start of a name.
+            parts = core.split("'")
+            new = parts[0].capitalize()
+            for pt in parts[1:]:
+                new += "'" + (pt if len(pt) <= 1 else pt.capitalize())
+        elif "-" in core:
+            # Hyphenated place names keep their small joining words lower:
+            # Stoke-on-Trent, not Stoke-On-Trent.
+            bits = core.split("-")
+            new = "-".join(b if (i and b in _NAME_LOWER) else b.capitalize()
+                           for i, b in enumerate(bits))
+        else:
+            new = core.capitalize()
+        out.append(pre + new + post)
+        first_word = False
+    return "".join(out)
+
+def _crm_charity_extras(reg):
+    """What / who / how and policies for one charity, using the same bounded
+    lookups the rest of the app uses rather than loading whole files."""
+    what = who = how = policies = ""
+    try:
+        c = _get_called_classification_map().get(reg)
+        if not c:
+            c = (_scan_classification_for({reg}) or {}).get(reg, {})
+        what, who, how = c.get("what", ""), c.get("who", ""), c.get("how", "")
+    except Exception as e:
+        print(f"[crm] classification lookup failed for {reg}: {e}")
+    try:
+        pol = _scan_policy_for({reg}) or {}
+        p = pol.get(reg)
+        policies = ", ".join(sorted(p)) if isinstance(p, (set, list)) else (p or "")
+    except Exception as e:
+        print(f"[crm] policy lookup failed for {reg}: {e}")
+    return what, who, how, policies
+
 @app.route("/api/crm/lookup_charity", methods=["POST"])
 def api_crm_lookup_charity():
     """Fetches an organisation's details from the Charity Commission extract by
@@ -900,8 +978,11 @@ def api_crm_lookup_charity():
     a3 = found.get("charity_contact_address3", "").strip()
     town = found.get("charity_contact_address4", "").strip()
     county = found.get("charity_contact_address5", "").strip()
+    what, who, how, policies = _crm_charity_extras(reg)
     org = {
-        "name": found.get("charity_name", "").strip(),
+        # Stored in proper case rather than the Commission's capitals, which
+        # read as shouting once they're in an address book.
+        "name": _crm_proper_name(found.get("charity_name", "")),
         "reg_number": reg, "suffix": suffix if suffix != "0" else "",
         "org_type": found.get("charity_type", "").strip(),
         "website": found.get("charity_contact_web", "").strip(),
@@ -913,6 +994,7 @@ def api_crm_lookup_charity():
         "postcode": found.get("charity_contact_postcode", "").strip(),
         "country": "United Kingdom",
         "is_charity": 1, "source": "Charity Commission",
+        "cc_what": what, "cc_who": who, "cc_how": how, "cc_policies": policies,
         "status": found.get("charity_registration_status", "").strip(),
     }
     existing = db_query("SELECT id FROM crm_orgs WHERE reg_number=? AND COALESCE(suffix,'')=?",
@@ -952,15 +1034,15 @@ def api_crm_orgs():
 def api_crm_org_detail(oid):
     r = db_query("SELECT id, name, owner, reg_number, suffix, org_type, phone, phone2, phone3, "
                  "email, email2, email3, website, main_contact, address, address2, city, county, "
-                 "postcode, country, is_charity, source, notes, created_by, created_at, updated_at "
-                 "FROM crm_orgs WHERE id=?", (oid,))
+                 "postcode, country, is_charity, source, cc_what, cc_who, cc_how, cc_policies, "
+                 "notes, created_by, created_at, updated_at FROM crm_orgs WHERE id=?", (oid,))
     if not r:
         return jsonify({"ok": False, "error": "Not found"}), 404
     v = r[0]
     keys = ["id", "name", "owner", "reg_number", "suffix", "org_type", "phone", "phone2", "phone3",
             "email", "email2", "email3", "website", "main_contact", "address", "address2", "city",
-            "county", "postcode", "country", "is_charity", "source", "notes", "created_by",
-            "created_at", "updated_at"]
+            "county", "postcode", "country", "is_charity", "source", "cc_what", "cc_who",
+            "cc_how", "cc_policies", "notes", "created_by", "created_at", "updated_at"]
     org = {k: (v[i] if v[i] is not None else ("" if k != "id" else v[i])) for i, k in enumerate(keys)}
     org["is_charity"] = bool(org["is_charity"])
     contacts = [{"id": c[0], "first_name": c[1] or "", "last_name": c[2] or "", "job_title": c[3] or "",
@@ -1016,10 +1098,11 @@ def api_crm_org_save():
             g("address", 250), g("address2", 250),
             g("city", 80), g("county", 80), g("postcode", 12), g("country", 60),
             1 if d.get("is_charity") else 0, g("source", 60),
+            g("cc_what", 400), g("cc_who", 400), g("cc_how", 400), g("cc_policies", 600),
             g("notes", 2000), _crm_now())
     cols = ("name, owner, reg_number, suffix, org_type, phone, phone2, phone3, email, email2, email3, "
             "website, main_contact, address, address2, city, county, postcode, country, is_charity, "
-            "source, notes, updated_at")
+            "source, cc_what, cc_who, cc_how, cc_policies, notes, updated_at")
     if oid:
         setclause = ", ".join(f"{c.strip()}=?" for c in cols.split(","))
         db_exec(f"UPDATE crm_orgs SET {setclause} WHERE id=?", vals + (int(oid),))

@@ -1091,6 +1091,11 @@ select:focus{outline:none;border-color:var(--green)}
       <label>County / State<input id="crm-f-county"></label>
       <label>Postcode / Zip<input id="crm-f-postcode"></label>
       <label>Country<input id="crm-f-country" placeholder="United Kingdom"></label>
+      <div style="grid-column:1/-1;border-top:1px solid var(--border);padding-top:8px;font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Charity Commission classification</div>
+      <label style="grid-column:1/-1">What it does<input id="crm-f-cc_what" placeholder="filled from the Charity Commission"></label>
+      <label style="grid-column:1/-1">Who it helps<input id="crm-f-cc_who" placeholder="filled from the Charity Commission"></label>
+      <label style="grid-column:1/-1">How it helps<input id="crm-f-cc_how" placeholder="filled from the Charity Commission"></label>
+      <label style="grid-column:1/-1">Policies<input id="crm-f-cc_policies" placeholder="filled from the Charity Commission"></label>
       <label style="grid-column:1/-1">Notes<textarea id="crm-f-notes" rows="3"></textarea></label>
     </div>
     <div class="modal-btns">
@@ -7259,6 +7264,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.49", date:"2026-08", title:"Address book: What / Who / How and policies from the Charity Commission, and proper-case names",
+    changes:[
+      "Fetching a registered charity now also brings back what it does, who it helps, how it helps, and its published policies \u2014 shown on the organisation page and editable like any other field.",
+      "Charity names no longer arrive in block capitals. The Commission stores them that way, which reads as shouting in an address book, so they're converted to proper case on the way in.",
+      "The conversion keeps genuine capitals capitalised \u2014 UK, CIO, NHS, NSPCC, PCC and around forty others \u2014 and keeps small joining words lower where they belong: \u201cThe Royal Society for the Protection of Birds\u201d, not \u201cFor The Protection Of\u201d.",
+      "Two cases I got wrong first time and fixed after testing against real names: possessives (St Mary\u2019s, not St Mary\u2019S) and hyphenated places (Stoke-on-Trent, not Stoke-On-Trent).",
+      "A name already typed in mixed case is left exactly as it is \u2014 if someone has written it deliberately, the app shouldn\u2019t second-guess them.",
+      "Classification and policy lookups use the same bounded, cached reads as the rest of the app, so adding them doesn\u2019t reintroduce the memory problems fixed earlier.",
+    ]},
   { v:"2.48", date:"2026-08", title:"Address book: full field set, and one-click lookup for registered charities",
     changes:[
       "Organisations now have the complete set of fields: company name, website, main contact, three phone numbers, three email addresses, address 1 and 2, city/town, county/state, postcode/zip, country, type, source and notes \u2014 all editable in a proper form rather than the prompts used in the first cut.",
@@ -9119,6 +9133,11 @@ function crmOpenOrg(id){
             ${field('Website',o.website)}
             ${field('Address',[o.address,o.address2,o.city,o.county,o.postcode,o.country].filter(Boolean).join(', '))}
             ${field('Source',o.source)}
+            ${(o.cc_what||o.cc_who||o.cc_how||o.cc_policies)?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--s2)">
+              <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:5px">Charity Commission</div>
+              ${field('What it does',o.cc_what)}${field('Who it helps',o.cc_who)}
+              ${field('How it helps',o.cc_how)}${field('Policies',o.cc_policies)}
+            </div>`:''}
             ${o.notes?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--s2);white-space:pre-wrap">${esc(o.notes)}</div>`:''}
           </div>
           <div class="card" style="padding:14px 16px">
@@ -9191,7 +9210,8 @@ function crmAddNote(type,id){
 // a change in two places rather than five.
 const CRM_ORG_FIELDS = ['name','owner','org_type','website','main_contact','source',
   'phone','phone2','phone3','email','email2','email3',
-  'address','address2','city','county','postcode','country','notes','reg_number','suffix'];
+  'address','address2','city','county','postcode','country',
+  'cc_what','cc_who','cc_how','cc_policies','notes','reg_number','suffix'];
 const CRM_FIELD_IDS = {org_type:'type', main_contact:'maincontact', reg_number:'reg'};
 function crmFieldEl(f){ return document.getElementById('crm-f-'+(CRM_FIELD_IDS[f]||f)); }
 let _crmEditingId=null, _crmIsCharity=false;
