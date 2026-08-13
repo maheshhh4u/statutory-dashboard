@@ -912,13 +912,26 @@ def _crm_proper_name(raw):
     return "".join(out)
 
 def _crm_charity_extras(reg):
-    """What / who / how and policies for one charity, using the same bounded
-    lookups the rest of the app uses rather than loading whole files."""
+    """What / who / how and policies for one charity.
+
+    Previously this called _get_called_classification_map() first and then
+    _scan_classification_for() when that missed — and it always missed for a
+    charity nobody had called yet, so the classification file (1.7 million
+    rows) was downloaded and scanned TWICE per lookup. Now it scans once.
+
+    The result is cached per charity, because these files are large and a
+    caller will often re-open the same record: the first lookup pays the cost,
+    later ones are instant."""
+    cache_key = f"crm_extras_{reg}"
+    cached = cache_get(cache_key, max_age=1440)   # a day; CC data changes monthly
+    if cached is not None:
+        return cached.get("what", ""), cached.get("who", ""), cached.get("how", ""), cached.get("policies", "")
+
     what = who = how = policies = ""
     try:
-        c = _get_called_classification_map().get(reg)
-        if not c:
-            c = (_scan_classification_for({reg}) or {}).get(reg, {})
+        # One scan. The called-charities map is for charities already in the
+        # call log, which by definition this one usually isn't.
+        c = (_scan_classification_for({reg}) or {}).get(reg, {})
         what, who, how = c.get("what", ""), c.get("who", ""), c.get("how", "")
     except Exception as e:
         print(f"[crm] classification lookup failed for {reg}: {e}")
@@ -928,6 +941,7 @@ def _crm_charity_extras(reg):
         policies = ", ".join(sorted(p)) if isinstance(p, (set, list)) else (p or "")
     except Exception as e:
         print(f"[crm] policy lookup failed for {reg}: {e}")
+    cache_set(cache_key, {"what": what, "who": who, "how": how, "policies": policies})
     return what, who, how, policies
 
 @app.route("/api/crm/lookup_charity", methods=["POST"])
@@ -946,6 +960,15 @@ def api_crm_lookup_charity():
     suffix = re.sub(r"[^0-9]", "", str(d.get("suffix", "")) or "0")
     if not reg:
         return jsonify({"ok": False, "error": "Enter a registered charity number"}), 400
+
+    # Cached per charity: the extract is ~43MB, so re-opening the same record
+    # shouldn't pay that cost again.
+    _hit = cache_get(f"crm_lookup_{reg}_{suffix}", max_age=1440)
+    if _hit is not None:
+        existing = db_query("SELECT id FROM crm_orgs WHERE reg_number=? AND COALESCE(suffix,'')=?",
+                            (reg, _hit.get("suffix", "")))
+        return jsonify({"ok": True, "org": _hit, "cached": True,
+                        "existing_id": (existing[0][0] if existing else None)})
 
     COLS = {"registered_charity_number", "linked_charity_number", "charity_name",
             "charity_contact_web", "charity_contact_phone", "charity_contact_email",
@@ -997,6 +1020,7 @@ def api_crm_lookup_charity():
         "cc_what": what, "cc_who": who, "cc_how": how, "cc_policies": policies,
         "status": found.get("charity_registration_status", "").strip(),
     }
+    cache_set(f"crm_lookup_{reg}_{suffix}", org)
     existing = db_query("SELECT id FROM crm_orgs WHERE reg_number=? AND COALESCE(suffix,'')=?",
                         (reg, org["suffix"]))
     return jsonify({"ok": True, "org": org,
@@ -1989,7 +2013,16 @@ def stream_zip_csv(url, needed_cols=None):
                         row={c:(fields[i].strip() if i<len(fields) else '') for i,c in keep.items()}
                         row={k:('' if v.lower() in ('nan','none') else v) for k,v in row.items()}
                         yield row; count+=1
-                    except: continue
+                    except GeneratorExit:
+                        # The caller stopped early (a `break`). This MUST be
+                        # allowed to propagate: a bare `except` swallows it,
+                        # the loop carries on, and Python then raises
+                        # "generator ignored GeneratorExit" — which is exactly
+                        # what happened, and meant an early break never
+                        # actually stopped the scan.
+                        raise
+                    except Exception:
+                        continue
         print(f"  Streamed {count} rows")
     finally:
         try:

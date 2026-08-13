@@ -7264,6 +7264,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.50", date:"2026-08", title:"Fixed the charity lookup: a bare except was defeating the early stop, and the data was scanned twice",
+    changes:[
+      "The RuntimeError in the log (\u201cgenerator ignored GeneratorExit\u201d) was caused by a bare `except` in the file reader. When the lookup found its charity and stopped early, Python signals that by raising GeneratorExit inside the reader \u2014 and the bare except caught it and carried on. So the \u201cstop as soon as we find it\u201d never actually stopped, and the reader kept going through all 400,000 rows. Reproduced the exact error and confirmed the fix.",
+      "Second problem, visible in the same log: the classification file (1.7 million rows) was downloaded and scanned TWICE per lookup. The code checked the called-charities list first and fell back to a full scan when it missed \u2014 and for a charity nobody has called yet, it always missed. Now scanned once.",
+      "Both the charity record and its classification are cached for a day, so looking up the same charity again is instant instead of re-reading 50MB of files.",
+      "The status message now says the first lookup can take up to a minute and later ones are instant, rather than \u201ca few seconds\u201d, which set the wrong expectation.",
+      "Checked the other bare excepts in the file \u2014 the remaining ones don\u2019t wrap a yield, so they can\u2019t cause this.",
+    ]},
   { v:"2.49", date:"2026-08", title:"Address book: What / Who / How and policies from the Charity Commission, and proper-case names",
     changes:[
       "Fetching a registered charity now also brings back what it does, who it helps, how it helps, and its published policies \u2014 shown on the organisation page and editable like any other field.",
@@ -9236,7 +9244,11 @@ function crmLookupCharity(){
   const reg=(document.getElementById('crm-f-reg')||{}).value||'';
   const suffix=(document.getElementById('crm-f-suffix')||{}).value||'';
   if(!reg.trim()){ st.textContent='\u26a0 Enter a charity number first.'; st.style.color='var(--red)'; return; }
-  st.textContent='Looking up\u2026 this can take a few seconds.'; st.style.color='var(--t3)';
+  // The first lookup reads several large Charity Commission files, which takes
+  // a while; the result is then cached, so say so rather than leaving someone
+  // wondering whether it has hung.
+  st.textContent='Looking up\u2026 the first fetch reads the Charity Commission files and can take up to a minute. Later lookups are instant.';
+  st.style.color='var(--t3)';
   fetch('/api/crm/lookup_charity',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({reg_number:reg, suffix})}).then(r=>r.json()).then(d=>{
       if(!d.ok){ st.textContent='\u26a0 '+esc(d.error||'Not found'); st.style.color='var(--red)'; return; }
@@ -9250,6 +9262,7 @@ function crmLookupCharity(){
       });
       _crmIsCharity=true;
       st.innerHTML='\u2713 Found <strong>'+esc(o.name)+'</strong>'+(o.status?' ('+esc(o.status)+')':'')+
+        (d.cached?' <span style="color:var(--t3)">(from cache)</span>':'')+
         (d.existing_id?' \u2014 <span style="color:var(--orange)">already in the address book</span>':'');
       st.style.color='var(--green)';
     }).catch(e=>{ st.textContent='\u26a0 '+esc(e.message); st.style.color='var(--red)'; });
