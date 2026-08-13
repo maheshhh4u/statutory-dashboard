@@ -312,12 +312,26 @@ def db_init():
             name TEXT,
             owner TEXT DEFAULT '9M',
             reg_number TEXT,
+            suffix TEXT,
             org_type TEXT,
-            phone TEXT, email TEXT, website TEXT,
-            address TEXT, city TEXT, postcode TEXT,
+            phone TEXT, phone2 TEXT, phone3 TEXT,
+            email TEXT, email2 TEXT, email3 TEXT,
+            website TEXT,
+            main_contact TEXT,
+            address TEXT, address2 TEXT,
+            city TEXT, county TEXT, postcode TEXT, country TEXT,
+            is_charity INTEGER DEFAULT 0,
+            source TEXT,
             notes TEXT,
             created_by TEXT, created_at TEXT, updated_at TEXT
         )""")
+        # Existing installs predate the wider field set, so add the new columns
+        # rather than requiring the table to be rebuilt.
+        for _col in ("suffix TEXT", "phone2 TEXT", "phone3 TEXT", "email2 TEXT", "email3 TEXT",
+                     "main_contact TEXT", "address2 TEXT", "county TEXT", "country TEXT",
+                     "is_charity INTEGER DEFAULT 0", "source TEXT"):
+            try: client.execute(f"ALTER TABLE crm_orgs ADD COLUMN {_col}")
+            except Exception: pass   # already present
         client.execute("""CREATE TABLE IF NOT EXISTS crm_contacts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             org_id INTEGER,
@@ -838,6 +852,74 @@ def _crm_note_count(entity_type, entity_id):
                  (entity_type, entity_id))
     return r[0][0] if r else 0
 
+@app.route("/api/crm/lookup_charity", methods=["POST"])
+def api_crm_lookup_charity():
+    """Fetches an organisation's details from the Charity Commission extract by
+    registered number (plus optional suffix for a linked charity).
+
+    Scans the bulk file for ONE charity and stops as soon as it's found —
+    deliberately not the whole-file load that caused the memory problems
+    earlier. The extract is the same source the rest of the app already uses,
+    so a CRM record and a prospecting record describe the same organisation."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    reg = re.sub(r"[^0-9]", "", str(d.get("reg_number", "")))
+    suffix = re.sub(r"[^0-9]", "", str(d.get("suffix", "")) or "0")
+    if not reg:
+        return jsonify({"ok": False, "error": "Enter a registered charity number"}), 400
+
+    COLS = {"registered_charity_number", "linked_charity_number", "charity_name",
+            "charity_contact_web", "charity_contact_phone", "charity_contact_email",
+            "charity_contact_address1", "charity_contact_address2", "charity_contact_address3",
+            "charity_contact_address4", "charity_contact_address5", "charity_contact_postcode",
+            "charity_type", "charity_registration_status"}
+    found = None
+    try:
+        for row in stream_zip_csv(CHARITY_URL, COLS):
+            if row.get("registered_charity_number", "").strip() != reg:
+                continue
+            link = (row.get("linked_charity_number", "") or "0").strip() or "0"
+            if link != suffix:
+                continue
+            found = row
+            break        # stop reading as soon as we have it
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Could not read the Charity Commission data: {str(e)[:120]}"}), 502
+
+    if not found:
+        return jsonify({"ok": False,
+                        "error": f"No charity found with number {reg}" +
+                                 (f" and suffix {suffix}" if suffix != "0" else "") +
+                                 ". Check the number, or enter the details manually."}), 404
+
+    # Address lines 1-3 are the street address; 4 and 5 are town and county in
+    # this extract, which is why they map across rather than concatenating.
+    a1 = found.get("charity_contact_address1", "").strip()
+    a2 = found.get("charity_contact_address2", "").strip()
+    a3 = found.get("charity_contact_address3", "").strip()
+    town = found.get("charity_contact_address4", "").strip()
+    county = found.get("charity_contact_address5", "").strip()
+    org = {
+        "name": found.get("charity_name", "").strip(),
+        "reg_number": reg, "suffix": suffix if suffix != "0" else "",
+        "org_type": found.get("charity_type", "").strip(),
+        "website": found.get("charity_contact_web", "").strip(),
+        "phone": found.get("charity_contact_phone", "").strip(),
+        "email": found.get("charity_contact_email", "").strip(),
+        "address": a1,
+        "address2": ", ".join(x for x in (a2, a3) if x),
+        "city": town, "county": county,
+        "postcode": found.get("charity_contact_postcode", "").strip(),
+        "country": "United Kingdom",
+        "is_charity": 1, "source": "Charity Commission",
+        "status": found.get("charity_registration_status", "").strip(),
+    }
+    existing = db_query("SELECT id FROM crm_orgs WHERE reg_number=? AND COALESCE(suffix,'')=?",
+                        (reg, org["suffix"]))
+    return jsonify({"ok": True, "org": org,
+                    "existing_id": (existing[0][0] if existing else None)})
+
 @app.route("/api/crm/orgs", methods=["GET"])
 def api_crm_orgs():
     """Address book list. Search matches name, postcode or charity number so a
@@ -868,15 +950,19 @@ def api_crm_orgs():
 
 @app.route("/api/crm/org/<int:oid>", methods=["GET"])
 def api_crm_org_detail(oid):
-    r = db_query("SELECT id, name, owner, reg_number, org_type, phone, email, website, address, "
-                 "city, postcode, notes, created_by, created_at, updated_at FROM crm_orgs WHERE id=?", (oid,))
+    r = db_query("SELECT id, name, owner, reg_number, suffix, org_type, phone, phone2, phone3, "
+                 "email, email2, email3, website, main_contact, address, address2, city, county, "
+                 "postcode, country, is_charity, source, notes, created_by, created_at, updated_at "
+                 "FROM crm_orgs WHERE id=?", (oid,))
     if not r:
         return jsonify({"ok": False, "error": "Not found"}), 404
     v = r[0]
-    org = {"id": v[0], "name": v[1], "owner": v[2], "reg_number": v[3] or "", "org_type": v[4] or "",
-           "phone": v[5] or "", "email": v[6] or "", "website": v[7] or "", "address": v[8] or "",
-           "city": v[9] or "", "postcode": v[10] or "", "notes": v[11] or "",
-           "created_by": v[12] or "", "created_at": v[13] or "", "updated_at": v[14] or ""}
+    keys = ["id", "name", "owner", "reg_number", "suffix", "org_type", "phone", "phone2", "phone3",
+            "email", "email2", "email3", "website", "main_contact", "address", "address2", "city",
+            "county", "postcode", "country", "is_charity", "source", "notes", "created_by",
+            "created_at", "updated_at"]
+    org = {k: (v[i] if v[i] is not None else ("" if k != "id" else v[i])) for i, k in enumerate(keys)}
+    org["is_charity"] = bool(org["is_charity"])
     contacts = [{"id": c[0], "first_name": c[1] or "", "last_name": c[2] or "", "job_title": c[3] or "",
                  "email": c[4] or "", "phone": c[5] or "", "mobile": c[6] or "", "is_primary": bool(c[7])}
                 for c in (db_query("SELECT id, first_name, last_name, job_title, email, phone, mobile, "
@@ -922,17 +1008,24 @@ def api_crm_org_save():
         return jsonify({"ok": False, "error": "Organisation name is required"}), 400
     owner = str(d.get("owner", "9M")).strip()
     if owner not in CRM_OWNERS: owner = "9M"
-    vals = (name, owner, str(d.get("reg_number", "")).strip()[:20], str(d.get("org_type", ""))[:60],
-            str(d.get("phone", ""))[:40], str(d.get("email", ""))[:120], str(d.get("website", ""))[:200],
-            str(d.get("address", ""))[:250], str(d.get("city", ""))[:80], str(d.get("postcode", ""))[:12],
-            str(d.get("notes", ""))[:2000], _crm_now())
+    g = lambda k, n: str(d.get(k, "") or "").strip()[:n]
+    vals = (name, owner, g("reg_number", 20), g("suffix", 10), g("org_type", 60),
+            g("phone", 40), g("phone2", 40), g("phone3", 40),
+            g("email", 120), g("email2", 120), g("email3", 120),
+            g("website", 200), g("main_contact", 120),
+            g("address", 250), g("address2", 250),
+            g("city", 80), g("county", 80), g("postcode", 12), g("country", 60),
+            1 if d.get("is_charity") else 0, g("source", 60),
+            g("notes", 2000), _crm_now())
+    cols = ("name, owner, reg_number, suffix, org_type, phone, phone2, phone3, email, email2, email3, "
+            "website, main_contact, address, address2, city, county, postcode, country, is_charity, "
+            "source, notes, updated_at")
     if oid:
-        db_exec("UPDATE crm_orgs SET name=?, owner=?, reg_number=?, org_type=?, phone=?, email=?, "
-                "website=?, address=?, city=?, postcode=?, notes=?, updated_at=? WHERE id=?",
-                vals + (int(oid),))
+        setclause = ", ".join(f"{c.strip()}=?" for c in cols.split(","))
+        db_exec(f"UPDATE crm_orgs SET {setclause} WHERE id=?", vals + (int(oid),))
         return jsonify({"ok": True, "id": int(oid)})
-    db_exec("INSERT INTO crm_orgs(name, owner, reg_number, org_type, phone, email, website, address, "
-            "city, postcode, notes, updated_at, created_by, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    placeholders = ",".join("?" * (len(cols.split(",")) + 2))
+    db_exec(f"INSERT INTO crm_orgs({cols}, created_by, created_at) VALUES({placeholders})",
             vals + (current_user(), _crm_now()))
     r = db_query("SELECT id FROM crm_orgs WHERE name=? ORDER BY id DESC LIMIT 1", (name,))
     return jsonify({"ok": True, "id": (r[0][0] if r else None)})

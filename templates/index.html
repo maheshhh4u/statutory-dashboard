@@ -1049,6 +1049,58 @@ select:focus{outline:none;border-color:var(--green)}
   <div id="crm-body"><div class="loading-txt" style="padding:20px">Loading&hellip;</div></div>
 </section>
 
+<!-- Organisation editor. Two routes in: look up a registered charity by number
+     to fill everything automatically, or type the details for anything that
+     isn't a registered charity. -->
+<div class="modal-bg" id="crm-org-modal">
+  <div class="modal" style="max-width:760px;width:94vw;max-height:88vh;overflow:auto">
+    <h3 id="crm-org-title">Organisation</h3>
+    <div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:7px;padding:11px 13px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:7px">Registered charity? Fetch the details automatically</div>
+      <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
+        <input id="crm-f-reg" placeholder="charity number" style="width:130px">
+        <input id="crm-f-suffix" placeholder="suffix (optional)" style="width:120px">
+        <button type="button" class="btn btn-green btn-sm" onclick="crmLookupCharity()">Fetch from Charity Commission</button>
+        <span id="crm-lookup-status" style="font-size:11.5px;color:var(--t3)"></span>
+      </div>
+      <div style="font-size:11px;color:var(--t3);margin-top:6px">Leave the suffix blank unless it&rsquo;s a linked charity. Not a registered charity? Just fill the fields below.</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 12px;font-size:12.5px">
+      <label style="grid-column:1/-1">Company name *<input id="crm-f-name" placeholder="organisation name"></label>
+      <label>Owner
+        <select id="crm-f-owner"><option value="9M">9 Mountains</option><option value="VF">Vantage Fundraising</option><option value="Both">Both</option></select>
+      </label>
+      <label>Type<input id="crm-f-type" placeholder="e.g. CIO, Company, Trust"></label>
+      <label style="grid-column:1/-1">Website<input id="crm-f-website" placeholder="https://"></label>
+      <label>Main contact<input id="crm-f-maincontact" placeholder="name of main contact"></label>
+      <label>Source<input id="crm-f-source" placeholder="where this came from"></label>
+      <div style="grid-column:1/-1;border-top:1px solid var(--border);padding-top:8px;font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Phone</div>
+      <label>Phone 1<input id="crm-f-phone"></label>
+      <label>Phone 2<input id="crm-f-phone2"></label>
+      <label>Phone 3<input id="crm-f-phone3"></label>
+      <div></div>
+      <div style="grid-column:1/-1;border-top:1px solid var(--border);padding-top:8px;font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Email</div>
+      <label>Email 1<input id="crm-f-email"></label>
+      <label>Email 2<input id="crm-f-email2"></label>
+      <label>Email 3<input id="crm-f-email3"></label>
+      <div></div>
+      <div style="grid-column:1/-1;border-top:1px solid var(--border);padding-top:8px;font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Address</div>
+      <label style="grid-column:1/-1">Address 1<input id="crm-f-address"></label>
+      <label style="grid-column:1/-1">Address 2<input id="crm-f-address2"></label>
+      <label>City / Town<input id="crm-f-city"></label>
+      <label>County / State<input id="crm-f-county"></label>
+      <label>Postcode / Zip<input id="crm-f-postcode"></label>
+      <label>Country<input id="crm-f-country" placeholder="United Kingdom"></label>
+      <label style="grid-column:1/-1">Notes<textarea id="crm-f-notes" rows="3"></textarea></label>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-outline btn-sm" onclick="crmCloseOrgForm()">Cancel</button>
+      <button class="btn btn-green btn-sm" onclick="crmSaveOrgForm()">Save</button>
+    </div>
+    <div id="crm-form-status" style="font-size:12px;margin-top:8px"></div>
+  </div>
+</div>
+
 <section id="tab-adminbrief" class="section">
   <div class="card" style="padding:16px 18px;margin-bottom:14px">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -7207,6 +7259,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.48", date:"2026-08", title:"Address book: full field set, and one-click lookup for registered charities",
+    changes:[
+      "Organisations now have the complete set of fields: company name, website, main contact, three phone numbers, three email addresses, address 1 and 2, city/town, county/state, postcode/zip, country, type, source and notes \u2014 all editable in a proper form rather than the prompts used in the first cut.",
+      "For a registered charity, enter the charity number (and suffix if it's a linked charity) and press Fetch from Charity Commission \u2014 name, address, phone, email, website and type fill in automatically from the official extract. For anything that isn't a registered charity, just type the details.",
+      "The lookup stops reading as soon as it finds the charity rather than loading the whole national file. That distinction matters: loading the full extract is exactly what caused the out-of-memory restarts and the slow reports we fixed earlier.",
+      "When editing an existing record, a lookup only fills fields that are empty \u2014 so a phone number someone corrected by hand isn't overwritten by the official one, which is often out of date.",
+      "It also warns if that charity is already in the address book, so the same organisation doesn't get added twice under a slightly different name.",
+      "Existing records are migrated automatically \u2014 the new columns are added to the table on startup, so nothing already entered is lost.",
+    ]},
   { v:"2.47", date:"2026-08", title:"CRM \u2014 address book and opportunities (first cut)",
     changes:[
       "The CRM is live in the launcher. Address Book holds organisations with their contacts; Opportunities shows the pipeline by stage with total and weighted values. Notes can be added against any record.",
@@ -9050,9 +9111,14 @@ function crmOpenOrg(id){
         <div>
           <div class="card" style="padding:14px 16px;margin-bottom:12px;font-size:12.5px">
             <h3 style="margin:0 0 9px;font-size:13px">Details</h3>
-            ${field('Charity number',o.reg_number)}${field('Type',o.org_type)}
-            ${field('Phone',o.phone)}${field('Email',o.email)}${field('Website',o.website)}
-            ${field('Address',[o.address,o.city,o.postcode].filter(Boolean).join(', '))}
+            ${field('Charity number', o.reg_number ? (o.reg_number + (o.suffix?'-'+o.suffix:'')) : '')}
+            ${o.is_charity?'<div style="margin-bottom:6px"><span class="tagpill">Registered charity</span></div>':''}
+            ${field('Type',o.org_type)}${field('Main contact',o.main_contact)}
+            ${field('Phone',[o.phone,o.phone2,o.phone3].filter(Boolean).join(' \u00b7 '))}
+            ${field('Email',[o.email,o.email2,o.email3].filter(Boolean).join(' \u00b7 '))}
+            ${field('Website',o.website)}
+            ${field('Address',[o.address,o.address2,o.city,o.county,o.postcode,o.country].filter(Boolean).join(', '))}
+            ${field('Source',o.source)}
             ${o.notes?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--s2);white-space:pre-wrap">${esc(o.notes)}</div>`:''}
           </div>
           <div class="card" style="padding:14px 16px">
@@ -9121,25 +9187,68 @@ function crmAddNote(type,id){
 // Simple prompt-driven forms. Deliberate for a first cut: it keeps the whole
 // CRM to one release and proves the data model before investing in richer
 // editing screens.
-function crmNewOrg(){ crmOrgForm({}); }
+// Organisation form. Fields map 1:1 to the modal by id, so adding a field is
+// a change in two places rather than five.
+const CRM_ORG_FIELDS = ['name','owner','org_type','website','main_contact','source',
+  'phone','phone2','phone3','email','email2','email3',
+  'address','address2','city','county','postcode','country','notes','reg_number','suffix'];
+const CRM_FIELD_IDS = {org_type:'type', main_contact:'maincontact', reg_number:'reg'};
+function crmFieldEl(f){ return document.getElementById('crm-f-'+(CRM_FIELD_IDS[f]||f)); }
+let _crmEditingId=null, _crmIsCharity=false;
+
+function crmNewOrg(){ crmOpenOrgForm({}); }
 function crmEditOrg(id){
-  fetch('/api/crm/org/'+id).then(r=>r.json()).then(d=>{ if(d.ok) crmOrgForm(d.org); });
+  fetch('/api/crm/org/'+id).then(r=>r.json()).then(d=>{ if(d.ok) crmOpenOrgForm(d.org); });
 }
-function crmOrgForm(o){
-  const name=prompt('Organisation name:', o.name||''); if(name===null||!name.trim()) return;
-  const owner=prompt('Owner \u2014 9M, VF or Both:', o.owner||'9M'); if(owner===null) return;
-  const reg=prompt('Charity number (optional \u2014 links to prospecting data):', o.reg_number||'');
-  const phone=prompt('Phone:', o.phone||'');
-  const email=prompt('Email:', o.email||'');
-  const city=prompt('Town/city:', o.city||'');
-  const postcode=prompt('Postcode:', o.postcode||'');
+function crmOpenOrgForm(o){
+  _crmEditingId = o.id || null;
+  _crmIsCharity = !!o.is_charity;
+  document.getElementById('crm-org-title').textContent = o.id ? 'Edit organisation' : 'New organisation';
+  CRM_ORG_FIELDS.forEach(f=>{ const el=crmFieldEl(f); if(el) el.value = o[f]==null ? '' : o[f]; });
+  const st=document.getElementById('crm-lookup-status'); if(st) st.textContent='';
+  const fs=document.getElementById('crm-form-status'); if(fs) fs.textContent='';
+  document.getElementById('crm-org-modal').classList.add('open');
+}
+function crmCloseOrgForm(){ document.getElementById('crm-org-modal').classList.remove('open'); }
+
+function crmLookupCharity(){
+  const st=document.getElementById('crm-lookup-status');
+  const reg=(document.getElementById('crm-f-reg')||{}).value||'';
+  const suffix=(document.getElementById('crm-f-suffix')||{}).value||'';
+  if(!reg.trim()){ st.textContent='\u26a0 Enter a charity number first.'; st.style.color='var(--red)'; return; }
+  st.textContent='Looking up\u2026 this can take a few seconds.'; st.style.color='var(--t3)';
+  fetch('/api/crm/lookup_charity',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({reg_number:reg, suffix})}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ st.textContent='\u26a0 '+esc(d.error||'Not found'); st.style.color='var(--red)'; return; }
+      const o=d.org;
+      // Only fill blanks when editing, so a manual correction isn't overwritten
+      // by the official record; on a new record everything is filled.
+      CRM_ORG_FIELDS.forEach(f=>{
+        const el=crmFieldEl(f);
+        if(!el || o[f]==null || o[f]==='') return;
+        if(!_crmEditingId || !el.value) el.value=o[f];
+      });
+      _crmIsCharity=true;
+      st.innerHTML='\u2713 Found <strong>'+esc(o.name)+'</strong>'+(o.status?' ('+esc(o.status)+')':'')+
+        (d.existing_id?' \u2014 <span style="color:var(--orange)">already in the address book</span>':'');
+      st.style.color='var(--green)';
+    }).catch(e=>{ st.textContent='\u26a0 '+esc(e.message); st.style.color='var(--red)'; });
+}
+
+function crmSaveOrgForm(){
+  const fs=document.getElementById('crm-form-status');
+  const payload={id:_crmEditingId, is_charity:_crmIsCharity?1:0};
+  CRM_ORG_FIELDS.forEach(f=>{ const el=crmFieldEl(f); payload[f]= el ? el.value : ''; });
+  if(!(payload.name||'').trim()){
+    fs.textContent='\u26a0 Company name is required.'; fs.style.color='var(--red)'; return;
+  }
+  fs.textContent='Saving\u2026'; fs.style.color='var(--t3)';
   fetch('/api/crm/org',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({id:o.id, name, owner, reg_number:reg, phone, email, city, postcode,
-                         website:o.website||'', address:o.address||'', org_type:o.org_type||'', notes:o.notes||''})})
-    .then(r=>r.json()).then(d=>{
-      if(!d.ok){ alert(d.error||'Failed'); return; }
-      o.id ? crmOpenOrg(o.id) : crmReload();
-    }).catch(e=>alert(e.message));
+    body:JSON.stringify(payload)}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ fs.textContent='\u26a0 '+esc(d.error||'Could not save'); fs.style.color='var(--red)'; return; }
+      crmCloseOrgForm();
+      d.id ? crmOpenOrg(d.id) : crmReload();
+    }).catch(e=>{ fs.textContent='\u26a0 '+esc(e.message); fs.style.color='var(--red)'; });
 }
 function crmDeleteOrg(id){
   if(!confirm('Delete this organisation, along with its contacts, opportunities and notes?')) return;
