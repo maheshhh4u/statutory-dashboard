@@ -7268,6 +7268,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.52", date:"2026-08", title:"CRM: row selection with working Edit actions, and wildcard search",
+    changes:[
+      "Every row in the address book now has a tick box, with a select-all box in the header. Selected rows are highlighted and a bar appears showing how many are selected with the actions available.",
+      "The Edit menu is now functional: Select All, Deselect All, Invert Selection, Delete Selected, Change Owner of Selected, Combine Selected Entries, and Export Selected. Items needing ticked rows stay disabled until there are some, with a tooltip saying so.",
+      "Combine merges properly rather than just deleting: the oldest record is kept, contacts, opportunities and notes move onto it, and any blank fields are filled in from the others \u2014 existing values are never overwritten. A note is added recording which records were merged in, so it can be audited afterwards.",
+      "Search now supports * as a wildcard throughout: \u201coxf*\u201d finds anything starting with oxf, \u201c*trust\u201d anything ending in trust, \u201c*health*\u201d anything containing it. With no * it still searches for anything containing what you typed, so existing habits keep working.",
+      "Anything you type is escaped first, so searching for \u201c50%\u201d finds a literal 50% rather than matching everything \u2014 % and _ are SQL wildcards and would otherwise behave unexpectedly. Verified against a real database, including that case.",
+      "Bulk actions are capped at 500 records per operation, so a large selection can't tie up the server.",
+    ]},
   { v:"2.51", date:"2026-08", title:"CRM menu bar \u2014 Edit, View, Search, Actions and Report",
     changes:[
       "Five menus laid out like Maximizer's, so the CRM is familiar to anyone moving across.",
@@ -9403,9 +9412,98 @@ function crmFindDuplicates(){
       </div>`).join('');
   }).catch(e=>alert(e.message));
 }
-function crmSelectAll(on){ alert(on?'Bulk selection isn\u2019t built yet.':'Nothing selected.'); }
-function crmInvertSelection(){ crmSelectAll(true); }
-
+// ── Selection ──────────────────────────────────────────────────────────────
+// A Set of ids, kept separate from the DOM so it survives a re-render and can
+// be acted on by the Edit menu.
+let _crmSelected=new Set();
+function crmRowChecked(id, on){
+  on ? _crmSelected.add(id) : _crmSelected.delete(id);
+  const row=document.getElementById('crm-row-'+id);
+  if(row){
+    if(on){ row.dataset.sel='1'; row.style.background='var(--navy-pale)'; }
+    else { delete row.dataset.sel; row.style.background='transparent'; }
+  }
+  crmUpdateSelBar();
+}
+function crmToggleAll(on){
+  document.querySelectorAll('.crm-row-check').forEach(cb=>{
+    cb.checked=on; crmRowChecked(parseInt(cb.value,10), on);
+  });
+}
+function crmSelectAll(on){
+  const cb=document.getElementById('crm-check-all');
+  if(cb) cb.checked=on;
+  crmToggleAll(on);
+}
+function crmInvertSelection(){
+  document.querySelectorAll('.crm-row-check').forEach(cb=>{
+    cb.checked=!cb.checked; crmRowChecked(parseInt(cb.value,10), cb.checked);
+  });
+}
+function crmUpdateSelBar(){
+  const bar=document.getElementById('crm-selbar');
+  if(!bar) return;
+  const n=_crmSelected.size;
+  if(!n){ bar.style.display='none'; return; }
+  bar.style.display='flex';
+  bar.innerHTML=`<strong>${n} selected</strong>
+    <button class="btn btn-outline btn-sm" onclick="crmBulkOwner()">Change owner\u2026</button>
+    <button class="btn btn-outline btn-sm" onclick="crmCombineSelected()">Combine\u2026</button>
+    <button class="btn btn-outline btn-sm" onclick="crmExportSelected()">Export selected</button>
+    <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="crmBulkDelete()">Delete</button>
+    <span style="flex:1"></span>
+    <span style="cursor:pointer;color:var(--t3)" onclick="crmSelectAll(false)">Clear selection</span>`;
+}
+function crmSelectedIds(){ return Array.from(_crmSelected); }
+function crmNeedSelection(){
+  if(_crmSelected.size) return true;
+  alert('Tick one or more organisations first.');
+  return false;
+}
+// ── Edit menu actions ──────────────────────────────────────────────────────
+function crmBulkDelete(){
+  if(!crmNeedSelection()) return;
+  const ids=crmSelectedIds();
+  if(!confirm(`Delete ${ids.length} organisation(s), along with their contacts, opportunities and notes?\n\nThis cannot be undone.`)) return;
+  fetch('/api/crm/bulk',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'delete', ids})}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ alert(d.error||'Failed'); return; }
+      _crmSelected.clear(); crmReload();
+    }).catch(e=>alert(e.message));
+}
+function crmBulkOwner(){
+  if(!crmNeedSelection()) return;
+  const owner=prompt('Set owner for the selected organisations \u2014 9M, VF or Both:','9M');
+  if(owner===null) return;
+  fetch('/api/crm/bulk',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'set_owner', ids:crmSelectedIds(), owner})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ alert(d.error||'Failed'); return; }
+      _crmSelected.clear(); crmReload();
+    }).catch(e=>alert(e.message));
+}
+// Merging keeps the oldest record (the one others were probably created as
+// duplicates of) and moves everything else onto it, rather than deleting data.
+function crmCombineSelected(){
+  if(!crmNeedSelection()) return;
+  const ids=crmSelectedIds();
+  if(ids.length<2){ alert('Select at least two organisations to combine.'); return; }
+  if(!confirm(`Combine ${ids.length} organisations into one?\n\nThe oldest record is kept. Contacts, opportunities and notes from the others move onto it, and any blank fields on the kept record are filled from the others. The merged records are then removed.`)) return;
+  fetch('/api/crm/bulk',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'combine', ids})}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ alert(d.error||'Failed'); return; }
+      _crmSelected.clear();
+      d.kept_id ? crmOpenOrg(d.kept_id) : crmReload();
+    }).catch(e=>alert(e.message));
+}
+function crmExportSelected(){
+  if(!crmNeedSelection()) return;
+  window.location.href='/api/crm/export?kind=orgs&ids='+crmSelectedIds().join(',');
+}
+function crmRelateEntries(){
+  if(!crmNeedSelection()) return;
+  alert('Relating entries to each other isn\u2019t built yet \u2014 use notes to record the link for now.');
+}
 // Actions on the open organisation.
 function crmDeleteCurrent(){ if(_crmCurrentOrgId) crmDeleteOrg(_crmCurrentOrgId); }
 function crmNewOppFromMenu(){ if(_crmCurrentOrgId) crmNewOpp(_crmCurrentOrgId); }
@@ -9474,21 +9572,18 @@ const CRM_MENUS = {
     {label:'Duplicate Current Entry', fn:'crmDuplicateOrg()', needsSel:true},
     {label:'Delete\u2026', fn:'crmDeleteCurrent()', needsSel:true},
     {sep:true},
-    {label:'Default Entry\u2026'},
-    {label:'Default Interaction\u2026'},
-    {label:'Default Email\u2026'},
-    {label:'Default Note\u2026'},
-    {label:'Default Document\u2026'},
-    {sep:true},
-    {label:'Territory Management'},
-    {sep:true},
     {label:'Select All', fn:'crmSelectAll(true)'},
     {label:'Deselect All', fn:'crmSelectAll(false)'},
     {label:'Invert Selection', fn:'crmInvertSelection()'},
     {sep:true},
-    {label:'Combine Selected Entries'},
+    {label:'Delete Selected\u2026', fn:'crmBulkDelete()', needsChecked:true},
+    {label:'Change Owner of Selected\u2026', fn:'crmBulkOwner()', needsChecked:true},
+    {label:'Combine Selected Entries\u2026', fn:'crmCombineSelected()', needsChecked:true},
+    {label:'Export Selected', fn:'crmExportSelected()', needsChecked:true},
+    {label:'Relate Entries\u2026', fn:'crmRelateEntries()', needsChecked:true},
+    {sep:true},
+    {label:'Territory Management'},
     {label:'Convert Contacts to Individuals'},
-    {label:'Relate Entries\u2026'},
   ],
   View: [
     {label:'Clear List', fn:'crmClearFilters()'},
@@ -9571,10 +9666,13 @@ function crmToggleMenu(name, ev){
   crmCloseMenus();
   if(wasOpen) return;
   const hasSel=!!_crmCurrentOrgId;
+  const hasChecked=_crmSelected.size>0;
   panel.innerHTML=(CRM_MENUS[name]||[]).map(it=>{
     if(it.sep) return '<div style="height:1px;background:var(--border);margin:4px 6px"></div>';
-    const enabled = !!it.fn && (!it.needsSel || hasSel);
-    const why = !it.fn ? 'Not built yet' : (it.needsSel && !hasSel ? 'Open an organisation first' : '');
+    const enabled = !!it.fn && (!it.needsSel || hasSel) && (!it.needsChecked || hasChecked);
+    const why = !it.fn ? 'Not built yet'
+      : (it.needsSel && !hasSel ? 'Open an organisation first'
+      : (it.needsChecked && !hasChecked ? 'Tick one or more rows first' : ''));
     return `<div ${enabled?`onclick="crmCloseMenus();${it.fn}"`:''} title="${esc(why)}"
       style="padding:6px 11px;border-radius:4px;font-size:12.5px;white-space:nowrap;
              ${enabled?'cursor:pointer;color:var(--t1)':'color:var(--t3);opacity:.55;cursor:default'}"
@@ -9617,13 +9715,19 @@ function crmLoadBook(){
           (q?'No organisations match that search.':'No organisations yet. Use <strong>+ Organisation</strong> to add the first one.')+'</div>';
         return;
       }
-      body.innerHTML='<div class="card" style="padding:0;overflow:auto">'+
+      body.innerHTML='<div id="crm-selbar" style="display:none;align-items:center;gap:10px;background:var(--navy-pale);border:1px solid var(--border);border-radius:6px;padding:7px 11px;margin-bottom:9px;font-size:12.5px"></div>'+
+        '<div class="card" style="padding:0;overflow:auto">'+
         '<table style="width:100%;border-collapse:collapse;font-size:12.5px">'+
-        '<thead><tr>'+['Organisation','Owner','Charity no.','Contacts','Open opps','Phone','Location',''].map(h=>
+        '<thead><tr>'+
+        '<th style="width:34px;padding:8px 10px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">'+
+        '<input type="checkbox" id="crm-check-all" onclick="crmToggleAll(this.checked)" title="Select all"></th>'+
+        ['Organisation','Owner','Charity no.','Contacts','Open opps','Phone','Location',''].map(h=>
           `<th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);color:var(--t3);font-size:11px;text-transform:uppercase;position:sticky;top:0;background:var(--surface)">${h}</th>`).join('')+
         '</tr></thead><tbody>'+
-        d.orgs.map(o=>`<tr style="cursor:pointer" onclick="crmOpenOrg(${o.id})"
-            onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='transparent'">
+        d.orgs.map(o=>`<tr id="crm-row-${o.id}" style="cursor:pointer" onclick="crmOpenOrg(${o.id})"
+            onmouseover="if(!this.dataset.sel)this.style.background='var(--s2)'" onmouseout="if(!this.dataset.sel)this.style.background='transparent'">
+          <td style="padding:8px 10px;border-bottom:1px solid var(--s2)" onclick="event.stopPropagation()">
+            <input type="checkbox" class="crm-row-check" value="${o.id}" onchange="crmRowChecked(${o.id}, this.checked)"></td>
           <td style="padding:8px 10px;border-bottom:1px solid var(--s2)"><strong>${esc(o.name)}</strong></td>
           <td style="padding:8px 10px;border-bottom:1px solid var(--s2)"><span class="tagpill">${esc(o.owner)}</span></td>
           <td style="padding:8px 10px;border-bottom:1px solid var(--s2);color:var(--t3)">${esc(o.reg_number||'—')}</td>

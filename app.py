@@ -944,6 +944,81 @@ def _crm_charity_extras(reg):
     cache_set(cache_key, {"what": what, "who": who, "how": how, "policies": policies})
     return what, who, how, policies
 
+@app.route("/api/crm/bulk", methods=["POST"])
+def api_crm_bulk():
+    """Bulk actions from the Edit menu on ticked rows."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    action = str(d.get("action", "")).strip()
+    try:
+        ids = [int(i) for i in (d.get("ids") or [])]
+    except Exception:
+        return jsonify({"ok": False, "error": "Bad selection"}), 400
+    if not ids:
+        return jsonify({"ok": False, "error": "Nothing selected"}), 400
+    # Bounded so a runaway selection can't lock the single worker.
+    ids = ids[:500]
+    marks = ",".join("?" * len(ids))
+
+    if action == "delete":
+        db_exec(f"DELETE FROM crm_contacts WHERE org_id IN ({marks})", tuple(ids))
+        db_exec(f"DELETE FROM crm_opportunities WHERE org_id IN ({marks})", tuple(ids))
+        db_exec(f"DELETE FROM crm_notes WHERE entity_type='org' AND entity_id IN ({marks})", tuple(ids))
+        db_exec(f"DELETE FROM crm_orgs WHERE id IN ({marks})", tuple(ids))
+        return jsonify({"ok": True, "deleted": len(ids)})
+
+    if action == "set_owner":
+        owner = str(d.get("owner", "")).strip()
+        if owner not in CRM_OWNERS:
+            return jsonify({"ok": False, "error": f"Owner must be one of: {', '.join(CRM_OWNERS)}"}), 400
+        db_exec(f"UPDATE crm_orgs SET owner=?, updated_at=? WHERE id IN ({marks})",
+                (owner, _crm_now()) + tuple(ids))
+        return jsonify({"ok": True, "updated": len(ids)})
+
+    if action == "combine":
+        if len(ids) < 2:
+            return jsonify({"ok": False, "error": "Select at least two records to combine"}), 400
+        rows = db_query(f"SELECT id FROM crm_orgs WHERE id IN ({marks}) ORDER BY id", tuple(ids))
+        if not rows or len(rows) < 2:
+            return jsonify({"ok": False, "error": "Could not find those records"}), 400
+        keep = rows[0][0]                       # oldest id = the original
+        losers = [r[0] for r in rows[1:]]
+        lmarks = ",".join("?" * len(losers))
+
+        # Fill blanks on the kept record from the others, so merging adds
+        # information rather than discarding it. Existing values always win.
+        fields = ["reg_number", "suffix", "org_type", "phone", "phone2", "phone3", "email", "email2",
+                  "email3", "website", "main_contact", "address", "address2", "city", "county",
+                  "postcode", "country", "cc_what", "cc_who", "cc_how", "cc_policies", "source"]
+        cur = db_query(f"SELECT {','.join(fields)} FROM crm_orgs WHERE id=?", (keep,))
+        others = db_query(f"SELECT {','.join(fields)} FROM crm_orgs WHERE id IN ({lmarks})", tuple(losers)) or []
+        if cur:
+            merged = list(cur[0])
+            for row in others:
+                for i, v in enumerate(row):
+                    if (merged[i] is None or str(merged[i]).strip() == "") and v not in (None, ""):
+                        merged[i] = v
+            setc = ", ".join(f"{f}=?" for f in fields)
+            db_exec(f"UPDATE crm_orgs SET {setc}, updated_at=? WHERE id=?",
+                    tuple(merged) + (_crm_now(), keep))
+
+        # Move children across, then append a note recording what happened —
+        # a silent merge is impossible to audit afterwards.
+        names = [r[0] for r in (db_query(f"SELECT name FROM crm_orgs WHERE id IN ({lmarks})", tuple(losers)) or [])]
+        db_exec(f"UPDATE crm_contacts SET org_id=? WHERE org_id IN ({lmarks})", (keep,) + tuple(losers))
+        db_exec(f"UPDATE crm_opportunities SET org_id=? WHERE org_id IN ({lmarks})", (keep,) + tuple(losers))
+        db_exec(f"UPDATE crm_notes SET entity_id=? WHERE entity_type='org' AND entity_id IN ({lmarks})",
+                (keep,) + tuple(losers))
+        db_exec(f"DELETE FROM crm_orgs WHERE id IN ({lmarks})", tuple(losers))
+        u = _auth_get_user(current_user())
+        db_exec("INSERT INTO crm_notes(entity_type, entity_id, body, author, created_at) VALUES(?,?,?,?,?)",
+                ("org", keep, "Combined " + str(len(losers)) + " record(s) into this one: " +
+                 ", ".join(n for n in names if n), _auth_caller_name(u) or current_user(), _crm_now()))
+        return jsonify({"ok": True, "kept_id": keep, "merged": len(losers)})
+
+    return jsonify({"ok": False, "error": "Unknown action"}), 400
+
 @app.route("/api/crm/search_notes", methods=["GET"])
 def api_crm_search_notes():
     if not current_user():
@@ -953,8 +1028,8 @@ def api_crm_search_notes():
         return jsonify({"ok": True, "results": []})
     rows = db_query("SELECT n.id, n.body, n.author, n.created_at, n.entity_id, g.name "
                     "FROM crm_notes n LEFT JOIN crm_orgs g ON g.id = n.entity_id "
-                    "WHERE n.entity_type='org' AND LOWER(n.body) LIKE ? "
-                    "ORDER BY n.id DESC LIMIT 100", (f"%{q}%",)) or []
+                    "WHERE n.entity_type='org' AND LOWER(n.body) LIKE ? ESCAPE '\\' "
+                    "ORDER BY n.id DESC LIMIT 100", (_crm_like(q),)) or []
     return jsonify({"ok": True, "results": [
         {"id": r[0], "body": r[1] or "", "author": r[2] or "", "created_at": r[3] or "",
          "org_id": r[4], "org_name": r[5] or ""} for r in rows]})
@@ -1006,7 +1081,19 @@ def api_crm_export():
     if kind not in specs:
         return jsonify({"ok": False, "error": "Unknown export"}), 400
     table, cols = specs[kind]
-    rows = db_query(f"SELECT {cols} FROM {table} ORDER BY id LIMIT 20000") or []
+    ids_param = (request.args.get("ids") or "").strip()
+    if ids_param:
+        try:
+            sel = [int(x) for x in ids_param.split(",") if x.strip()][:500]
+        except Exception:
+            sel = []
+        if sel:
+            marks = ",".join("?" * len(sel))
+            rows = db_query(f"SELECT {cols} FROM {table} WHERE id IN ({marks}) ORDER BY id", tuple(sel)) or []
+        else:
+            rows = []
+    else:
+        rows = db_query(f"SELECT {cols} FROM {table} ORDER BY id LIMIT 20000") or []
 
     def _gen():
         buf = io.StringIO()
@@ -1116,6 +1203,22 @@ def api_crm_orgs():
         # "Both" records belong to each organisation, so they show under either.
         sql += " AND (owner=? OR owner='Both')"
         params.append(owner)
+def _crm_like(term):
+    """Turns a user's search term into a SQL LIKE pattern.
+
+    '*' is the wildcard people expect from Maximizer, so it maps to SQL's '%'.
+    Any % or _ they type is escaped first, otherwise those would act as
+    wildcards by accident. With no '*' anywhere the term is treated as
+    "contains", which is what someone typing a partial name expects.
+    """
+    t = (term or "").strip()
+    if not t:
+        return "%"
+    t = t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    if "*" in t:
+        return t.replace("*", "%")
+    return f"%{t}%"
+
     field = (request.args.get("field") or "").strip()
     # A named field narrows the search to that column (the Search menu); with
     # no field it stays a general search across the usual identifiers.
@@ -1123,20 +1226,25 @@ def api_crm_orgs():
                    "address": "LOWER(address)", "city": "LOWER(city)",
                    "county": "LOWER(county)", "postcode": "LOWER(postcode)",
                    "reg_number": "reg_number"}
+    # ESCAPE '\\' is required for the escaping in _crm_like to be honoured.
+    pat = _crm_like(q)
     if q and field in _searchable:
         col = _searchable[field]
         if field == "email":
-            sql += " AND (LOWER(email) LIKE ? OR LOWER(email2) LIKE ? OR LOWER(email3) LIKE ?)"
-            params += [f"%{q}%"] * 3
+            sql += (" AND (LOWER(email) LIKE ? ESCAPE '\\' OR LOWER(email2) LIKE ? ESCAPE '\\' "
+                    "OR LOWER(email3) LIKE ? ESCAPE '\\')")
+            params += [pat] * 3
         elif field == "phone":
-            sql += " AND (phone LIKE ? OR phone2 LIKE ? OR phone3 LIKE ?)"
-            params += [f"%{q}%"] * 3
+            sql += (" AND (phone LIKE ? ESCAPE '\\' OR phone2 LIKE ? ESCAPE '\\' "
+                    "OR phone3 LIKE ? ESCAPE '\\')")
+            params += [pat] * 3
         else:
-            sql += f" AND {col} LIKE ?"
-            params.append(f"%{q}%")
+            sql += f" AND {col} LIKE ? ESCAPE '\\'"
+            params.append(pat)
     elif q:
-        sql += " AND (LOWER(name) LIKE ? OR LOWER(postcode) LIKE ? OR reg_number LIKE ?)"
-        params += [f"%{q}%", f"%{q}%", f"%{q}%"]
+        sql += (" AND (LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(postcode) LIKE ? ESCAPE '\\' "
+                "OR reg_number LIKE ? ESCAPE '\\')")
+        params += [pat, pat, pat]
     sql += " ORDER BY name LIMIT 300"
     rows = db_query(sql, tuple(params)) or []
     out = []
