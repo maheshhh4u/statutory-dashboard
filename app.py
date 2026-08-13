@@ -944,6 +944,83 @@ def _crm_charity_extras(reg):
     cache_set(cache_key, {"what": what, "who": who, "how": how, "policies": policies})
     return what, who, how, policies
 
+@app.route("/api/crm/search_notes", methods=["GET"])
+def api_crm_search_notes():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    q = (request.args.get("q") or "").strip().lower()
+    if not q:
+        return jsonify({"ok": True, "results": []})
+    rows = db_query("SELECT n.id, n.body, n.author, n.created_at, n.entity_id, g.name "
+                    "FROM crm_notes n LEFT JOIN crm_orgs g ON g.id = n.entity_id "
+                    "WHERE n.entity_type='org' AND LOWER(n.body) LIKE ? "
+                    "ORDER BY n.id DESC LIMIT 100", (f"%{q}%",)) or []
+    return jsonify({"ok": True, "results": [
+        {"id": r[0], "body": r[1] or "", "author": r[2] or "", "created_at": r[3] or "",
+         "org_id": r[4], "org_name": r[5] or ""} for r in rows]})
+
+@app.route("/api/crm/duplicates", methods=["GET"])
+def api_crm_duplicates():
+    """Likely duplicates, by charity number or by identical name. Both are
+    strong signals; fuzzy name matching would throw up too many false
+    positives to be useful without a review step."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    groups = []
+    for reason, sql in (
+        ("the same charity number",
+         "SELECT reg_number FROM crm_orgs WHERE reg_number IS NOT NULL AND TRIM(reg_number) <> '' "
+         "GROUP BY reg_number HAVING COUNT(*) > 1"),
+        ("the same name",
+         "SELECT LOWER(TRIM(name)) FROM crm_orgs GROUP BY LOWER(TRIM(name)) HAVING COUNT(*) > 1"),
+    ):
+        for row in (db_query(sql) or []):
+            key = row[0]
+            if reason.endswith("number"):
+                orgs = db_query("SELECT id, name, reg_number FROM crm_orgs WHERE reg_number=?", (key,))
+            else:
+                orgs = db_query("SELECT id, name, reg_number FROM crm_orgs WHERE LOWER(TRIM(name))=?", (key,))
+            groups.append({"reason": reason,
+                           "orgs": [{"id": o[0], "name": o[1], "reg_number": o[2] or ""} for o in (orgs or [])]})
+    return jsonify({"ok": True, "groups": groups})
+
+@app.route("/api/crm/export", methods=["GET"])
+def api_crm_export():
+    """CSV export of a CRM table. Streams rather than building the whole file
+    in memory, and caps rows, so a large address book can't repeat the
+    out-of-memory problems seen earlier."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    kind = (request.args.get("kind") or "orgs").strip()
+    specs = {
+        "orgs": ("crm_orgs",
+                 "id,name,owner,reg_number,suffix,org_type,main_contact,phone,phone2,phone3,"
+                 "email,email2,email3,website,address,address2,city,county,postcode,country,"
+                 "cc_what,cc_who,cc_how,cc_policies,source,notes,created_at"),
+        "contacts": ("crm_contacts",
+                     "id,org_id,first_name,last_name,job_title,email,phone,mobile,is_primary,notes,created_at"),
+        "opps": ("crm_opportunities",
+                 "id,org_id,title,owner,stage,value,probability,expected_close,status,source,notes,created_at"),
+        "notes": ("crm_notes", "id,entity_type,entity_id,body,author,created_at"),
+    }
+    if kind not in specs:
+        return jsonify({"ok": False, "error": "Unknown export"}), 400
+    table, cols = specs[kind]
+    rows = db_query(f"SELECT {cols} FROM {table} ORDER BY id LIMIT 20000") or []
+
+    def _gen():
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(cols.split(","))
+        yield buf.getvalue(); buf.seek(0); buf.truncate(0)
+        for r in rows:
+            w.writerow(["" if v is None else v for v in r])
+            yield buf.getvalue(); buf.seek(0); buf.truncate(0)
+
+    stamp = datetime.utcnow().strftime("%Y%m%d")
+    return Response(stream_with_context(_gen()), mimetype="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="crm_{kind}_{stamp}.csv"'})
+
 @app.route("/api/crm/lookup_charity", methods=["POST"])
 def api_crm_lookup_charity():
     """Fetches an organisation's details from the Charity Commission extract by
@@ -1039,7 +1116,25 @@ def api_crm_orgs():
         # "Both" records belong to each organisation, so they show under either.
         sql += " AND (owner=? OR owner='Both')"
         params.append(owner)
-    if q:
+    field = (request.args.get("field") or "").strip()
+    # A named field narrows the search to that column (the Search menu); with
+    # no field it stays a general search across the usual identifiers.
+    _searchable = {"name": "LOWER(name)", "email": "LOWER(email)", "phone": "phone",
+                   "address": "LOWER(address)", "city": "LOWER(city)",
+                   "county": "LOWER(county)", "postcode": "LOWER(postcode)",
+                   "reg_number": "reg_number"}
+    if q and field in _searchable:
+        col = _searchable[field]
+        if field == "email":
+            sql += " AND (LOWER(email) LIKE ? OR LOWER(email2) LIKE ? OR LOWER(email3) LIKE ?)"
+            params += [f"%{q}%"] * 3
+        elif field == "phone":
+            sql += " AND (phone LIKE ? OR phone2 LIKE ? OR phone3 LIKE ?)"
+            params += [f"%{q}%"] * 3
+        else:
+            sql += f" AND {col} LIKE ?"
+            params.append(f"%{q}%")
+    elif q:
         sql += " AND (LOWER(name) LIKE ? OR LOWER(postcode) LIKE ? OR reg_number LIKE ?)"
         params += [f"%{q}%", f"%{q}%", f"%{q}%"]
     sql += " ORDER BY name LIMIT 300"

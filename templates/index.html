@@ -1030,6 +1030,10 @@ select:focus{outline:none;border-color:var(--green)}
   <div class="card" style="padding:14px 16px;margin-bottom:12px">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <h2 style="margin:0;font-size:17px">&#128455; CRM</h2>
+      <!-- Menu bar modelled on Maximizer's. Items that aren't built yet are
+           shown greyed out rather than omitted, so the shape is familiar and
+           it's obvious what's still to come. -->
+      <span id="crm-menubar" style="display:flex;gap:1px;margin-left:6px"></span>
       <span id="crm-view-tabs" style="display:flex;gap:4px;margin-left:8px">
         <button class="btn btn-sm" id="crm-tab-book" onclick="crmSetView('book')">Address Book</button>
         <button class="btn btn-outline btn-sm" id="crm-tab-pipe" onclick="crmSetView('pipe')">Opportunities</button>
@@ -7264,6 +7268,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.51", date:"2026-08", title:"CRM menu bar \u2014 Edit, View, Search, Actions and Report",
+    changes:[
+      "Five menus laid out like Maximizer's, so the CRM is familiar to anyone moving across.",
+      "Working now \u2014 Search: by company, email, phone, address, city, county, postcode or charity number, plus a full-text note search and Find Duplicates (matching on charity number or identical name). View: filter by 9M or Vantage, clear filters. Actions: create an opportunity, add a contact, log a note, call, email, open the website, and re-fetch details from the Charity Commission. Edit: duplicate an entry (without copying the charity number, which must stay unique), delete. Report: CSV export of organisations, contacts, opportunities or notes.",
+      "Items not built yet \u2014 territory management, coloring rules, column setup, action plans, document merge and the timeline reports \u2014 are listed but greyed out, with a tooltip saying why. Hiding them would make the menus look arbitrary; showing them as working would be worse.",
+      "Items that act on the open record only enable once one is open, rather than failing when clicked.",
+      "The CSV export streams rather than assembling the file in memory, and is capped, so a large address book can't repeat the out-of-memory problems from earlier releases.",
+      "Honest note: this is the menu structure and the actions that could be built well in one pass \u2014 roughly half the items in the screenshots. The rest are visible as placeholders so it's clear what's outstanding rather than quietly missing.",
+    ]},
   { v:"2.50", date:"2026-08", title:"Fixed the charity lookup: a bare except was defeating the early stop, and the data was scanned twice",
     changes:[
       "The RuntimeError in the log (\u201cgenerator ignored GeneratorExit\u201d) was caused by a bare `except` in the file reader. When the lookup found its charity and stopped early, Python signals that by raising GeneratorExit inside the reader \u2014 and the bare except caught it and carried on. So the \u201cstop as soon as we find it\u201d never actually stopped, and the reader kept going through all 400,000 rows. Reproduced the exact error and confirmed the fix.",
@@ -9101,7 +9114,7 @@ function crSwitchModule(mod, initial){
   const firstBtn=Array.from(document.querySelectorAll('nav.nav .nav-btn'))
     .find(b=>(b.getAttribute('onclick')||'').includes(`switchTab('${first}'`));
   switchTab(first, firstBtn||null);
-  if(mod==='crm') crmReload();
+  if(mod==='crm'){ renderCrmMenubar(); crmReload(); }
   if(mod==='admin') loadAdminBrief();
   if(mod==='finance') loadFinanceBrief();
   if(!initial){
@@ -9119,6 +9132,7 @@ function crmOpenOrg(id){
   fetch('/api/crm/org/'+id).then(r=>r.json()).then(d=>{
     if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Not found')+'</div>'; return; }
     const o=d.org; _crmStages=d.stages||[]; _crmOwners=d.owners||[];
+    _crmCurrentOrgId=o.id; _crmCurrentOrg=o;   // menu items act on the open record
     const field=(l,v)=>v?`<div style="margin-bottom:5px"><span style="color:var(--t3);font-size:11px">${l}</span><br>${esc(v)}</div>`:'';
     body.innerHTML=`
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
@@ -9329,6 +9343,248 @@ function crmOppForm(o){
       o.org_id && _crmView!=='pipe' ? crmOpenOrg(o.org_id) : crmReload();
     }).catch(e=>alert(e.message));
 }
+// Tracks which organisation is open, so menu items that act on "the current
+// entry" know whether to be enabled.
+let _crmCurrentOrgId=null, _crmCurrentOrg=null, _crmSearchField='', _crmViewMode='all';
+
+function crmClearFilters(){
+  _crmSearchField=''; _crmViewMode='all';
+  const s=document.getElementById('crm-search'); if(s) s.value='';
+  const o=document.getElementById('crm-owner'); if(o) o.value='';
+  crmReload();
+}
+function crmOwnerFilter(owner){
+  const o=document.getElementById('crm-owner'); if(o) o.value=owner;
+  crmReload();
+}
+function crmViewFilter(mode){
+  _crmViewMode=mode;
+  if(mode==='contacts') alert('Contact-only listing isn\u2019t built yet \u2014 contacts show on each organisation.');
+  crmReload();
+}
+// Field-specific search. Maximizer offers a separate menu item per field; here
+// the same is achieved by prefixing the search box, which keeps one code path.
+function crmSearchField(field){
+  const labels={name:'company name', email:'email address', phone:'phone number',
+                address:'address line 1', city:'city/town', county:'county/state',
+                postcode:'postcode', reg_number:'charity number'};
+  const term=prompt('Search by '+(labels[field]||field)+':','');
+  if(term===null) return;
+  _crmSearchField=field;
+  const s=document.getElementById('crm-search');
+  if(s) s.value=term;
+  crmReload();
+}
+function crmSearchNotes(){
+  const term=prompt('Search notes for:','');
+  if(term===null || !term.trim()) return;
+  fetch('/api/crm/search_notes?q='+encodeURIComponent(term)).then(r=>r.json()).then(d=>{
+    if(!d.ok){ alert(d.error||'Search failed'); return; }
+    const body=document.getElementById('crm-body');
+    body.innerHTML='<div style="margin-bottom:10px"><button class="btn btn-outline btn-sm" onclick="crmReload()">\u2190 Back</button>'+
+      ' <strong style="margin-left:8px">'+d.results.length+' note(s) matching \u201c'+esc(term)+'\u201d</strong></div>'+
+      (d.results.length?d.results.map(n=>`<div class="card" style="padding:11px 13px;margin-bottom:8px;font-size:12.5px">
+        <div style="font-weight:600;margin-bottom:3px;cursor:pointer;color:var(--navy)" onclick="crmOpenOrg(${n.org_id})">${esc(n.org_name||'(no organisation)')}</div>
+        <div style="white-space:pre-wrap">${esc(n.body)}</div>
+        <div style="color:var(--t3);font-size:11px;margin-top:3px">${esc(n.author)} \u00b7 ${esc(n.created_at)}</div>
+      </div>`).join('') : '<div class="card" style="padding:20px;color:var(--t3)">No notes matched.</div>');
+  }).catch(e=>alert(e.message));
+}
+function crmFindDuplicates(){
+  fetch('/api/crm/duplicates').then(r=>r.json()).then(d=>{
+    if(!d.ok){ alert(d.error||'Failed'); return; }
+    if(!d.groups.length){ alert('No likely duplicates found.'); return; }
+    const body=document.getElementById('crm-body');
+    body.innerHTML='<div style="margin-bottom:10px"><button class="btn btn-outline btn-sm" onclick="crmReload()">\u2190 Back</button>'+
+      ' <strong style="margin-left:8px">'+d.groups.length+' possible duplicate group(s)</strong></div>'+
+      d.groups.map(g=>`<div class="card" style="padding:11px 13px;margin-bottom:8px">
+        <div style="font-size:11px;color:var(--t3);margin-bottom:5px">Matched on ${esc(g.reason)}</div>
+        ${g.orgs.map(o=>`<div style="font-size:12.5px;padding:3px 0;cursor:pointer;color:var(--navy)" onclick="crmOpenOrg(${o.id})">${esc(o.name)} <span style="color:var(--t3)">${esc(o.reg_number||'')}</span></div>`).join('')}
+      </div>`).join('');
+  }).catch(e=>alert(e.message));
+}
+function crmSelectAll(on){ alert(on?'Bulk selection isn\u2019t built yet.':'Nothing selected.'); }
+function crmInvertSelection(){ crmSelectAll(true); }
+
+// Actions on the open organisation.
+function crmDeleteCurrent(){ if(_crmCurrentOrgId) crmDeleteOrg(_crmCurrentOrgId); }
+function crmNewOppFromMenu(){ if(_crmCurrentOrgId) crmNewOpp(_crmCurrentOrgId); }
+function crmNewContactFromMenu(){ if(_crmCurrentOrgId) crmNewContact(_crmCurrentOrgId); }
+function crmQuickNote(){
+  if(!_crmCurrentOrgId) return;
+  const body=prompt('Add a note:','');
+  if(body===null || !body.trim()) return;
+  fetch('/api/crm/note',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({entity_type:'org', entity_id:_crmCurrentOrgId, body})})
+    .then(()=>crmOpenOrg(_crmCurrentOrgId)).catch(e=>alert(e.message));
+}
+function crmCallCurrent(){
+  const o=_crmCurrentOrg;
+  if(!o) return;
+  const num=o.phone||o.phone2||o.phone3;
+  if(!num){ alert('No phone number on this record.'); return; }
+  window.location.href='tel:'+num.replace(/\s/g,'');
+}
+function crmEmailCurrent(){
+  const o=_crmCurrentOrg;
+  if(!o) return;
+  const to=o.email||o.email2||o.email3;
+  if(!to){ alert('No email address on this record.'); return; }
+  window.location.href='mailto:'+to;
+}
+function crmOpenWebsite(){
+  const o=_crmCurrentOrg;
+  if(!o || !o.website){ alert('No website on this record.'); return; }
+  let url=o.website.trim();
+  if(!/^https?:\/\//i.test(url)) url='https://'+url;
+  window.open(url,'_blank','noopener');
+}
+function crmRefreshFromCC(){
+  const o=_crmCurrentOrg;
+  if(!o || !o.reg_number){ alert('This record has no charity number to look up.'); return; }
+  if(!confirm('Re-fetch this organisation\u2019s details from the Charity Commission?\n\nBlank fields will be filled; existing values are left as they are.')) return;
+  crmOpenOrgForm(o);
+  setTimeout(()=>{
+    const r=document.getElementById('crm-f-reg'); if(r) r.value=o.reg_number;
+    const sf=document.getElementById('crm-f-suffix'); if(sf) sf.value=o.suffix||'';
+    crmLookupCharity();
+  }, 120);
+}
+function crmDuplicateOrg(){
+  const o=_crmCurrentOrg;
+  if(!o) return;
+  const copy=Object.assign({}, o);
+  delete copy.id;
+  copy.name=(o.name||'')+' (copy)';
+  copy.reg_number=''; copy.suffix='';   // a duplicate must not share a charity number
+  crmOpenOrgForm(copy);
+}
+function crmExport(kind){
+  // Exports go through a normal link so the browser handles the download.
+  window.location.href='/api/crm/export?kind='+encodeURIComponent(kind);
+}
+// ── CRM menu bar ───────────────────────────────────────────────────────────
+// Modelled on Maximizer's Edit / View / Search / Actions / Report menus so the
+// layout is familiar to anyone moving across. Items that aren't built yet are
+// listed but disabled — hiding them would make the menus look arbitrary, and
+// pretending they work would be worse. `fn` present = it does something.
+// `needsSel` = only enabled when a record is open.
+const CRM_MENUS = {
+  Edit: [
+    {label:'Duplicate Current Entry', fn:'crmDuplicateOrg()', needsSel:true},
+    {label:'Delete\u2026', fn:'crmDeleteCurrent()', needsSel:true},
+    {sep:true},
+    {label:'Default Entry\u2026'},
+    {label:'Default Interaction\u2026'},
+    {label:'Default Email\u2026'},
+    {label:'Default Note\u2026'},
+    {label:'Default Document\u2026'},
+    {sep:true},
+    {label:'Territory Management'},
+    {sep:true},
+    {label:'Select All', fn:'crmSelectAll(true)'},
+    {label:'Deselect All', fn:'crmSelectAll(false)'},
+    {label:'Invert Selection', fn:'crmInvertSelection()'},
+    {sep:true},
+    {label:'Combine Selected Entries'},
+    {label:'Convert Contacts to Individuals'},
+    {label:'Relate Entries\u2026'},
+  ],
+  View: [
+    {label:'Clear List', fn:'crmClearFilters()'},
+    {sep:true},
+    {label:'All Entries', fn:"crmViewFilter('all')"},
+    {label:'All Companies', fn:"crmViewFilter('companies')"},
+    {label:'All Contacts', fn:"crmViewFilter('contacts')"},
+    {sep:true},
+    {label:'9 Mountains only', fn:"crmOwnerFilter('9M')"},
+    {label:'Vantage Fundraising only', fn:"crmOwnerFilter('VF')"},
+    {sep:true},
+    {label:'Coloring Rules\u2026'},
+    {label:'Column Setup\u2026'},
+    {label:'Favorite Lists\u2026'},
+  ],
+  Search: [
+    {label:'Company\u2026', fn:"crmSearchField('name')"},
+    {label:'All Email Addresses\u2026', fn:"crmSearchField('email')"},
+    {label:'All Phone Numbers\u2026', fn:"crmSearchField('phone')"},
+    {label:'Address Line 1\u2026', fn:"crmSearchField('address')"},
+    {label:'City/Town\u2026', fn:"crmSearchField('city')"},
+    {label:'State / County / Province\u2026', fn:"crmSearchField('county')"},
+    {label:'Zip / Postal Code\u2026', fn:"crmSearchField('postcode')"},
+    {sep:true},
+    {label:'Charity Number\u2026', fn:"crmSearchField('reg_number')"},
+    {label:'Notes\u2026', fn:"crmSearchNotes()"},
+    {sep:true},
+    {label:'Undo Search', fn:'crmClearFilters()'},
+    {label:'Advanced Search\u2026'},
+    {label:'Find Duplicates in List', fn:'crmFindDuplicates()'},
+  ],
+  Actions: [
+    {label:'Create an opportunity\u2026', fn:'crmNewOppFromMenu()', needsSel:true},
+    {label:'Add a contact\u2026', fn:'crmNewContactFromMenu()', needsSel:true},
+    {label:'Log a note\u2026', fn:'crmQuickNote()', needsSel:true},
+    {sep:true},
+    {label:'Make a call\u2026', fn:'crmCallCurrent()', needsSel:true},
+    {label:'Write an email\u2026', fn:'crmEmailCurrent()', needsSel:true},
+    {label:'Open website', fn:'crmOpenWebsite()', needsSel:true},
+    {sep:true},
+    {label:'Refresh from Charity Commission', fn:'crmRefreshFromCC()', needsSel:true},
+    {sep:true},
+    {label:'Schedule a meeting\u2026'},
+    {label:'Time a task\u2026'},
+    {label:'Merge to Document\u2026'},
+  ],
+  Report: [
+    {label:'Address Book export (CSV)', fn:"crmExport('orgs')"},
+    {label:'Contacts export (CSV)', fn:"crmExport('contacts')"},
+    {label:'Opportunities export (CSV)', fn:"crmExport('opps')"},
+    {sep:true},
+    {label:'Notes export (CSV)', fn:"crmExport('notes')"},
+    {sep:true},
+    {label:'Column Report\u2026'},
+    {label:'Consolidated Timeline Report'},
+  ],
+};
+function renderCrmMenubar(){
+  const bar=document.getElementById('crm-menubar');
+  if(!bar) return;
+  bar.innerHTML=Object.keys(CRM_MENUS).map(name=>
+    `<span style="position:relative">
+      <button type="button" onclick="crmToggleMenu('${name}',event)"
+        style="background:none;border:none;font-size:12.5px;padding:5px 9px;cursor:pointer;border-radius:4px;color:var(--t1)">${name}</button>
+      <div id="crm-menu-${name}" style="display:none;position:absolute;top:100%;left:0;min-width:245px;
+        background:var(--surface);border:1px solid var(--border);border-radius:6px;
+        box-shadow:0 8px 22px rgba(0,0,0,.15);padding:4px;z-index:400"></div>
+    </span>`).join('');
+}
+function crmCloseMenus(){
+  Object.keys(CRM_MENUS).forEach(n=>{
+    const el=document.getElementById('crm-menu-'+n); if(el) el.style.display='none';
+  });
+}
+function crmToggleMenu(name, ev){
+  if(ev) ev.stopPropagation();
+  const panel=document.getElementById('crm-menu-'+name);
+  if(!panel) return;
+  const wasOpen=panel.style.display==='block';
+  crmCloseMenus();
+  if(wasOpen) return;
+  const hasSel=!!_crmCurrentOrgId;
+  panel.innerHTML=(CRM_MENUS[name]||[]).map(it=>{
+    if(it.sep) return '<div style="height:1px;background:var(--border);margin:4px 6px"></div>';
+    const enabled = !!it.fn && (!it.needsSel || hasSel);
+    const why = !it.fn ? 'Not built yet' : (it.needsSel && !hasSel ? 'Open an organisation first' : '');
+    return `<div ${enabled?`onclick="crmCloseMenus();${it.fn}"`:''} title="${esc(why)}"
+      style="padding:6px 11px;border-radius:4px;font-size:12.5px;white-space:nowrap;
+             ${enabled?'cursor:pointer;color:var(--t1)':'color:var(--t3);opacity:.55;cursor:default'}"
+      ${enabled?`onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='none'"`:''}>${esc(it.label)}</div>`;
+  }).join('');
+  panel.style.display='block';
+}
+document.addEventListener('click', function(e){
+  if(!e.target.closest || !e.target.closest('#crm-menubar')) crmCloseMenus();
+});
 // ══ CRM ════════════════════════════════════════════════════════════════════
 let _crmView='book', _crmSearchTimer=null, _crmStages=[], _crmOwners=[];
 const crmMoney=v=>'\u00a3'+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:0});
@@ -9345,14 +9601,14 @@ function crmSearchDebounced(){
   clearTimeout(_crmSearchTimer);
   _crmSearchTimer=setTimeout(crmReload, 250);   // wait for typing to settle
 }
-function crmReload(){ _crmView==='pipe' ? crmLoadPipeline() : crmLoadBook(); }
+function crmReload(){ _crmCurrentOrgId=null; _crmCurrentOrg=null; _crmView==='pipe' ? crmLoadPipeline() : crmLoadBook(); }
 
 function crmLoadBook(){
   const body=document.getElementById('crm-body');
   const q=(document.getElementById('crm-search')||{}).value||'';
   const owner=(document.getElementById('crm-owner')||{}).value||'';
   body.innerHTML='<div class="loading-txt" style="padding:20px">Loading…</div>';
-  fetch(`/api/crm/orgs?q=${encodeURIComponent(q)}&owner=${encodeURIComponent(owner)}`)
+  fetch(`/api/crm/orgs?q=${encodeURIComponent(q)}&owner=${encodeURIComponent(owner)}&field=${encodeURIComponent(_crmSearchField||'')}`)
     .then(r=>r.json()).then(d=>{
       if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Could not load')+'</div>'; return; }
       _crmStages=d.stages||[]; _crmOwners=d.owners||[];
