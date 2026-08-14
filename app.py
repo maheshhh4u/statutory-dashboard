@@ -328,6 +328,41 @@ def db_init():
         )""")
         # Existing installs predate the wider field set, so add the new columns
         # rather than requiring the table to be rebuilt.
+        # Sales processes: a named pipeline with its own stages and a
+        # probability per stage, so forecasting reflects how that kind of deal
+        # actually progresses rather than one fixed set of stages.
+        client.execute("""CREATE TABLE IF NOT EXISTS crm_processes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            owner TEXT DEFAULT '9M',
+            is_default INTEGER DEFAULT 0,
+            created_by TEXT, created_at TEXT
+        )""")
+        client.execute("""CREATE TABLE IF NOT EXISTS crm_process_stages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            process_id INTEGER,
+            name TEXT,
+            probability INTEGER DEFAULT 0,
+            position INTEGER DEFAULT 0
+        )""")
+        try: client.execute("CREATE INDEX IF NOT EXISTS ix_crm_pstages ON crm_process_stages(process_id, position)")
+        except Exception: pass
+        # Reference IDs, Maximizer-style: a 12-character alphanumeric key shown
+        # to users and safe to quote in an email or on the phone.
+        for _col in ("ref_id TEXT",):
+            try: client.execute(f"ALTER TABLE crm_orgs ADD COLUMN {_col}")
+            except Exception: pass
+            try: client.execute(f"ALTER TABLE crm_opportunities ADD COLUMN {_col}")
+            except Exception: pass
+        for _ix in ("CREATE UNIQUE INDEX IF NOT EXISTS ix_crm_orgs_ref ON crm_orgs(ref_id)",
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_crm_opps_ref ON crm_opportunities(ref_id)"):
+            try: client.execute(_ix)
+            except Exception: pass
+        # Opportunities gain a process, so different kinds of deal can follow
+        # different stage sets.
+        for _col in ("process_id INTEGER",):
+            try: client.execute(f"ALTER TABLE crm_opportunities ADD COLUMN {_col}")
+            except Exception: pass
         for _col in ("suffix TEXT", "phone2 TEXT", "phone3 TEXT", "email2 TEXT", "email3 TEXT",
                      "main_contact TEXT", "address2 TEXT", "county TEXT", "country TEXT",
                      "is_charity INTEGER DEFAULT 0", "source TEXT",
@@ -843,6 +878,34 @@ def api_ai_documents_manage():
     return jsonify({"ok": False, "error": "Unknown action"}), 400
 
 # ══ CRM ════════════════════════════════════════════════════════════════════
+# Reference IDs. 12 characters, Maximizer-style. Deliberately excludes the
+# characters that get misread when someone reads an ID down the phone or copies
+# it from a printed page: 0/O, 1/I/L, 5/S, 8/B. Uppercase only, for the same
+# reason.
+_REF_ALPHABET = "ACDEFGHJKMNPQRTUVWXY234679"   # no 0/O, 1/I/L, 5/S, 8/B
+
+def _crm_new_ref(table):
+    """A unique 12-character reference. Checked against the table rather than
+    assumed unique — a collision is unlikely but silently reusing an ID would
+    be much worse than looping once more."""
+    for _ in range(12):
+        ref = "".join(_secrets.choice(_REF_ALPHABET) for _ in range(12))
+        hit = db_query(f"SELECT 1 FROM {table} WHERE ref_id=? LIMIT 1", (ref,))
+        if not hit:
+            return ref
+    # Falls back to a timestamp-based value, which cannot collide in practice.
+    return ("T" + datetime.utcnow().strftime("%y%m%d%H%M%S"))[:12]
+
+def _crm_backfill_refs():
+    """Gives a reference to anything created before references existed, so no
+    record is left without one."""
+    for table in ("crm_orgs", "crm_opportunities"):
+        rows = db_query(f"SELECT id FROM {table} WHERE ref_id IS NULL OR TRIM(ref_id)='' LIMIT 500") or []
+        for (rid,) in rows:
+            db_exec(f"UPDATE {table} SET ref_id=? WHERE id=?", (_crm_new_ref(table), rid))
+        if rows:
+            print(f"[crm] assigned reference IDs to {len(rows)} {table} record(s)")
+
 def _crm_like(term):
     """Turns a user's search term into a SQL LIKE pattern.
 
@@ -959,6 +1022,121 @@ def _crm_charity_extras(reg):
         print(f"[crm] policy lookup failed for {reg}: {e}")
     cache_set(cache_key, {"what": what, "who": who, "how": how, "policies": policies})
     return what, who, how, policies
+
+@app.route("/api/crm/processes", methods=["GET"])
+def api_crm_processes():
+    """Sales processes with their stages. Seeds a default on first use so
+    opportunities always have a pipeline to sit in."""
+    if not db_query("SELECT 1 FROM crm_processes LIMIT 1"):
+        db_exec("INSERT INTO crm_processes(name, owner, is_default, created_by, created_at) "
+                "VALUES(?,?,?,?,?)", ("Standard Sales Process", "9M", 1, current_user() or "", _crm_now()))
+        r = db_query("SELECT id FROM crm_processes ORDER BY id DESC LIMIT 1")
+        if r:
+            pid = r[0][0]
+            for i, (nm, prob) in enumerate([("Lead", 10), ("Qualified", 25), ("Proposal", 50),
+                                            ("Negotiation", 75), ("Won", 100), ("Lost", 0)]):
+                db_exec("INSERT INTO crm_process_stages(process_id, name, probability, position) "
+                        "VALUES(?,?,?,?)", (pid, nm, prob, i))
+    procs = []
+    for r in (db_query("SELECT id, name, owner, is_default FROM crm_processes ORDER BY id") or []):
+        stages = [{"id": st[0], "name": st[1], "probability": st[2] or 0, "position": st[3] or 0}
+                  for st in (db_query("SELECT id, name, probability, position FROM crm_process_stages "
+                                      "WHERE process_id=? ORDER BY position", (r[0],)) or [])]
+        procs.append({"id": r[0], "name": r[1], "owner": r[2] or "9M",
+                      "is_default": bool(r[3]), "stages": stages})
+    return jsonify({"ok": True, "processes": procs, "owners": CRM_OWNERS})
+
+@app.route("/api/crm/process", methods=["POST"])
+def api_crm_process_save():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    act = str(d.get("action", "")).strip()
+    pid = d.get("id")
+
+    if act == "delete":
+        used = db_query("SELECT COUNT(*) FROM crm_opportunities WHERE process_id=?", (int(pid or 0),))
+        if used and used[0][0]:
+            return jsonify({"ok": False, "error":
+                            f"{used[0][0]} opportunity(ies) still use this process. Move them first."}), 400
+        db_exec("DELETE FROM crm_process_stages WHERE process_id=?", (int(pid or 0),))
+        db_exec("DELETE FROM crm_processes WHERE id=?", (int(pid or 0),))
+        return jsonify({"ok": True})
+
+    if act == "set_default":
+        db_exec("UPDATE crm_processes SET is_default=0")
+        db_exec("UPDATE crm_processes SET is_default=1 WHERE id=?", (int(pid or 0),))
+        return jsonify({"ok": True})
+
+    name = str(d.get("name", "")).strip()[:80]
+    if not name:
+        return jsonify({"ok": False, "error": "Give the process a name"}), 400
+    owner = str(d.get("owner", "9M")).strip()
+    if owner not in CRM_OWNERS: owner = "9M"
+    stages = d.get("stages") or []
+    if not stages:
+        return jsonify({"ok": False, "error": "A process needs at least one stage"}), 400
+    clean = []
+    for i, st in enumerate(stages):
+        nm = str((st or {}).get("name", "")).strip()[:60]
+        if not nm: continue
+        try: prob = max(0, min(100, int((st or {}).get("probability") or 0)))
+        except Exception: prob = 0
+        clean.append((nm, prob, i))
+    if not clean:
+        return jsonify({"ok": False, "error": "Every stage needs a name"}), 400
+
+    if pid:
+        db_exec("UPDATE crm_processes SET name=?, owner=? WHERE id=?", (name, owner, int(pid)))
+        db_exec("DELETE FROM crm_process_stages WHERE process_id=?", (int(pid),))
+        target = int(pid)
+    else:
+        db_exec("INSERT INTO crm_processes(name, owner, is_default, created_by, created_at) "
+                "VALUES(?,?,?,?,?)", (name, owner, 0, current_user(), _crm_now()))
+        r = db_query("SELECT id FROM crm_processes ORDER BY id DESC LIMIT 1")
+        target = r[0][0] if r else 0
+    for nm, prob, pos in clean:
+        db_exec("INSERT INTO crm_process_stages(process_id, name, probability, position) VALUES(?,?,?,?)",
+                (target, nm, prob, pos))
+    return jsonify({"ok": True, "id": target})
+
+@app.route("/api/crm/forecast", methods=["GET"])
+def api_crm_forecast():
+    """Revenue forecast by process and stage. The weighted figure uses the
+    stage's probability from its process, which is the point of defining
+    processes at all."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    owner = (request.args.get("owner") or "").strip()
+    sql = ("SELECT o.id, o.title, o.stage, o.value, o.probability, o.expected_close, o.process_id, "
+           "g.name FROM crm_opportunities o LEFT JOIN crm_orgs g ON g.id=o.org_id "
+           "WHERE o.status='open'")
+    params = []
+    if owner in CRM_OWNERS:
+        sql += " AND (o.owner=? OR o.owner='Both')"
+        params.append(owner)
+    rows = db_query(sql, tuple(params)) or []
+    stage_prob = {}
+    for r in (db_query("SELECT process_id, name, probability FROM crm_process_stages") or []):
+        stage_prob[(r[0], r[1])] = r[2] or 0
+    out, total, weighted = [], 0.0, 0.0
+    by_stage = {}
+    for r in rows:
+        val = r[3] or 0
+        # The stage's own probability wins when the opportunity belongs to a
+        # process; the per-opportunity figure is the fallback.
+        prob = stage_prob.get((r[6], r[2]))
+        if prob is None: prob = r[4] or 0
+        total += val
+        weighted += val * (prob / 100.0)
+        d = by_stage.setdefault(r[2] or "(no stage)", {"count": 0, "value": 0.0, "weighted": 0.0, "probability": prob})
+        d["count"] += 1; d["value"] += val; d["weighted"] += val * (prob / 100.0)
+        out.append({"id": r[0], "title": r[1], "stage": r[2], "value": val,
+                    "probability": prob, "expected_close": r[5] or "", "org_name": r[7] or ""})
+    return jsonify({"ok": True, "total_value": round(total, 2), "weighted_value": round(weighted, 2),
+                    "by_stage": [{"stage": k, **{kk: (round(vv, 2) if isinstance(vv, float) else vv)
+                                                 for kk, vv in v.items()}} for k, v in by_stage.items()],
+                    "opportunities": out})
 
 @app.route("/api/crm/bulk", methods=["POST"])
 def api_crm_bulk():
@@ -1262,14 +1440,14 @@ def api_crm_org_detail(oid):
     r = db_query("SELECT id, name, owner, reg_number, suffix, org_type, phone, phone2, phone3, "
                  "email, email2, email3, website, main_contact, address, address2, city, county, "
                  "postcode, country, is_charity, source, cc_what, cc_who, cc_how, cc_policies, "
-                 "notes, created_by, created_at, updated_at FROM crm_orgs WHERE id=?", (oid,))
+                 "notes, ref_id, created_by, created_at, updated_at FROM crm_orgs WHERE id=?", (oid,))
     if not r:
         return jsonify({"ok": False, "error": "Not found"}), 404
     v = r[0]
     keys = ["id", "name", "owner", "reg_number", "suffix", "org_type", "phone", "phone2", "phone3",
             "email", "email2", "email3", "website", "main_contact", "address", "address2", "city",
             "county", "postcode", "country", "is_charity", "source", "cc_what", "cc_who",
-            "cc_how", "cc_policies", "notes", "created_by", "created_at", "updated_at"]
+            "cc_how", "cc_policies", "notes", "ref_id", "created_by", "created_at", "updated_at"]
     org = {k: (v[i] if v[i] is not None else ("" if k != "id" else v[i])) for i, k in enumerate(keys)}
     org["is_charity"] = bool(org["is_charity"])
     contacts = [{"id": c[0], "first_name": c[1] or "", "last_name": c[2] or "", "job_title": c[3] or "",
@@ -1279,8 +1457,9 @@ def api_crm_org_detail(oid):
                                    (oid,)) or [])]
     opps = [{"id": o[0], "title": o[1] or "", "stage": o[2] or "", "value": o[3] or 0,
              "probability": o[4] or 0, "expected_close": o[5] or "", "status": o[6] or "open",
-             "owner": o[7] or ""}
-            for o in (db_query("SELECT id, title, stage, value, probability, expected_close, status, owner "
+             "owner": o[7] or "", "ref_id": o[8] or "", "contact_id": o[9], "process_id": o[10]}
+            for o in (db_query("SELECT id, title, stage, value, probability, expected_close, status, owner, "
+                               "ref_id, contact_id, process_id "
                                "FROM crm_opportunities WHERE org_id=? ORDER BY id DESC", (oid,)) or [])]
     notes = [{"id": n[0], "body": n[1] or "", "author": n[2] or "", "created_at": n[3] or ""}
              for n in (db_query("SELECT id, body, author, created_at FROM crm_notes "
@@ -1334,9 +1513,9 @@ def api_crm_org_save():
         setclause = ", ".join(f"{c.strip()}=?" for c in cols.split(","))
         db_exec(f"UPDATE crm_orgs SET {setclause} WHERE id=?", vals + (int(oid),))
         return jsonify({"ok": True, "id": int(oid)})
-    placeholders = ",".join("?" * (len(cols.split(",")) + 2))
-    db_exec(f"INSERT INTO crm_orgs({cols}, created_by, created_at) VALUES({placeholders})",
-            vals + (current_user(), _crm_now()))
+    placeholders = ",".join("?" * (len(cols.split(",")) + 3))
+    db_exec(f"INSERT INTO crm_orgs({cols}, ref_id, created_by, created_at) VALUES({placeholders})",
+            vals + (_crm_new_ref("crm_orgs"), current_user(), _crm_now()))
     r = db_query("SELECT id FROM crm_orgs WHERE name=? ORDER BY id DESC LIMIT 1", (name,))
     return jsonify({"ok": True, "id": (r[0][0] if r else None)})
 
@@ -1435,17 +1614,27 @@ def api_crm_opportunity_save():
     except Exception: value = 0.0
     try: prob = max(0, min(100, int(d.get("probability") or 0)))
     except Exception: prob = 0
+    proc_id = int(d.get("process_id")) if d.get("process_id") else None
+    # When the opportunity belongs to a process, the stage's own probability is
+    # authoritative — that's the whole point of defining one.
+    if proc_id and stage:
+        sp = db_query("SELECT probability FROM crm_process_stages WHERE process_id=? AND name=?",
+                      (proc_id, stage))
+        if sp: prob = sp[0][0] or 0
     vals = (org_id, (int(d.get("contact_id")) if d.get("contact_id") else None), title, owner, stage,
             value, prob, str(d.get("expected_close", ""))[:10], str(d.get("source", ""))[:60],
-            str(d.get("notes", ""))[:2000], _crm_now())
+            str(d.get("notes", ""))[:2000], proc_id, _crm_now())
     if pid:
         db_exec("UPDATE crm_opportunities SET org_id=?, contact_id=?, title=?, owner=?, stage=?, value=?, "
-                "probability=?, expected_close=?, source=?, notes=?, updated_at=? WHERE id=?", vals + (int(pid),))
-    else:
-        db_exec("INSERT INTO crm_opportunities(org_id, contact_id, title, owner, stage, value, probability, "
-                "expected_close, source, notes, updated_at, created_by, created_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", vals + (current_user(), _crm_now()))
-    return jsonify({"ok": True})
+                "probability=?, expected_close=?, source=?, notes=?, process_id=?, updated_at=? WHERE id=?",
+                vals + (int(pid),))
+        return jsonify({"ok": True, "id": int(pid)})
+    db_exec("INSERT INTO crm_opportunities(org_id, contact_id, title, owner, stage, value, probability, "
+            "expected_close, source, notes, process_id, updated_at, ref_id, created_by, created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            vals + (_crm_new_ref("crm_opportunities"), current_user(), _crm_now()))
+    r = db_query("SELECT id FROM crm_opportunities ORDER BY id DESC LIMIT 1")
+    return jsonify({"ok": True, "id": (r[0][0] if r else None)})
 
 @app.route("/api/crm/note", methods=["POST"])
 def api_crm_note_add():
@@ -4581,6 +4770,8 @@ def _ai_docs_bootstrap():
 def login_page():
     _auth_bootstrap()
     _ai_docs_bootstrap()
+    try: _crm_backfill_refs()
+    except Exception as _e: print(f'[crm] ref backfill skipped: {_e}')
     next_url = request.values.get("next") or "/"
     if not next_url.startswith("/"):
         next_url = "/"          # never redirect off-site after sign-in
