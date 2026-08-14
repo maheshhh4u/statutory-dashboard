@@ -1023,6 +1023,236 @@ def _crm_charity_extras(reg):
     cache_set(cache_key, {"what": what, "who": who, "how": how, "policies": policies})
     return what, who, how, policies
 
+# ── Bulk import ────────────────────────────────────────────────────────────
+# Two steps on purpose: upload and preview first, then commit. Import is the
+# one operation that writes a lot of data at once, and an unwanted import is
+# tedious to unpick — so nothing is written until the mapping has been seen
+# and confirmed.
+CRM_IMPORT_FIELDS = {
+    "orgs": [
+        ("name", "Company name", True), ("owner", "Owner (9M/VF/Both)", False),
+        ("reg_number", "Charity number", False), ("suffix", "Charity suffix", False),
+        ("org_type", "Type", False), ("main_contact", "Main contact", False),
+        ("phone", "Phone 1", False), ("phone2", "Phone 2", False), ("phone3", "Phone 3", False),
+        ("email", "Email 1", False), ("email2", "Email 2", False), ("email3", "Email 3", False),
+        ("website", "Website", False), ("address", "Address 1", False), ("address2", "Address 2", False),
+        ("city", "City / Town", False), ("county", "County / State", False),
+        ("postcode", "Postcode / Zip", False), ("country", "Country", False),
+        ("source", "Source", False), ("notes", "Notes", False),
+    ],
+    "opps": [
+        ("title", "Opportunity title", True), ("org_name", "Company name (to match)", True),
+        ("owner", "Owner (9M/VF/Both)", False), ("stage", "Stage", False),
+        ("value", "Value", False), ("probability", "Probability %", False),
+        ("expected_close", "Expected close (YYYY-MM-DD)", False),
+        ("source", "Source", False), ("notes", "Notes", False),
+    ],
+}
+_import_cache = {}       # token -> parsed rows, held only until committed
+
+def _import_parse(raw_bytes, filename):
+    """Reads CSV or Excel into (headers, rows). Excel needs openpyxl; if that
+    isn't installed the message says so rather than failing obscurely."""
+    name = (filename or "").lower()
+    if name.endswith((".xlsx", ".xlsm")):
+        try:
+            from openpyxl import load_workbook
+        except Exception:
+            raise ValueError("Excel files need the 'openpyxl' package on the server. "
+                             "Add openpyxl to requirements.txt, or save the file as CSV.")
+        wb = load_workbook(io.BytesIO(raw_bytes), read_only=True, data_only=True)
+        ws = wb.active
+        rows = []
+        for r in ws.iter_rows(values_only=True):
+            rows.append(["" if v is None else str(v).strip() for v in r])
+            if len(rows) > 5001:
+                break
+        wb.close()
+    else:
+        text = raw_bytes.decode("utf-8-sig", errors="replace")
+        rows = [r for r in csv.reader(io.StringIO(text))]
+    rows = [r for r in rows if any(str(c).strip() for c in r)]
+    if not rows:
+        raise ValueError("That file has no rows in it.")
+    headers = [str(h).strip() for h in rows[0]]
+    return headers, rows[1:5001]        # capped, to protect the single worker
+
+def _import_guess(headers, kind):
+    """Pre-matches spreadsheet columns to CRM fields by name, so most of the
+    mapping is already done when the screen opens."""
+    out = {}
+    fields = CRM_IMPORT_FIELDS[kind]
+    norm = lambda t: re.sub(r"[^a-z0-9]", "", str(t).lower())
+    aliases = {
+        "name": ["companyname", "company", "organisation", "organization", "charityname", "account"],
+        "reg_number": ["charityno", "charitynumber", "regno", "registeredcharitynumber", "regnumber"],
+        "phone": ["phone", "phone1", "telephone", "tel", "mainphone"],
+        "email": ["email", "email1", "emailaddress"],
+        "address": ["address", "address1", "addressline1", "street"],
+        "address2": ["address2", "addressline2"],
+        "city": ["city", "town", "citytown"],
+        "county": ["county", "state", "province", "stateprovince", "stcounty"],
+        "postcode": ["postcode", "zip", "zipcode", "postalcode", "zippostal", "zippostalcode", "postcodezip"],
+        "main_contact": ["maincontact", "contact", "contactname"],
+        "org_name": ["companyname", "company", "organisation", "account"],
+        "title": ["opportunity", "opportunityname", "title", "subject"],
+        "value": ["value", "amount", "revenue", "forecastrevenue"],
+        "probability": ["probability", "prob", "percent", "confidence"],
+        "expected_close": ["expectedclose", "closedate", "closingdate", "expectedclosedate"],
+    }
+    for idx, h in enumerate(headers):
+        hn = norm(h)
+        for key, label, _req in fields:
+            if hn == norm(key) or hn == norm(label) or hn in [norm(a) for a in aliases.get(key, [])]:
+                if key not in out:
+                    out[key] = idx
+                break
+    return out
+
+@app.route("/api/crm/import/upload", methods=["POST"])
+def api_crm_import_upload():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    kind = (request.form.get("kind") or "orgs").strip()
+    if kind not in CRM_IMPORT_FIELDS:
+        return jsonify({"ok": False, "error": "Unknown import type"}), 400
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"ok": False, "error": "No file was uploaded"}), 400
+    raw = f.read()
+    if len(raw) > 8 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "That file is over 8MB. Split it, or save as CSV."}), 400
+    try:
+        headers, rows = _import_parse(raw, f.filename)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:200]}), 400
+
+    token = _secrets.token_urlsafe(12)
+    _import_cache[token] = {"kind": kind, "headers": headers, "rows": rows,
+                            "user": current_user(), "at": time.time()}
+    # Only a few imports are ever in flight; drop anything older than an hour
+    # so the parsed rows don't sit in memory indefinitely.
+    for k in [k for k, v in _import_cache.items() if time.time() - v["at"] > 3600]:
+        _import_cache.pop(k, None)
+
+    return jsonify({"ok": True, "token": token, "headers": headers,
+                    "total_rows": len(rows), "sample": rows[:5],
+                    "fields": [{"key": k, "label": l, "required": rq} for k, l, rq in CRM_IMPORT_FIELDS[kind]],
+                    "mapping": _import_guess(headers, kind)})
+
+@app.route("/api/crm/import/commit", methods=["POST"])
+def api_crm_import_commit():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    token = str(d.get("token", ""))
+    job = _import_cache.get(token)
+    if not job:
+        return jsonify({"ok": False, "error": "That upload has expired — please upload the file again."}), 400
+    if job["user"] != current_user():
+        return jsonify({"ok": False, "error": "That upload belongs to another user"}), 403
+
+    mapping = d.get("mapping") or {}
+    kind = job["kind"]
+    dedupe = bool(d.get("dedupe", True))
+    dry_run = bool(d.get("dry_run"))
+    fields = CRM_IMPORT_FIELDS[kind]
+    required = [k for k, _l, rq in fields if rq]
+    for rq in required:
+        if mapping.get(rq) in (None, "", -1):
+            label = next(l for k, l, _ in fields if k == rq)
+            return jsonify({"ok": False, "error": f"“{label}” must be mapped to a column"}), 400
+
+    def cell(row, key):
+        idx = mapping.get(key)
+        if idx in (None, "", -1): return ""
+        try: return str(row[int(idx)]).strip()
+        except Exception: return ""
+
+    created = updated = skipped = 0
+    errors = []
+    for n, row in enumerate(job["rows"], start=2):     # row 1 is the header
+        try:
+            if kind == "orgs":
+                name = cell(row, "name")
+                if not name:
+                    skipped += 1; continue
+                reg = re.sub(r"[^0-9]", "", cell(row, "reg_number"))
+                # Match on charity number first (reliable), then exact name.
+                existing = None
+                if dedupe:
+                    if reg:
+                        r = db_query("SELECT id FROM crm_orgs WHERE reg_number=?", (reg,))
+                        existing = r[0][0] if r else None
+                    if not existing:
+                        r = db_query("SELECT id FROM crm_orgs WHERE LOWER(TRIM(name))=?", (name.strip().lower(),))
+                        existing = r[0][0] if r else None
+                owner = cell(row, "owner") or "9M"
+                if owner not in CRM_OWNERS: owner = "9M"
+                vals = {k: cell(row, k) for k, _l, _r in fields}
+                vals["name"] = _crm_proper_name(name) if name.isupper() else name
+                vals["owner"] = owner
+                vals["reg_number"] = reg
+                if dry_run:
+                    updated += 1 if existing else 0
+                    created += 0 if existing else 1
+                    continue
+                if existing:
+                    # Only fill blanks on an existing record — an import should
+                    # never quietly overwrite something already checked by hand.
+                    sets, params = [], []
+                    for k, _l, _r in fields:
+                        if k in ("name", "owner") or not vals.get(k): continue
+                        sets.append(f"{k}=COALESCE(NULLIF({k},''), ?)")
+                        params.append(vals[k])
+                    if sets:
+                        db_exec(f"UPDATE crm_orgs SET {', '.join(sets)}, updated_at=? WHERE id=?",
+                                tuple(params) + (_crm_now(), existing))
+                    updated += 1
+                else:
+                    cols = [k for k, _l, _r in fields]
+                    marks = ",".join("?" * (len(cols) + 4))
+                    db_exec(f"INSERT INTO crm_orgs({','.join(cols)}, ref_id, is_charity, created_by, created_at) "
+                            f"VALUES({marks})",
+                            tuple(vals[k] for k in cols) + (_crm_new_ref("crm_orgs"), 1 if reg else 0,
+                                                            current_user(), _crm_now()))
+                    created += 1
+            else:
+                title = cell(row, "title")
+                org_name = cell(row, "org_name")
+                if not title or not org_name:
+                    skipped += 1; continue
+                r = db_query("SELECT id FROM crm_orgs WHERE LOWER(TRIM(name))=?", (org_name.strip().lower(),))
+                if not r:
+                    errors.append(f"Row {n}: no organisation named “{org_name}”")
+                    skipped += 1; continue
+                if dry_run:
+                    created += 1; continue
+                try: value = float(re.sub(r"[^0-9.\-]", "", cell(row, "value")) or 0)
+                except Exception: value = 0.0
+                try: prob = max(0, min(100, int(float(re.sub(r"[^0-9.\-]", "", cell(row, "probability")) or 0))))
+                except Exception: prob = 0
+                owner = cell(row, "owner") or "9M"
+                if owner not in CRM_OWNERS: owner = "9M"
+                db_exec("INSERT INTO crm_opportunities(org_id, title, owner, stage, value, probability, "
+                        "expected_close, source, notes, status, ref_id, created_by, created_at, updated_at) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (r[0][0], title, owner, cell(row, "stage") or "Lead", value, prob,
+                         cell(row, "expected_close")[:10], cell(row, "source"), cell(row, "notes"),
+                         "open", _crm_new_ref("crm_opportunities"), current_user(), _crm_now(), _crm_now()))
+                created += 1
+        except Exception as e:
+            errors.append(f"Row {n}: {str(e)[:110]}")
+            skipped += 1
+        if len(errors) > 40:
+            errors.append("… further errors not listed")
+            break
+
+    if not dry_run:
+        _import_cache.pop(token, None)
+    return jsonify({"ok": True, "created": created, "updated": updated, "skipped": skipped,
+                    "errors": errors, "dry_run": dry_run})
+
 @app.route("/api/crm/processes", methods=["GET"])
 def api_crm_processes():
     """Sales processes with their stages. Seeds a default on first use so
@@ -1390,49 +1620,54 @@ def api_crm_orgs():
     caller can find a record however they happen to remember it."""
     q = (request.args.get("q") or "").strip().lower()
     owner = (request.args.get("owner") or "").strip()
-    sql = ("SELECT id, name, owner, reg_number, org_type, phone, email, city, postcode, updated_at "
-           "FROM crm_orgs WHERE 1=1")
+    # Counts come back with the row via sub-selects rather than a query per
+    # organisation. Every db_query opens a fresh HTTPS connection to Turso, so
+    # the old "one query, then two more per row" pattern meant 1+2N network
+    # round trips — slow even for a handful of records, and worse with every
+    # row added. This is one round trip regardless of how many rows there are.
+    sql = ("SELECT o.id, o.name, o.owner, o.reg_number, o.org_type, o.phone, o.email, o.city, "
+           "o.postcode, o.updated_at, o.ref_id, "
+           "(SELECT COUNT(*) FROM crm_contacts c WHERE c.org_id=o.id) AS contact_count, "
+           "(SELECT COUNT(*) FROM crm_opportunities p WHERE p.org_id=o.id AND p.status='open') AS open_opps "
+           "FROM crm_orgs o WHERE 1=1")
     params = []
     if owner in CRM_OWNERS:
         # "Both" records belong to each organisation, so they show under either.
-        sql += " AND (owner=? OR owner='Both')"
+        sql += " AND (o.owner=? OR o.owner='Both')"
         params.append(owner)
     field = (request.args.get("field") or "").strip()
     # A named field narrows the search to that column (the Search menu); with
     # no field it stays a general search across the usual identifiers.
-    _searchable = {"name": "LOWER(name)", "email": "LOWER(email)", "phone": "phone",
-                   "address": "LOWER(address)", "city": "LOWER(city)",
-                   "county": "LOWER(county)", "postcode": "LOWER(postcode)",
-                   "reg_number": "reg_number"}
+    _searchable = {"name": "LOWER(o.name)", "email": "LOWER(o.email)", "phone": "o.phone",
+                   "address": "LOWER(o.address)", "city": "LOWER(o.city)",
+                   "county": "LOWER(o.county)", "postcode": "LOWER(o.postcode)",
+                   "reg_number": "o.reg_number"}
     # ESCAPE '\\' is required for the escaping in _crm_like to be honoured.
     pat = _crm_like(q)
     if q and field in _searchable:
         col = _searchable[field]
         if field == "email":
-            sql += (" AND (LOWER(email) LIKE ? ESCAPE '\\' OR LOWER(email2) LIKE ? ESCAPE '\\' "
-                    "OR LOWER(email3) LIKE ? ESCAPE '\\')")
+            sql += (" AND (LOWER(o.email) LIKE ? ESCAPE '\\' OR LOWER(o.email2) LIKE ? ESCAPE '\\' "
+                    "OR LOWER(o.email3) LIKE ? ESCAPE '\\')")
             params += [pat] * 3
         elif field == "phone":
-            sql += (" AND (phone LIKE ? ESCAPE '\\' OR phone2 LIKE ? ESCAPE '\\' "
-                    "OR phone3 LIKE ? ESCAPE '\\')")
+            sql += (" AND (o.phone LIKE ? ESCAPE '\\' OR o.phone2 LIKE ? ESCAPE '\\' "
+                    "OR o.phone3 LIKE ? ESCAPE '\\')")
             params += [pat] * 3
         else:
             sql += f" AND {col} LIKE ? ESCAPE '\\'"
             params.append(pat)
     elif q:
-        sql += (" AND (LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(postcode) LIKE ? ESCAPE '\\' "
-                "OR reg_number LIKE ? ESCAPE '\\')")
+        sql += (" AND (LOWER(o.name) LIKE ? ESCAPE '\\' OR LOWER(o.postcode) LIKE ? ESCAPE '\\' "
+                "OR o.reg_number LIKE ? ESCAPE '\\')")
         params += [pat, pat, pat]
-    sql += " ORDER BY name LIMIT 300"
+    sql += " ORDER BY o.name LIMIT 300"
     rows = db_query(sql, tuple(params)) or []
-    out = []
-    for r in rows:
-        c = db_query("SELECT COUNT(*) FROM crm_contacts WHERE org_id=?", (r[0],))
-        o = db_query("SELECT COUNT(*) FROM crm_opportunities WHERE org_id=? AND status='open'", (r[0],))
-        out.append({"id": r[0], "name": r[1], "owner": r[2], "reg_number": r[3] or "",
-                    "org_type": r[4] or "", "phone": r[5] or "", "email": r[6] or "",
-                    "city": r[7] or "", "postcode": r[8] or "", "updated_at": r[9] or "",
-                    "contacts": (c[0][0] if c else 0), "open_opps": (o[0][0] if o else 0)})
+    out = [{"id": r[0], "name": r[1], "owner": r[2], "reg_number": r[3] or "",
+            "org_type": r[4] or "", "phone": r[5] or "", "email": r[6] or "",
+            "city": r[7] or "", "postcode": r[8] or "", "updated_at": r[9] or "",
+            "ref_id": r[10] or "", "contacts": r[11] or 0, "open_opps": r[12] or 0}
+           for r in rows]
     return jsonify({"ok": True, "orgs": out, "owners": CRM_OWNERS, "stages": CRM_STAGES})
 
 @app.route("/api/crm/org/<int:oid>", methods=["GET"])
