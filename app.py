@@ -1031,6 +1031,7 @@ def _crm_charity_extras(reg):
 CRM_IMPORT_FIELDS = {
     "orgs": [
         ("name", "Company name", True), ("owner", "Owner (9M/VF/Both)", False),
+        ("ref_id", "Reference ID (CRM)", False),
         ("reg_number", "Charity number", False), ("suffix", "Charity suffix", False),
         ("org_type", "Type", False), ("main_contact", "Main contact", False),
         ("phone", "Phone 1", False), ("phone2", "Phone 2", False), ("phone3", "Phone 3", False),
@@ -1041,7 +1042,9 @@ CRM_IMPORT_FIELDS = {
         ("source", "Source", False), ("notes", "Notes", False),
     ],
     "opps": [
-        ("title", "Opportunity title", True), ("org_name", "Company name (to match)", True),
+        ("title", "Opportunity title", True), ("org_name", "Company name (to match)", False),
+        ("ref_id", "Reference ID (CRM)", False),
+        ("org_ref_id", "Company reference ID", False), ("org_reg_number", "Company charity number", False),
         ("owner", "Owner (9M/VF/Both)", False), ("stage", "Stage", False),
         ("value", "Value", False), ("probability", "Probability %", False),
         ("expected_close", "Expected close (YYYY-MM-DD)", False),
@@ -1086,6 +1089,9 @@ def _import_guess(headers, kind):
     aliases = {
         "name": ["companyname", "company", "organisation", "organization", "charityname", "account"],
         "reg_number": ["charityno", "charitynumber", "regno", "registeredcharitynumber", "regnumber"],
+        "ref_id": ["refid", "reference", "referenceid", "uniqueid", "recordid", "keyfield", "id"],
+        "org_ref_id": ["companyrefid", "companyreference", "accountid", "companyid"],
+        "org_reg_number": ["companycharityno", "charityno", "charitynumber"],
         "phone": ["phone", "phone1", "telephone", "tel", "mainphone"],
         "email": ["email", "email1", "emailaddress"],
         "address": ["address", "address1", "addressline1", "street"],
@@ -1135,9 +1141,13 @@ def api_crm_import_upload():
     for k in [k for k, v in _import_cache.items() if time.time() - v["at"] > 3600]:
         _import_cache.pop(k, None)
 
+    match_fields = {"orgs": [("ref_id", "Reference ID"), ("reg_number", "Charity number"),
+                             ("name", "Company name"), ("email", "Email 1"), ("postcode", "Postcode")],
+                    "opps": [("ref_id", "Reference ID")]}[kind]
     return jsonify({"ok": True, "token": token, "headers": headers,
                     "total_rows": len(rows), "sample": rows[:5],
                     "fields": [{"key": k, "label": l, "required": rq} for k, l, rq in CRM_IMPORT_FIELDS[kind]],
+                    "match_fields": [{"key": k, "label": l} for k, l in match_fields],
                     "mapping": _import_guess(headers, kind)})
 
 @app.route("/api/crm/import/commit", methods=["POST"])
@@ -1155,6 +1165,14 @@ def api_crm_import_commit():
     mapping = d.get("mapping") or {}
     kind = job["kind"]
     dedupe = bool(d.get("dedupe", True))
+    # Only columns that are actually mapped can be matched on, and only fields
+    # that uniquely identify a record are offered.
+    _allowed_match = {"orgs": ["ref_id", "reg_number", "name", "email", "postcode"],
+                      "opps": ["ref_id"]}[kind]
+    match_on = [k for k in (d.get("match_on") or []) if k in _allowed_match and mapping.get(k) not in (None, "", -1)]
+    if dedupe and not match_on:
+        # Sensible default in the order most likely to be reliable.
+        match_on = [k for k in ("ref_id", "reg_number", "name") if mapping.get(k) not in (None, "", -1)]
     dry_run = bool(d.get("dry_run"))
     fields = CRM_IMPORT_FIELDS[kind]
     required = [k for k, _l, rq in fields if rq]
@@ -1162,6 +1180,13 @@ def api_crm_import_commit():
         if mapping.get(rq) in (None, "", -1):
             label = next(l for k, l, _ in fields if k == rq)
             return jsonify({"ok": False, "error": f"“{label}” must be mapped to a column"}), 400
+    if kind == "opps":
+        # Without one of these, no row could ever find its organisation — worth
+        # saying so before running rather than reporting every row as failed.
+        if all(mapping.get(k) in (None, "", -1) for k in ("org_ref_id", "org_reg_number", "org_name")):
+            return jsonify({"ok": False, "error":
+                            "Map at least one column that identifies the company: "
+                            "Company reference ID, Company charity number, or Company name."}), 400
 
     def cell(row, key):
         idx = mapping.get(key)
@@ -1178,15 +1203,26 @@ def api_crm_import_commit():
                 if not name:
                     skipped += 1; continue
                 reg = re.sub(r"[^0-9]", "", cell(row, "reg_number"))
-                # Match on charity number first (reliable), then exact name.
+                # Which column identifies an existing record is the importer's
+                # choice, not a fixed rule: a Maximizer export is keyed on its
+                # own ID, a Charity Commission list on the charity number, and
+                # a hand-built spreadsheet may only have names. Guessing wrong
+                # either creates duplicates or overwrites the wrong record.
                 existing = None
                 if dedupe:
-                    if reg:
-                        r = db_query("SELECT id FROM crm_orgs WHERE reg_number=?", (reg,))
-                        existing = r[0][0] if r else None
-                    if not existing:
-                        r = db_query("SELECT id FROM crm_orgs WHERE LOWER(TRIM(name))=?", (name.strip().lower(),))
-                        existing = r[0][0] if r else None
+                    for key in match_on:
+                        val = cell(row, key)
+                        if key == "reg_number":
+                            val = re.sub(r"[^0-9]", "", val)
+                        if not val:
+                            continue
+                        if key == "name":
+                            r = db_query("SELECT id FROM crm_orgs WHERE LOWER(TRIM(name))=?", (val.strip().lower(),))
+                        else:
+                            r = db_query(f"SELECT id FROM crm_orgs WHERE {key}=?", (val,))
+                        if r:
+                            existing = r[0][0]
+                            break
                 owner = cell(row, "owner") or "9M"
                 if owner not in CRM_OWNERS: owner = "9M"
                 vals = {k: cell(row, k) for k, _l, _r in fields}
@@ -1219,12 +1255,25 @@ def api_crm_import_commit():
                     created += 1
             else:
                 title = cell(row, "title")
-                org_name = cell(row, "org_name")
-                if not title or not org_name:
+                if not title:
                     skipped += 1; continue
-                r = db_query("SELECT id FROM crm_orgs WHERE LOWER(TRIM(name))=?", (org_name.strip().lower(),))
+                # The parent organisation can be identified by reference ID,
+                # charity number or name — whichever the spreadsheet actually
+                # carries. Reference and charity number are tried first because
+                # they're unambiguous; names are not.
+                org_ref = cell(row, "org_ref_id")
+                org_reg = re.sub(r"[^0-9]", "", cell(row, "org_reg_number"))
+                org_name = cell(row, "org_name")
+                r = None
+                if org_ref:
+                    r = db_query("SELECT id FROM crm_orgs WHERE ref_id=?", (org_ref,))
+                if not r and org_reg:
+                    r = db_query("SELECT id FROM crm_orgs WHERE reg_number=?", (org_reg,))
+                if not r and org_name:
+                    r = db_query("SELECT id FROM crm_orgs WHERE LOWER(TRIM(name))=?", (org_name.strip().lower(),))
                 if not r:
-                    errors.append(f"Row {n}: no organisation named “{org_name}”")
+                    ident = org_ref or org_reg or org_name or "(no identifier given)"
+                    errors.append(f"Row {n}: no matching organisation for “{ident}”")
                     skipped += 1; continue
                 if dry_run:
                     created += 1; continue

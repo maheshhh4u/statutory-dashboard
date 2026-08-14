@@ -1114,7 +1114,11 @@ select:focus{outline:none;border-color:var(--green)}
      written until the mapping has been confirmed. -->
 <div class="modal-bg" id="crm-import-modal">
   <div class="modal" style="max-width:860px;width:94vw;max-height:88vh;overflow:auto">
-    <h3 id="crm-import-title">Import</h3>
+    <div style="display:flex;align-items:center;gap:10px">
+      <h3 id="crm-import-title" style="margin:0">Import</h3>
+      <span style="flex:1"></span>
+      <span onclick="crmCloseImport()" title="Close" style="cursor:pointer;font-size:20px;line-height:1;color:var(--t3);padding:0 4px">&times;</span>
+    </div>
     <div id="crm-import-step1">
       <p style="font-size:12.5px;color:var(--t2);margin:0 0 10px">
         Upload a CSV or Excel file. The first row must be the column headings. Nothing is saved until you
@@ -1127,6 +1131,7 @@ select:focus{outline:none;border-color:var(--green)}
         </select>
         <input type="file" id="crm-import-file" accept=".csv,.xlsx,.xlsm,.txt" style="font-size:12.5px">
         <button class="btn btn-green btn-sm" onclick="crmImportUpload()">Upload &amp; preview</button>
+        <button class="btn btn-outline btn-sm" onclick="crmCloseImport()">Close</button>
       </div>
       <div id="crm-import-status" style="font-size:12.5px;margin-top:10px"></div>
     </div>
@@ -1134,10 +1139,19 @@ select:focus{outline:none;border-color:var(--green)}
       <div id="crm-import-summary" style="font-size:12.5px;margin-bottom:10px"></div>
       <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:6px">Match your columns to CRM fields</div>
       <div id="crm-import-map" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 12px;font-size:12.5px;margin-bottom:12px"></div>
-      <label style="font-size:12.5px;display:flex;align-items:center;gap:6px;margin-bottom:10px">
-        <input type="checkbox" id="crm-import-dedupe" checked>
-        Update existing records instead of creating duplicates (matched on charity number, then name)
-      </label>
+      <div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:11px">
+        <label style="font-size:12.5px;display:flex;align-items:center;gap:6px;font-weight:600">
+          <input type="checkbox" id="crm-import-dedupe" checked onchange="crmToggleMatchOpts()">
+          Update existing records instead of creating duplicates
+        </label>
+        <div id="crm-import-matchwrap" style="margin-top:8px">
+          <div style="font-size:11.5px;color:var(--t2);margin-bottom:6px">
+            Match a row to an existing record using — tick in the order you want them tried.
+            Only columns you’ve mapped above can be used.
+          </div>
+          <div id="crm-import-match" style="display:flex;gap:12px;flex-wrap:wrap;font-size:12.5px"></div>
+        </div>
+      </div>
       <div id="crm-import-preview" style="font-size:11.5px;color:var(--t3);margin-bottom:10px"></div>
       <div class="modal-btns">
         <button class="btn btn-outline btn-sm" onclick="crmCloseImport()">Cancel</button>
@@ -7307,6 +7321,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.57", date:"2026-08", title:"Import: a way out of the wizard, and you choose what identifies a record",
+    changes:[
+      "Added a Close button and an \u00d7 to the import wizard. The first step had no way out at all \u2014 an oversight.",
+      "You now choose which column identifies an existing record, rather than it always being charity number then name. Reference ID, charity number, company name, email or postcode can each be used, ticked in the order you want them tried. Only columns you've actually mapped are offered.",
+      "This matters because the right answer depends on the file: a Maximizer export is keyed on its own ID, a Charity Commission list on the charity number, and a hand-built spreadsheet may only have names. Guessing wrong either creates duplicates or updates the wrong record.",
+      "Reference ID is now an importable field, so the IDs from an existing system can be brought across and used to match on later imports.",
+      "Opportunities can find their organisation by reference ID, charity number or name \u2014 whichever the file carries, tried in that order since the first two are unambiguous and names are not. If none of those columns is mapped, it says so before running rather than reporting every row as failed.",
+      "Rows that can't find their organisation now report which identifier was tried, so it's clear what to fix.",
+    ]},
   { v:"2.56", date:"2026-08", title:"Fix: the address book was completely broken \u2014 22 functions had been deleted by an earlier edit",
     changes:[
       "My fault. The edit that added sales processes in v2.54 replaced a larger block of code than intended and silently removed 22 functions with it \u2014 the whole of the row-selection and record-actions code. The list renders a tick box on every row that calls one of those functions, so every row failed to render and the page sat on \u201cLoading\u2026\u201d for ever.",
@@ -9643,6 +9666,13 @@ function crmImportUpload(){
           ${(d.headers||[]).map((h,i)=>`<option value="${i}" ${sel===i?'selected':''}>${esc(h||('Column '+(i+1)))}</option>`).join('')}
         </select></label>`;
     }).join('');
+    crmRenderMatchOptions();
+    // Re-check which match fields are available whenever a mapping changes,
+    // since only mapped columns can be matched on.
+    (d.fields||[]).forEach(fl=>{
+      const el=document.getElementById('crm-map-'+fl.key);
+      if(el) el.addEventListener('change', crmRenderMatchOptions);
+    });
     // Show the first few rows so it's obvious the columns line up.
     const sample=(d.sample||[]).slice(0,3);
     document.getElementById('crm-import-preview').innerHTML=sample.length
@@ -9652,6 +9682,31 @@ function crmImportUpload(){
         '</table><div style="margin-top:5px">First few rows of your file, for reference.</div></div>'
       : '';
   }).catch(e=>{ st.textContent='\u26a0 '+esc(e.message); st.style.color='var(--red)'; });
+}
+function crmToggleMatchOpts(){
+  const on=document.getElementById('crm-import-dedupe').checked;
+  const wrap=document.getElementById('crm-import-matchwrap');
+  if(wrap) wrap.style.display = on ? 'block' : 'none';
+}
+function crmRenderMatchOptions(){
+  if(!_crmImport) return;
+  const box=document.getElementById('crm-import-match');
+  if(!box) return;
+  const avail=(_crmImport.match_fields||[]).filter(mf=>{
+    const el=document.getElementById('crm-map-'+mf.key);
+    return el && parseInt(el.value,10)>=0;      // only mapped columns
+  });
+  if(!avail.length){
+    box.innerHTML='<span style="color:var(--orange)">No matchable column mapped yet \u2014 map Reference ID, Charity number or Company name above to match against existing records.</span>';
+    return;
+  }
+  // Keep any existing ticks; otherwise default to the most reliable available.
+  const prev=Array.from(box.querySelectorAll('input:checked')).map(i=>i.value);
+  box.innerHTML=avail.map((mf,i)=>{
+    const on = prev.length ? prev.includes(mf.key) : i===0;
+    return `<label style="display:flex;align-items:center;gap:5px">
+      <input type="checkbox" class="crm-match-opt" value="${mf.key}" ${on?'checked':''}> ${esc(mf.label)}</label>`;
+  }).join('');
 }
 function crmImportCommit(dryRun){
   if(!_crmImport) return;
@@ -9666,6 +9721,7 @@ function crmImportCommit(dryRun){
   res.style.color='var(--t3)';
   fetch('/api/crm/import/commit',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({token:_crmImport.token, mapping,
+      match_on:Array.from(document.querySelectorAll('.crm-match-opt:checked')).map(i=>i.value),
       dedupe:document.getElementById('crm-import-dedupe').checked, dry_run:!!dryRun})})
     .then(r=>r.json()).then(d=>{
       if(!d.ok){ res.innerHTML='\u26a0 '+esc(d.error||'Import failed'); res.style.color='var(--red)'; return; }
