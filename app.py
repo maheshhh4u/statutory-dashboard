@@ -843,6 +843,22 @@ def api_ai_documents_manage():
     return jsonify({"ok": False, "error": "Unknown action"}), 400
 
 # ══ CRM ════════════════════════════════════════════════════════════════════
+def _crm_like(term):
+    """Turns a user's search term into a SQL LIKE pattern.
+
+    '*' is the wildcard people expect from Maximizer, so it maps to SQL's '%'.
+    Any % or _ they type is escaped first, otherwise those would act as
+    wildcards by accident. With no '*' anywhere the term is treated as
+    "contains", which is what someone typing a partial name expects.
+    """
+    t = (term or "").strip()
+    if not t:
+        return "%"
+    t = t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    if "*" in t:
+        return t.replace("*", "%")
+    return f"%{t}%"
+
 CRM_STAGES = ["Lead", "Qualified", "Proposal", "Negotiation", "Won", "Lost"]
 CRM_OWNERS = ["9M", "VF", "Both"]
 
@@ -1203,22 +1219,6 @@ def api_crm_orgs():
         # "Both" records belong to each organisation, so they show under either.
         sql += " AND (owner=? OR owner='Both')"
         params.append(owner)
-def _crm_like(term):
-    """Turns a user's search term into a SQL LIKE pattern.
-
-    '*' is the wildcard people expect from Maximizer, so it maps to SQL's '%'.
-    Any % or _ they type is escaped first, otherwise those would act as
-    wildcards by accident. With no '*' anywhere the term is treated as
-    "contains", which is what someone typing a partial name expects.
-    """
-    t = (term or "").strip()
-    if not t:
-        return "%"
-    t = t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    if "*" in t:
-        return t.replace("*", "%")
-    return f"%{t}%"
-
     field = (request.args.get("field") or "").strip()
     # A named field narrows the search to that column (the Search menu); with
     # no field it stays a general search across the usual identifiers.

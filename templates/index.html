@@ -7268,6 +7268,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.53", date:"2026-08", title:"Fix: the address book stopped loading after the last release",
+    changes:[
+      "My mistake. When adding the wildcard search I placed the new helper function in the middle of the address-book route rather than beside it. Python accepted that \u2014 it just treated the rest of the route as code belonging to the helper \u2014 so the route silently stopped returning anything and the browser got an error page instead of data. That's the \u201cUnexpected token '<'\u201d message.",
+      "The helper now sits where it belongs and the address book loads again. Wildcard search is unaffected and still works as released.",
+      "Worth noting how it slipped through: the file passed a syntax check, because nothing about it was invalid \u2014 only wrong. I've since checked every function in the file for the same pattern (code stranded after a return) and there are no others.",
+    ]},
   { v:"2.52", date:"2026-08", title:"CRM: row selection with working Edit actions, and wildcard search",
     changes:[
       "Every row in the address book now has a tick box, with a select-all box in the header. Selected rows are highlighted and a bar appears showing how many are selected with the actions available.",
