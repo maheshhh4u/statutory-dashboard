@@ -411,6 +411,15 @@ def db_init():
                     "CREATE INDEX IF NOT EXISTS ix_crm_orgs_reg ON crm_orgs(reg_number)"):
             try: client.execute(_ix)
             except Exception: pass
+        # Saved column layouts per user and list, so each person can shape the
+        # grid to how they work without affecting anyone else.
+        client.execute("""CREATE TABLE IF NOT EXISTS crm_column_setup (
+            username TEXT,
+            list_kind TEXT,
+            columns_json TEXT,
+            updated_at TEXT,
+            PRIMARY KEY (username, list_kind)
+        )""")
         # Simple key-value store for app-wide settings (e.g. display timezone)
         client.execute("""CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
@@ -1663,6 +1672,80 @@ def api_crm_lookup_charity():
     return jsonify({"ok": True, "org": org,
                     "existing_id": (existing[0][0] if existing else None)})
 
+# Columns available in each list. Kept server-side so the label, the field it
+# reads and its default width live in one place rather than being duplicated
+# between the grid, the column picker and the export.
+CRM_COLUMNS = {
+    "orgs": [
+        ("name", "Company", 260), ("ref_id", "Reference ID", 120),
+        ("owner", "Owner", 80), ("reg_number", "Charity no.", 110),
+        ("org_type", "Type", 110), ("main_contact", "Main contact", 150),
+        ("phone", "Phone 1", 130), ("phone2", "Phone 2", 130),
+        ("email", "Email 1", 200), ("email2", "Email 2", 200),
+        ("website", "Website", 180), ("address", "Address 1", 200),
+        ("address2", "Address 2", 160), ("city", "City / Town", 130),
+        ("county", "County", 120), ("postcode", "Postcode", 100),
+        ("country", "Country", 110), ("cc_what", "What it does", 200),
+        ("cc_who", "Who it helps", 200), ("cc_how", "How it helps", 200),
+        ("source", "Source", 120), ("contacts", "Contacts", 80),
+        ("open_opps", "Open opps", 90), ("updated_at", "Last updated", 130),
+    ],
+    "opps": [
+        ("title", "Opportunity", 240), ("ref_id", "Reference ID", 120),
+        ("org_name", "Company", 220), ("stage", "Stage", 120),
+        ("value", "Value", 110), ("probability", "Prob.", 70),
+        ("weighted", "Weighted", 110), ("expected_close", "Expected close", 130),
+        ("owner", "Owner", 80), ("status", "Status", 90),
+        ("source", "Source", 120),
+    ],
+}
+CRM_DEFAULT_COLUMNS = {
+    "orgs": ["name", "owner", "reg_number", "main_contact", "phone", "city", "contacts", "open_opps"],
+    "opps": ["title", "org_name", "stage", "value", "probability", "weighted", "expected_close", "owner"],
+}
+
+@app.route("/api/crm/columns", methods=["GET"])
+def api_crm_columns():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    kind = (request.args.get("kind") or "orgs").strip()
+    if kind not in CRM_COLUMNS:
+        return jsonify({"ok": False, "error": "Unknown list"}), 400
+    r = db_query("SELECT columns_json FROM crm_column_setup WHERE username=? AND list_kind=?",
+                 (current_user(), kind))
+    chosen = None
+    if r:
+        try:
+            chosen = json.loads(r[0][0] or "[]")
+        except Exception:
+            chosen = None
+    valid = {k for k, _l, _w in CRM_COLUMNS[kind]}
+    # Drop anything no longer offered, so an old saved layout can't leave a
+    # column that doesn't exist.
+    if chosen:
+        chosen = [c for c in chosen if c in valid]
+    return jsonify({"ok": True, "kind": kind,
+                    "available": [{"key": k, "label": l, "width": w} for k, l, w in CRM_COLUMNS[kind]],
+                    "chosen": chosen or CRM_DEFAULT_COLUMNS[kind],
+                    "defaults": CRM_DEFAULT_COLUMNS[kind]})
+
+@app.route("/api/crm/columns", methods=["POST"])
+def api_crm_columns_save():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    kind = str(d.get("kind", "orgs")).strip()
+    if kind not in CRM_COLUMNS:
+        return jsonify({"ok": False, "error": "Unknown list"}), 400
+    valid = {k for k, _l, _w in CRM_COLUMNS[kind]}
+    cols = [c for c in (d.get("columns") or []) if c in valid]
+    if not cols:
+        return jsonify({"ok": False, "error": "Choose at least one column"}), 400
+    db_exec("DELETE FROM crm_column_setup WHERE username=? AND list_kind=?", (current_user(), kind))
+    db_exec("INSERT INTO crm_column_setup(username, list_kind, columns_json, updated_at) VALUES(?,?,?,?)",
+            (current_user(), kind, json.dumps(cols), _crm_now()))
+    return jsonify({"ok": True})
+
 @app.route("/api/crm/orgs", methods=["GET"])
 def api_crm_orgs():
     """Address book list. Search matches name, postcode or charity number so a
@@ -1674,8 +1757,12 @@ def api_crm_orgs():
     # the old "one query, then two more per row" pattern meant 1+2N network
     # round trips — slow even for a handful of records, and worse with every
     # row added. This is one round trip regardless of how many rows there are.
-    sql = ("SELECT o.id, o.name, o.owner, o.reg_number, o.org_type, o.phone, o.email, o.city, "
-           "o.postcode, o.updated_at, o.ref_id, "
+    # Every displayable field comes back, since which columns are shown is the
+    # user's choice and the grid must be able to render any of them.
+    _cols = ["id", "name", "owner", "reg_number", "org_type", "main_contact", "phone", "phone2",
+             "email", "email2", "website", "address", "address2", "city", "county", "postcode",
+             "country", "cc_what", "cc_who", "cc_how", "source", "updated_at", "ref_id"]
+    sql = ("SELECT " + ", ".join("o." + c for c in _cols) + ", "
            "(SELECT COUNT(*) FROM crm_contacts c WHERE c.org_id=o.id) AS contact_count, "
            "(SELECT COUNT(*) FROM crm_opportunities p WHERE p.org_id=o.id AND p.status='open') AS open_opps "
            "FROM crm_orgs o WHERE 1=1")
@@ -1712,11 +1799,12 @@ def api_crm_orgs():
         params += [pat, pat, pat]
     sql += " ORDER BY o.name LIMIT 300"
     rows = db_query(sql, tuple(params)) or []
-    out = [{"id": r[0], "name": r[1], "owner": r[2], "reg_number": r[3] or "",
-            "org_type": r[4] or "", "phone": r[5] or "", "email": r[6] or "",
-            "city": r[7] or "", "postcode": r[8] or "", "updated_at": r[9] or "",
-            "ref_id": r[10] or "", "contacts": r[11] or 0, "open_opps": r[12] or 0}
-           for r in rows]
+    out = []
+    for r in rows:
+        rec = {c: (r[i] if r[i] is not None else ("" if c != "id" else r[i])) for i, c in enumerate(_cols)}
+        rec["contacts"] = r[len(_cols)] or 0
+        rec["open_opps"] = r[len(_cols) + 1] or 0
+        out.append(rec)
     return jsonify({"ok": True, "orgs": out, "owners": CRM_OWNERS, "stages": CRM_STAGES})
 
 @app.route("/api/crm/org/<int:oid>", methods=["GET"])
@@ -1843,7 +1931,7 @@ def api_crm_opportunities():
     actually takes."""
     owner = (request.args.get("owner") or "").strip()
     sql = ("SELECT o.id, o.title, o.stage, o.value, o.probability, o.expected_close, o.status, "
-           "o.owner, o.org_id, g.name FROM crm_opportunities o "
+           "o.owner, o.org_id, g.name, o.ref_id, o.source FROM crm_opportunities o "
            "LEFT JOIN crm_orgs g ON g.id = o.org_id WHERE o.status='open'")
     params = []
     if owner in CRM_OWNERS:
@@ -1851,9 +1939,15 @@ def api_crm_opportunities():
         params.append(owner)
     sql += " ORDER BY o.expected_close"
     rows = db_query(sql, tuple(params)) or []
-    opps = [{"id": r[0], "title": r[1] or "", "stage": r[2] or "Lead", "value": r[3] or 0,
-             "probability": r[4] or 0, "expected_close": r[5] or "", "status": r[6] or "open",
-             "owner": r[7] or "", "org_id": r[8], "org_name": r[9] or ""} for r in rows]
+    opps = []
+    for r in rows:
+        val = r[3] or 0
+        prob = r[4] or 0
+        opps.append({"id": r[0], "title": r[1] or "", "stage": r[2] or "Lead", "value": val,
+                     "probability": prob, "weighted": round(val * (prob / 100.0), 2),
+                     "expected_close": r[5] or "", "status": r[6] or "open",
+                     "owner": r[7] or "", "org_id": r[8], "org_name": r[9] or "",
+                     "ref_id": r[10] or "", "source": r[11] or ""})
     by_stage = {st: [o for o in opps if o["stage"] == st] for st in CRM_STAGES}
     total = sum(o["value"] for o in opps)
     # Weighted value is the honest number for a forecast: a £10k deal at 20%

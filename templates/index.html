@@ -46,6 +46,43 @@
      from their own x/y/w/h, not from the container's height. --cr-page-h is
      set by crSetPageSize(). */
   #cr-gridstack { height: var(--cr-page-h, 720px) !important; }
+  /* ── CRM grid ──────────────────────────────────────────────────────────
+     Dense, aligned, and quiet: a CRM list is read all day, so row height,
+     consistent alignment and a calm header matter more than decoration. */
+  .crm-grid{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;table-layout:fixed}
+  .crm-grid th{position:sticky;top:0;z-index:2;background:var(--s2);color:var(--t2);
+    font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;
+    text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:none}
+  .crm-grid th.sortable{cursor:pointer}
+  .crm-grid th.sortable:hover{color:var(--navy)}
+  .crm-grid td{padding:6px 10px;border-bottom:1px solid var(--s2);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .crm-grid tbody tr{cursor:pointer}
+  .crm-grid tbody tr:nth-child(even){background:rgba(127,127,127,.035)}
+  .crm-grid tbody tr:hover{background:var(--navy-pale)}
+  .crm-grid tbody tr[data-sel]{background:var(--navy-pale);box-shadow:inset 3px 0 0 var(--navy)}
+  .crm-grid td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .crm-wrap{border:1px solid var(--border);border-radius:8px;overflow:auto;background:var(--surface);
+    max-height:calc(100vh - 300px)}
+  /* Toolbar: one quiet strip rather than competing blocks of colour. */
+  .crm-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+    background:var(--surface);border:1px solid var(--border);border-radius:8px;
+    padding:8px 11px;margin-bottom:10px}
+  .crm-menu-btn{background:none;border:none;font-size:12.5px;padding:5px 10px;cursor:pointer;
+    border-radius:5px;color:var(--t1)}
+  .crm-menu-btn:hover{background:var(--s2)}
+  .crm-seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .crm-seg button{background:var(--surface);border:none;font-size:12px;padding:5px 13px;cursor:pointer;color:var(--t2)}
+  .crm-seg button.on{background:var(--navy);color:#fff;font-weight:600}
+  .crm-input{padding:5px 9px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;
+    background:var(--surface);color:var(--t1)}
+  /* Detail view: a quiet two-column record, not a wall of cards. */
+  .crm-panel{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:12px}
+  .crm-panel h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--t3)}
+  .crm-kv{display:grid;grid-template-columns:118px minmax(0,1fr);gap:4px 10px;font-size:12.5px}
+  .crm-kv .k{color:var(--t3)}
+  .crm-kv .v{overflow-wrap:anywhere}
   /* Small label used in the CRM for owner (9M / VF / Both) and primary contact. */
   .tagpill{display:inline-block;font-size:10.5px;font-weight:700;color:var(--navy);
     background:var(--navy-pale);border-radius:10px;padding:1px 8px;vertical-align:middle}
@@ -1027,26 +1064,26 @@ select:focus{outline:none;border-color:var(--green)}
 <!-- CRM: address book and opportunities. Deliberately light to begin with —
      organisations, contacts, a pipeline and notes. -->
 <section id="tab-crm" class="section">
-  <div class="card" style="padding:14px 16px;margin-bottom:12px">
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <h2 style="margin:0;font-size:17px">&#128455; CRM</h2>
+  <div class="crm-bar">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%">
+      <h2 style="margin:0;font-size:16px;font-weight:700">&#128455; CRM</h2>
       <!-- Menu bar modelled on Maximizer's. Items that aren't built yet are
            shown greyed out rather than omitted, so the shape is familiar and
            it's obvious what's still to come. -->
-      <span id="crm-menubar" style="display:flex;gap:1px;margin-left:6px"></span>
-      <span id="crm-view-tabs" style="display:flex;gap:4px;margin-left:8px">
-        <button class="btn btn-sm" id="crm-tab-book" onclick="crmSetView('book')">Address Book</button>
-        <button class="btn btn-outline btn-sm" id="crm-tab-pipe" onclick="crmSetView('pipe')">Opportunities</button>
+      <span id="crm-menubar" style="display:flex;gap:1px;margin-left:4px"></span>
+      <span class="crm-seg" style="margin-left:6px">
+        <button id="crm-tab-book" class="on" onclick="crmSetView('book')">Address Book</button>
+        <button id="crm-tab-pipe" onclick="crmSetView('pipe')">Opportunities</button>
       </span>
       <span style="flex:1"></span>
       <label style="font-size:12px;color:var(--t3)">Show
-        <select id="crm-owner" onchange="crmReload()" style="margin-left:5px">
+        <select id="crm-owner" class="crm-input" onchange="crmReload()" style="margin-left:5px">
           <option value="">Everything</option>
           <option value="9M">9 Mountains</option>
           <option value="VF">Vantage Fundraising</option>
         </select>
       </label>
-      <input id="crm-search" placeholder="Search name, postcode or charity no." oninput="crmSearchDebounced()" style="width:230px">
+      <input id="crm-search" class="crm-input" placeholder="Search — use * as a wildcard" oninput="crmSearchDebounced()" style="width:230px">
       <button class="btn btn-green btn-sm" onclick="crmNewOrg()">+ Organisation</button>
     </div>
   </div>
@@ -7321,6 +7358,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.58", date:"2026-08", title:"CRM: a proper data grid, and columns you choose yourself",
+    changes:[
+      "The address book and opportunities lists are now a real data grid \u2014 fixed column widths, sticky headers that stay put as you scroll, alternating row shading, right-aligned figures on tabular numerals so they line up, and click-to-sort on every column. Selected rows carry a navy edge rather than only a background tint.",
+      "Column setup: choose which columns appear in either list, from 24 available on the address book and 11 on opportunities. Saved per person \u2014 changing yours doesn\u2019t affect anyone else\u2019s. Reachable from View \u2192 Column Setup or the \u2699 Columns link above each list.",
+      "Opportunities now have a List view alongside the Board. The board is good for seeing the shape of the pipeline and poor for comparing figures, so both are available \u2014 the list gets the same configurable columns, including a weighted value column.",
+      "Toolbar tidied into a single quiet strip with a segmented Address Book / Opportunities switch, rather than competing blocks of colour.",
+      "Values are formatted per column rather than guessed from the data, so money always reads as money and an empty cell shows a dash instead of nothing.",
+      "Note on the other two requests: bulk upload with column mapping shipped in v2.55 and v2.57 (Actions \u2192 Import address book / Import opportunities), and sales processes with stage probabilities and revenue forecasting shipped in v2.54 (Actions \u2192 Manage sales processes, Report \u2192 Revenue forecast). If they aren\u2019t visible, check the About page shows this version \u2014 it would mean a deploy hasn\u2019t gone through.",
+    ]},
   { v:"2.57", date:"2026-08", title:"Import: a way out of the wizard, and you choose what identifies a record",
     changes:[
       "Added a Close button and an \u00d7 to the import wizard. The first step had no way out at all \u2014 an oversight.",
@@ -9910,7 +9956,7 @@ const CRM_MENUS = {
     {label:'Vantage Fundraising only', fn:"crmOwnerFilter('VF')"},
     {sep:true},
     {label:'Coloring Rules\u2026'},
-    {label:'Column Setup\u2026'},
+    {label:'Column Setup\u2026', fn:'crmColumnSetup()'},
     {label:'Favorite Lists\u2026'},
   ],
   Search: [
@@ -10009,8 +10055,8 @@ const crmMoney=v=>'\u00a3'+Number(v||0).toLocaleString(undefined,{maximumFractio
 function crmSetView(v){
   _crmView=v;
   const b=document.getElementById('crm-tab-book'), p=document.getElementById('crm-tab-pipe');
-  if(b) b.className='btn btn-sm'+(v==='book'?'':' btn-outline');
-  if(p) p.className='btn btn-sm'+(v==='pipe'?'':' btn-outline');
+  if(b) b.className=(v==='book'?'on':'');
+  if(p) p.className=(v==='pipe'?'on':'');
   const srch=document.getElementById('crm-search');
   if(srch) srch.style.display = v==='book' ? '' : 'none';   // search is for the address book
   crmReload();
@@ -10021,56 +10067,166 @@ function crmSearchDebounced(){
 }
 function crmReload(){ _crmCurrentOrgId=null; _crmCurrentOrg=null; _crmView==='pipe' ? crmLoadPipeline() : crmLoadBook(); }
 
+// Column setup is per user and per list, loaded once then reused.
+let _crmCols={orgs:null, opps:null}, _crmColMeta={orgs:null, opps:null};
+let _crmSort={orgs:{key:'name',dir:1}, opps:{key:'expected_close',dir:1}};
+
+function crmLoadColumns(kind){
+  if(_crmColMeta[kind]) return Promise.resolve(_crmColMeta[kind]);
+  return fetch('/api/crm/columns?kind='+kind).then(r=>r.json()).then(d=>{
+    if(d.ok){ _crmColMeta[kind]=d; _crmCols[kind]=d.chosen; }
+    return d;
+  }).catch(()=>null);
+}
+// Values are formatted by column rather than by guessing from the value, so a
+// blank number shows as a dash and money always looks like money.
+function crmCellHtml(rec, key, kind){
+  const v=rec[key];
+  if(key==='value'||key==='weighted') return '<span>'+(v?'\u00a3'+Number(v).toLocaleString(undefined,{maximumFractionDigits:0}):'\u2014')+'</span>';
+  if(key==='probability') return (v||0)+'%';
+  if(key==='owner') return v?`<span class="tagpill">${esc(v)}</span>`:'';
+  if(key==='ref_id') return v?`<span style="font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--t3)">${esc(v)}</span>`:'\u2014';
+  if(key==='name'||key==='title') return `<strong>${esc(v||'')}</strong>`;
+  if(key==='contacts'||key==='open_opps') return v?String(v):'\u2014';
+  if(key==='website'&&v) return esc(String(v).replace(/^https?:\/\//,''));
+  return v===0?'0':(v?esc(String(v)):'\u2014');
+}
+function crmIsNumericCol(key){
+  return ['value','weighted','probability','contacts','open_opps'].includes(key);
+}
+function crmSortRows(rows, kind){
+  const st=_crmSort[kind];
+  if(!st||!st.key) return rows;
+  const num=crmIsNumericCol(st.key);
+  return rows.slice().sort((a,b)=>{
+    let x=a[st.key], y=b[st.key];
+    if(num){ x=Number(x)||0; y=Number(y)||0; return (x-y)*st.dir; }
+    x=String(x||'').toLowerCase(); y=String(y||'').toLowerCase();
+    return x<y?-st.dir:(x>y?st.dir:0);
+  });
+}
+function crmSetSort(kind, key){
+  const st=_crmSort[kind];
+  st.dir = (st.key===key) ? -st.dir : 1;
+  st.key = key;
+  crmReload();
+}
+// One grid renderer for both lists — the only difference is the data and what
+// happens on click, so duplicating it would just mean fixing bugs twice.
+function crmRenderGrid(kind, rows, onRowClick, withChecks){
+  const meta=_crmColMeta[kind];
+  const cols=(_crmCols[kind]||[]).map(k=>(meta.available||[]).find(c=>c.key===k)).filter(Boolean);
+  const st=_crmSort[kind];
+  const arrow=k=> st.key===k ? (st.dir>0?' \u25b2':' \u25bc') : '';
+  return '<div class="crm-wrap"><table class="crm-grid"><colgroup>'+
+    (withChecks?'<col style="width:34px">':'')+
+    cols.map(c=>`<col style="width:${c.width}px">`).join('')+
+    '</colgroup><thead><tr>'+
+    (withChecks?'<th><input type="checkbox" id="crm-check-all" onclick="crmToggleAll(this.checked)" title="Select all"></th>':'')+
+    cols.map(c=>`<th class="sortable" onclick="crmSetSort('${kind}','${c.key}')" title="${esc(c.label)} — click to sort">${esc(c.label)}${arrow(c.key)}</th>`).join('')+
+    '</tr></thead><tbody>'+
+    (rows.length?crmSortRows(rows,kind).map(rec=>`<tr id="crm-row-${rec.id}" onclick="${onRowClick}(${rec.id})">`+
+      (withChecks?`<td onclick="event.stopPropagation()"><input type="checkbox" class="crm-row-check" value="${rec.id}" onchange="crmRowChecked(${rec.id}, this.checked)"></td>`:'')+
+      cols.map(c=>`<td class="${crmIsNumericCol(c.key)?'num':''}" title="${esc(String(rec[c.key]==null?'':rec[c.key]))}">${crmCellHtml(rec,c.key,kind)}</td>`).join('')+
+      '</tr>').join('')
+     : `<tr><td colspan="${cols.length+(withChecks?1:0)}" style="padding:26px;text-align:center;color:var(--t3)">Nothing to show.</td></tr>`)+
+    '</tbody></table></div>';
+}
+// ── Column chooser ─────────────────────────────────────────────────────────
+function crmColumnSetup(){
+  const kind=_crmView==='pipe'?'opps':'orgs';
+  crmLoadColumns(kind).then(meta=>{
+    if(!meta) return;
+    const chosen=_crmCols[kind]||meta.defaults;
+    const body=document.getElementById('crm-body');
+    body.innerHTML=`<div style="margin-bottom:10px">
+        <button class="btn btn-outline btn-sm" onclick="crmReload()">\u2190 Back</button>
+        <strong style="margin-left:8px">Column setup \u2014 ${kind==='opps'?'Opportunities':'Address Book'}</strong></div>
+      <div class="crm-panel" style="max-width:760px">
+        <p style="font-size:12.5px;color:var(--t2);margin:0 0 12px">
+          Tick the columns to show. The order below is the order they appear in.
+          This is saved for you only \u2014 it doesn\u2019t change what anyone else sees.</p>
+        <div id="crm-colpick" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px 14px;font-size:12.5px">
+          ${(meta.available||[]).map(c=>`<label style="display:flex;align-items:center;gap:6px">
+            <input type="checkbox" class="crm-col-opt" value="${c.key}" ${chosen.includes(c.key)?'checked':''}> ${esc(c.label)}</label>`).join('')}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <button class="btn btn-green btn-sm" onclick="crmSaveColumns('${kind}')">Save</button>
+          <button class="btn btn-outline btn-sm" onclick="crmResetColumns('${kind}')">Reset to default</button>
+          <span id="crm-col-status" style="font-size:12px;color:var(--t3);align-self:center"></span>
+        </div>
+      </div>`;
+  });
+}
+function crmSaveColumns(kind){
+  const cols=Array.from(document.querySelectorAll('.crm-col-opt:checked')).map(i=>i.value);
+  const st=document.getElementById('crm-col-status');
+  if(!cols.length){ st.textContent='Choose at least one column.'; st.style.color='var(--red)'; return; }
+  fetch('/api/crm/columns',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({kind, columns:cols})}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ st.textContent='\u26a0 '+(d.error||'Failed'); st.style.color='var(--red)'; return; }
+      _crmCols[kind]=cols;
+      if(_crmColMeta[kind]) _crmColMeta[kind].chosen=cols;
+      crmReload();
+    }).catch(e=>{ st.textContent='\u26a0 '+e.message; st.style.color='var(--red)'; });
+}
+function crmResetColumns(kind){
+  const meta=_crmColMeta[kind];
+  if(!meta) return;
+  document.querySelectorAll('.crm-col-opt').forEach(cb=>{ cb.checked=meta.defaults.includes(cb.value); });
+}
+
 function crmLoadBook(){
   const body=document.getElementById('crm-body');
   const q=(document.getElementById('crm-search')||{}).value||'';
   const owner=(document.getElementById('crm-owner')||{}).value||'';
   body.innerHTML='<div class="loading-txt" style="padding:20px">Loading…</div>';
-  fetch(`/api/crm/orgs?q=${encodeURIComponent(q)}&owner=${encodeURIComponent(owner)}&field=${encodeURIComponent(_crmSearchField||'')}`)
-    .then(r=>r.json()).then(d=>{
-      if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Could not load')+'</div>'; return; }
-      _crmStages=d.stages||[]; _crmOwners=d.owners||[];
-      if(!(d.orgs||[]).length){
-        body.innerHTML='<div class="card" style="padding:26px;text-align:center;color:var(--t3)">'+
-          (q?'No organisations match that search.':'No organisations yet. Use <strong>+ Organisation</strong> to add the first one.')+'</div>';
-        return;
-      }
-      body.innerHTML='<div id="crm-selbar" style="display:none;align-items:center;gap:10px;background:var(--navy-pale);border:1px solid var(--border);border-radius:6px;padding:7px 11px;margin-bottom:9px;font-size:12.5px"></div>'+
-        '<div class="card" style="padding:0;overflow:auto">'+
-        '<table style="width:100%;border-collapse:collapse;font-size:12.5px">'+
-        '<thead><tr>'+
-        '<th style="width:34px;padding:8px 10px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface)">'+
-        '<input type="checkbox" id="crm-check-all" onclick="crmToggleAll(this.checked)" title="Select all"></th>'+
-        ['Organisation','Owner','Charity no.','Contacts','Open opps','Phone','Location',''].map(h=>
-          `<th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);color:var(--t3);font-size:11px;text-transform:uppercase;position:sticky;top:0;background:var(--surface)">${h}</th>`).join('')+
-        '</tr></thead><tbody>'+
-        d.orgs.map(o=>`<tr id="crm-row-${o.id}" style="cursor:pointer" onclick="crmOpenOrg(${o.id})"
-            onmouseover="if(!this.dataset.sel)this.style.background='var(--s2)'" onmouseout="if(!this.dataset.sel)this.style.background='transparent'">
-          <td style="padding:8px 10px;border-bottom:1px solid var(--s2)" onclick="event.stopPropagation()">
-            <input type="checkbox" class="crm-row-check" value="${o.id}" onchange="crmRowChecked(${o.id}, this.checked)"></td>
-          <td style="padding:8px 10px;border-bottom:1px solid var(--s2)"><strong>${esc(o.name)}</strong></td>
-          <td style="padding:8px 10px;border-bottom:1px solid var(--s2)"><span class="tagpill">${esc(o.owner)}</span></td>
-          <td style="padding:8px 10px;border-bottom:1px solid var(--s2);color:var(--t3)">${esc(o.reg_number||'—')}</td>
-          <td style="padding:8px 10px;border-bottom:1px solid var(--s2)">${o.contacts}</td>
-          <td style="padding:8px 10px;border-bottom:1px solid var(--s2)">${o.open_opps||'—'}</td>
-          <td style="padding:8px 10px;border-bottom:1px solid var(--s2)">${esc(o.phone||'—')}</td>
-          <td style="padding:8px 10px;border-bottom:1px solid var(--s2);color:var(--t3)">${esc([o.city,o.postcode].filter(Boolean).join(', ')||'—')}</td>
-          <td style="padding:8px 10px;border-bottom:1px solid var(--s2);text-align:right;color:var(--t3)">›</td>
-        </tr>`).join('')+'</tbody></table></div>';
-    }).catch(e=>{ body.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
+  Promise.all([
+    crmLoadColumns('orgs'),
+    fetch(`/api/crm/orgs?q=${encodeURIComponent(q)}&owner=${encodeURIComponent(owner)}&field=${encodeURIComponent(_crmSearchField||'')}`).then(r=>r.json())
+  ]).then(([meta, d])=>{
+    if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Could not load')+'</div>'; return; }
+    _crmStages=d.stages||[]; _crmOwners=d.owners||[];
+    const count=(d.orgs||[]).length;
+    body.innerHTML='<div id="crm-selbar" style="display:none;align-items:center;gap:10px;background:var(--navy-pale);border:1px solid var(--border);border-radius:6px;padding:7px 11px;margin-bottom:9px;font-size:12.5px"></div>'+
+      `<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:7px">
+         <span style="font-size:12px;color:var(--t3)">${count} organisation${count===1?'':'s'}${q?' matching \u201c'+esc(q)+'\u201d':''}</span>
+         <span style="flex:1"></span>
+         <span onclick="crmColumnSetup()" style="cursor:pointer;font-size:12px;color:var(--navy)">\u2699 Columns</span>
+       </div>`+
+      crmRenderGrid('orgs', d.orgs||[], 'crmOpenOrg', true);
+  }).catch(e=>{ body.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
 }
-
+let _crmPipeMode='board';   // board = stage columns, grid = configurable list
+function crmSetPipeMode(m){ _crmPipeMode=m; crmReload(); }
 function crmLoadPipeline(){
   const body=document.getElementById('crm-body');
   const owner=(document.getElementById('crm-owner')||{}).value||'';
   body.innerHTML='<div class="loading-txt" style="padding:20px">Loading…</div>';
-  fetch('/api/crm/opportunities?owner='+encodeURIComponent(owner)).then(r=>r.json()).then(d=>{
+  Promise.all([
+    crmLoadColumns('opps'),
+    fetch('/api/crm/opportunities?owner='+encodeURIComponent(owner)).then(r=>r.json())
+  ]).then(([meta, d])=>{
     if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Could not load')+'</div>'; return; }
     _crmStages=d.stages||[];
+    // A list view alongside the board, because a board is good for seeing
+    // shape and bad for comparing figures.
+    const modeBar=`<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:7px">
+        <span class="crm-seg">
+          <button class="${_crmPipeMode==='board'?'on':''}" onclick="crmSetPipeMode('board')">Board</button>
+          <button class="${_crmPipeMode==='grid'?'on':''}" onclick="crmSetPipeMode('grid')">List</button>
+        </span>
+        <span style="flex:1"></span>
+        ${_crmPipeMode==='grid'?'<span onclick="crmColumnSetup()" style="cursor:pointer;font-size:12px;color:var(--navy)">\u2699 Columns</span>':''}
+      </div>`;
+    if(_crmPipeMode==='grid'){
+      body.innerHTML=modeBar+crmRenderGrid('opps', d.opportunities||[], 'crmEditOpp', false);
+      return;
+    }
     const open=d.stages.filter(s=>s!=='Won'&&s!=='Lost');
-    body.innerHTML=`
+    body.innerHTML=modeBar+`
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-        <div class="card" style="padding:14px 16px;flex:1;min-width:170px">
+        <div class="crm-panel" style="padding:14px 16px;flex:1;min-width:170px;margin:0">
           <div style="font-size:22px;font-weight:800;color:var(--navy)">${crmMoney(d.total_value)}</div>
           <div style="font-size:12px;color:var(--t2);font-weight:600">Total pipeline</div></div>
         <div class="card" style="padding:14px 16px;flex:1;min-width:170px">
