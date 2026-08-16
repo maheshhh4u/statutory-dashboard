@@ -54,7 +54,18 @@
     font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;
     text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:none}
+  /* The resize grip is absolutely positioned inside the header, which needs a
+     positioned ancestor — sticky already provides one. */
   .crm-grid th.sortable{cursor:pointer}
+  /* Drag handle sits inside the header cell, on its right edge — the same
+     gesture as a spreadsheet. Kept wide enough (6px) to grab reliably. */
+  .crm-colgrip{position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize;
+    user-select:none;z-index:3}
+  .crm-colgrip:hover,.crm-colgrip.dragging{background:var(--navy);opacity:.55}
+  /* Text size is a multiplier on the grid only, so shrinking rows to fit more
+     on screen doesn't shrink the rest of the interface. */
+  .crm-wrap{font-size:var(--crm-font, 12.5px)}
+  .crm-grid,.crm-grid td{font-size:inherit}
   .crm-grid th.sortable:hover{color:var(--navy)}
   .crm-grid td{padding:6px 10px;border-bottom:1px solid var(--s2);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -7358,6 +7369,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.59", date:"2026-08", title:"CRM lists: drag column widths, adjustable text size, and floating widgets kept to calling",
+    changes:[
+      "Column widths can be dragged from the right edge of any heading, exactly like a spreadsheet. Widths are remembered per person and per list, so a layout someone sets up survives a reload. \u21ba Widths puts them back to default.",
+      "Text size in the lists can be stepped up or down with A\u2212 / A+, between 10px and 18px. It only affects the grid, so shrinking rows to fit more on screen doesn\u2019t shrink the rest of the interface. Remembered between visits.",
+      "The RingCentral dialler and the \u21a9 Wrap toggle now appear only in the Prospect Generator. They were floating over every module \u2014 covering content in the CRM and the briefings, where neither does anything useful. They\u2019re hidden rather than unloaded, so switching back to calling restores the dialler without reloading it.",
+      "Removed two duplicate CSS rules introduced while adding the drag handles, which could have overridden the header styling depending on load order.",
+    ]},
   { v:"2.58", date:"2026-08", title:"CRM: a proper data grid, and columns you choose yourself",
     changes:[
       "The address book and opportunities lists are now a real data grid \u2014 fixed column widths, sticky headers that stay put as you scroll, alternating row shading, right-aligned figures on tabular numerals so they line up, and click-to-sort on every column. Selected rows carry a navy edge rather than only a background tint.",
@@ -9258,12 +9276,14 @@ function crSwitchModule(mod, initial){
     const sec=document.getElementById('tab-launcher');
     if(sec) sec.classList.add('active');
     renderLauncher();
+    crUpdateFloatingWidgets();
     return;   // nothing else to set up, and the launcher isn't a landing choice
   }
   const first=allowed[0];
   const firstBtn=Array.from(document.querySelectorAll('nav.nav .nav-btn'))
     .find(b=>(b.getAttribute('onclick')||'').includes(`switchTab('${first}'`));
   switchTab(first, firstBtn||null);
+  crUpdateFloatingWidgets();
   if(mod==='crm'){ renderCrmMenubar(); crmReload(); }
   if(mod==='admin') loadAdminBrief();
   if(mod==='finance') loadFinanceBrief();
@@ -10052,6 +10072,24 @@ document.addEventListener('click', function(e){
 // ══ CRM ════════════════════════════════════════════════════════════════════
 let _crmView='book', _crmSearchTimer=null, _crmStages=[], _crmOwners=[];
 const crmMoney=v=>'\u00a3'+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:0});
+// The RingCentral dialler and the wrap toggle belong to calling work only.
+// They were floating over every module, covering content in the CRM and the
+// briefings where they do nothing useful. Hidden rather than removed, so
+// switching back restores them without reloading the dialler.
+function crUpdateFloatingWidgets(){
+  const show = (_crModule === 'prospects');
+  const wrap = document.getElementById('wrapToggleBtn');
+  if(wrap) wrap.style.display = show ? '' : 'none';
+  // The RingCentral adapter injects its own container, so it's found rather
+  // than referenced by a fixed id.
+  ['rc-widget-adapter-frame','rc-widget','rc-widget-adapter'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.style.display = show ? '' : 'none';
+  });
+  document.querySelectorAll('iframe[id^="rc-widget"]').forEach(el=>{
+    el.style.display = show ? '' : 'none';
+  });
+}
 function crmSetView(v){
   _crmView=v;
   const b=document.getElementById('crm-tab-book'), p=document.getElementById('crm-tab-pipe');
@@ -10113,17 +10151,87 @@ function crmSetSort(kind, key){
 }
 // One grid renderer for both lists — the only difference is the data and what
 // happens on click, so duplicating it would just mean fixing bugs twice.
+// ── Column widths and text size ────────────────────────────────────────────
+// Widths are held per user and list, alongside the chosen columns, so a layout
+// someone has set up survives a reload.
+let _crmWidths={orgs:{}, opps:{}};
+function crmWidthKey(kind){ return 'crmWidths_'+kind; }
+function crmFontKey(){ return 'crmFontSize'; }
+function crmLoadWidths(kind){
+  try{ _crmWidths[kind]=JSON.parse(localStorage.getItem(crmWidthKey(kind))||'{}')||{}; }
+  catch(e){ _crmWidths[kind]={}; }
+}
+function crmSaveWidths(kind){
+  try{ localStorage.setItem(crmWidthKey(kind), JSON.stringify(_crmWidths[kind]||{})); }catch(e){}
+}
+function crmApplyFontSize(px){
+  document.documentElement.style.setProperty('--crm-font', px+'px');
+  try{ localStorage.setItem(crmFontKey(), String(px)); }catch(e){}
+  const lbl=document.getElementById('crm-font-label');
+  if(lbl) lbl.textContent=px+'px';
+}
+function crmNudgeFont(step){
+  let cur=parseFloat(localStorage.getItem(crmFontKey())||'12.5');
+  cur=Math.max(10, Math.min(18, cur+step));      // readable range, both ends
+  crmApplyFontSize(cur);
+}
+function crmInitFontSize(){
+  const px=parseFloat(localStorage.getItem(crmFontKey())||'12.5');
+  crmApplyFontSize(px);
+}
+// Drag-to-resize, matching a spreadsheet: grab the right edge of a header and
+// drag. The <col> element is resized rather than the cells, so the whole
+// column moves as one and the layout doesn't reflow mid-drag.
+let _crmResize=null;
+function crmStartColResize(ev, kind, key, idx){
+  ev.preventDefault(); ev.stopPropagation();
+  const table=ev.target.closest('table');
+  if(!table) return;
+  const col=table.querySelectorAll('colgroup col')[idx];
+  if(!col) return;
+  _crmResize={kind, key, col, startX:ev.clientX, startW:col.offsetWidth || parseInt(col.style.width,10) || 120};
+  ev.target.classList.add('dragging');
+  document.addEventListener('mousemove', crmDoColResize);
+  document.addEventListener('mouseup', crmEndColResize);
+}
+function crmDoColResize(ev){
+  if(!_crmResize) return;
+  const w=Math.max(48, _crmResize.startW + (ev.clientX - _crmResize.startX));
+  _crmResize.col.style.width=w+'px';
+  _crmResize.width=w;
+}
+function crmEndColResize(){
+  document.removeEventListener('mousemove', crmDoColResize);
+  document.removeEventListener('mouseup', crmEndColResize);
+  document.querySelectorAll('.crm-colgrip.dragging').forEach(g=>g.classList.remove('dragging'));
+  if(_crmResize && _crmResize.width){
+    _crmWidths[_crmResize.kind][_crmResize.key]=_crmResize.width;
+    crmSaveWidths(_crmResize.kind);
+  }
+  _crmResize=null;
+}
+function crmResetWidths(){
+  const kind=_crmView==='pipe'?'opps':'orgs';
+  _crmWidths[kind]={};
+  crmSaveWidths(kind);
+  crmReload();
+}
 function crmRenderGrid(kind, rows, onRowClick, withChecks){
   const meta=_crmColMeta[kind];
   const cols=(_crmCols[kind]||[]).map(k=>(meta.available||[]).find(c=>c.key===k)).filter(Boolean);
   const st=_crmSort[kind];
   const arrow=k=> st.key===k ? (st.dir>0?' \u25b2':' \u25bc') : '';
+  crmLoadWidths(kind);
+  const saved=_crmWidths[kind]||{};
+  // A width the user has dragged wins over the default for that column.
+  const widthOf=c=> saved[c.key] || c.width;
+  const off=withChecks?1:0;
   return '<div class="crm-wrap"><table class="crm-grid"><colgroup>'+
     (withChecks?'<col style="width:34px">':'')+
-    cols.map(c=>`<col style="width:${c.width}px">`).join('')+
+    cols.map(c=>`<col style="width:${widthOf(c)}px">`).join('')+
     '</colgroup><thead><tr>'+
     (withChecks?'<th><input type="checkbox" id="crm-check-all" onclick="crmToggleAll(this.checked)" title="Select all"></th>':'')+
-    cols.map(c=>`<th class="sortable" onclick="crmSetSort('${kind}','${c.key}')" title="${esc(c.label)} — click to sort">${esc(c.label)}${arrow(c.key)}</th>`).join('')+
+    cols.map((c,i)=>`<th class="sortable" onclick="crmSetSort('${kind}','${c.key}')" title="${esc(c.label)} — click to sort, drag the edge to resize">${esc(c.label)}${arrow(c.key)}<span class="crm-colgrip" onmousedown="crmStartColResize(event,'${kind}','${c.key}',${i+off})" title="Drag to resize"></span></th>`).join('')+
     '</tr></thead><tbody>'+
     (rows.length?crmSortRows(rows,kind).map(rec=>`<tr id="crm-row-${rec.id}" onclick="${onRowClick}(${rec.id})">`+
       (withChecks?`<td onclick="event.stopPropagation()"><input type="checkbox" class="crm-row-check" value="${rec.id}" onchange="crmRowChecked(${rec.id}, this.checked)"></td>`:'')+
@@ -10176,6 +10284,19 @@ function crmResetColumns(kind){
   document.querySelectorAll('.crm-col-opt').forEach(cb=>{ cb.checked=meta.defaults.includes(cb.value); });
 }
 
+// Text size and reset-widths sit with the column link, since they're all
+// "how this list looks" rather than "what it contains".
+function crmListControls(showCols){
+  return `<span style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--t3)">
+      <span style="display:inline-flex;align-items:center;gap:3px" title="Text size in this list">
+        <button class="crm-menu-btn" style="padding:1px 7px;border:1px solid var(--border);border-radius:4px" onclick="crmNudgeFont(-0.5)">A\u2212</button>
+        <span id="crm-font-label" style="min-width:38px;text-align:center"></span>
+        <button class="crm-menu-btn" style="padding:1px 7px;border:1px solid var(--border);border-radius:4px" onclick="crmNudgeFont(0.5)">A+</button>
+      </span>
+      <span onclick="crmResetWidths()" style="cursor:pointer" title="Reset column widths to default">\u21ba Widths</span>
+      ${showCols?'<span onclick="crmColumnSetup()" style="cursor:pointer;color:var(--navy)">\u2699 Columns</span>':''}
+    </span>`;
+}
 function crmLoadBook(){
   const body=document.getElementById('crm-body');
   const q=(document.getElementById('crm-search')||{}).value||'';
@@ -10192,7 +10313,7 @@ function crmLoadBook(){
       `<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:7px">
          <span style="font-size:12px;color:var(--t3)">${count} organisation${count===1?'':'s'}${q?' matching \u201c'+esc(q)+'\u201d':''}</span>
          <span style="flex:1"></span>
-         <span onclick="crmColumnSetup()" style="cursor:pointer;font-size:12px;color:var(--navy)">\u2699 Columns</span>
+         ${crmListControls(true)}
        </div>`+
       crmRenderGrid('orgs', d.orgs||[], 'crmOpenOrg', true);
   }).catch(e=>{ body.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
@@ -10217,7 +10338,7 @@ function crmLoadPipeline(){
           <button class="${_crmPipeMode==='grid'?'on':''}" onclick="crmSetPipeMode('grid')">List</button>
         </span>
         <span style="flex:1"></span>
-        ${_crmPipeMode==='grid'?'<span onclick="crmColumnSetup()" style="cursor:pointer;font-size:12px;color:var(--navy)">\u2699 Columns</span>':''}
+        ${_crmPipeMode==='grid'?crmListControls(true):''}
       </div>`;
     if(_crmPipeMode==='grid'){
       body.innerHTML=modeBar+crmRenderGrid('opps', d.opportunities||[], 'crmEditOpp', false);
@@ -13359,6 +13480,7 @@ document.getElementById('mx-modal').addEventListener('click',function(e){
 });
 // Load users first — initCaller() is called inside loadUsers() after users arrive
 loadThemeSetting();   // confirm the server's theme, in case an admin changed it
+crmInitFontSize();    // restore the list text size before anything renders
 crLoadModules();      // build the module switcher and land on the chosen module
 restorePillPosition();
 loadUsers();
