@@ -419,6 +419,15 @@ def db_init():
             notes TEXT,
             created_by TEXT, created_at TEXT, updated_at TEXT
         )""")
+        # The wider contact field set. Added by migration rather than in the
+        # CREATE above so existing installs pick them up too.
+        for _col in ("title TEXT", "salutation TEXT", "middle_name TEXT", "department TEXT",
+                     "division TEXT", "phone_main TEXT", "phone_fax TEXT", "phone_ext TEXT",
+                     "email2 TEXT", "email3 TEXT", "website TEXT",
+                     "address TEXT", "address2 TEXT", "city TEXT", "county TEXT",
+                     "postcode TEXT", "country TEXT", "ref_id TEXT"):
+            try: client.execute(f"ALTER TABLE crm_contacts ADD COLUMN {_col}")
+            except Exception: pass
         client.execute("""CREATE TABLE IF NOT EXISTS crm_opportunities (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             org_id INTEGER,
@@ -970,7 +979,7 @@ def _crm_new_ref(table):
 def _crm_backfill_refs():
     """Gives a reference to anything created before references existed, so no
     record is left without one."""
-    for table in ("crm_orgs", "crm_opportunities"):
+    for table in ("crm_orgs", "crm_opportunities", "crm_contacts"):
         rows = db_query(f"SELECT id FROM {table} WHERE ref_id IS NULL OR TRIM(ref_id)='' LIMIT 500") or []
         for (rid,) in rows:
             db_exec(f"UPDATE {table} SET ref_id=? WHERE id=?", (_crm_new_ref(table), rid))
@@ -1957,7 +1966,7 @@ def api_crm_udfs():
     if not current_user():
         return jsonify({"ok": False, "error": "Not signed in"}), 401
     et = (request.args.get("entity_type") or "org").strip()
-    if et not in ("org", "opportunity"):
+    if et not in ("org", "opportunity", "contact"):
         return jsonify({"ok": False, "error": "Unknown record type"}), 400
     return jsonify({"ok": True, "udfs": _crm_udf_defs(et), "types": CRM_UDF_TYPES})
 
@@ -1967,7 +1976,7 @@ def api_crm_udf_save():
         return jsonify({"ok": False, "error": "Not signed in"}), 401
     d = request.json or {}
     et = str(d.get("entity_type", "")).strip()
-    if et not in ("org", "opportunity"):
+    if et not in ("org", "opportunity", "contact"):
         return jsonify({"ok": False, "error": "Unknown record type"}), 400
     act = str(d.get("action", "")).strip()
 
@@ -2128,10 +2137,11 @@ def api_crm_org_detail(oid):
     org = {k: (v[i] if v[i] is not None else ("" if k != "id" else v[i])) for i, k in enumerate(keys)}
     org["is_charity"] = bool(org["is_charity"])
     contacts = [{"id": c[0], "first_name": c[1] or "", "last_name": c[2] or "", "job_title": c[3] or "",
-                 "email": c[4] or "", "phone": c[5] or "", "mobile": c[6] or "", "is_primary": bool(c[7])}
+                 "email": c[4] or "", "phone": c[5] or "", "mobile": c[6] or "", "is_primary": bool(c[7]),
+                 "department": c[8] or "", "ref_id": c[9] or ""}
                 for c in (db_query("SELECT id, first_name, last_name, job_title, email, phone, mobile, "
-                                   "is_primary FROM crm_contacts WHERE org_id=? ORDER BY is_primary DESC, last_name",
-                                   (oid,)) or [])]
+                                   "is_primary, department, ref_id FROM crm_contacts WHERE org_id=? "
+                                   "ORDER BY is_primary DESC, last_name", (oid,)) or [])]
     opps = [{"id": o[0], "title": o[1] or "", "stage": o[2] or "", "value": o[3] or 0,
              "probability": o[4] or 0, "expected_close": o[5] or "", "status": o[6] or "open",
              "owner": o[7] or "", "ref_id": o[8] or "", "contact_id": o[9], "process_id": o[10]}
@@ -2201,6 +2211,35 @@ def api_crm_org_save():
         _crm_udf_save("org", new_id, d.get("udfs"))
     return jsonify({"ok": True, "id": new_id})
 
+CRM_CONTACT_FIELDS = ["title", "salutation", "first_name", "middle_name", "last_name",
+                      "job_title", "department", "division",
+                      "phone_main", "phone", "phone_fax", "mobile", "phone_ext",
+                      "email", "email2", "email3", "website",
+                      "address", "address2", "city", "county", "postcode", "country", "notes"]
+
+@app.route("/api/crm/contact/<int:cid>", methods=["GET"])
+def api_crm_contact_get(cid):
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    cols = ["id", "org_id", "is_primary", "ref_id", "created_at", "updated_at", "created_by"] + CRM_CONTACT_FIELDS
+    r = db_query(f"SELECT {','.join(cols)} FROM crm_contacts WHERE id=?", (cid,))
+    if not r:
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    rec = {c: (r[0][i] if r[0][i] is not None else "") for i, c in enumerate(cols)}
+    rec["is_primary"] = bool(rec["is_primary"])
+    return jsonify({"ok": True, "contact": rec, "udfs": _crm_udf_defs("contact"),
+                    "udf_values": _crm_udf_values("contact", cid)})
+
+@app.route("/api/crm/contact/new", methods=["GET"])
+def api_crm_contact_new():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    try: org_id = int(request.args.get("org_id") or 0)
+    except Exception: org_id = 0
+    org = db_query("SELECT name FROM crm_orgs WHERE id=?", (org_id,)) if org_id else None
+    return jsonify({"ok": True, "contact": {"org_id": org_id}, "org_name": (org[0][0] if org else ""),
+                    "udfs": _crm_udf_defs("contact"), "udf_values": {}})
+
 @app.route("/api/crm/contact", methods=["POST"])
 def api_crm_contact_save():
     if not current_user():
@@ -2209,31 +2248,39 @@ def api_crm_contact_save():
     cid = d.get("id")
     if str(d.get("action", "")) == "delete":
         db_exec("DELETE FROM crm_notes WHERE entity_type='contact' AND entity_id=?", (int(cid or 0),))
+        db_exec("DELETE FROM crm_udf_values WHERE entity_type='contact' AND entity_id=?", (int(cid or 0),))
         db_exec("DELETE FROM crm_contacts WHERE id=?", (int(cid or 0),))
         return jsonify({"ok": True})
     org_id = int(d.get("org_id") or 0)
     if not org_id:
         return jsonify({"ok": False, "error": "A contact must belong to an organisation"}), 400
-    last = str(d.get("last_name", "")).strip()[:80]
     first = str(d.get("first_name", "")).strip()[:80]
+    last = str(d.get("last_name", "")).strip()[:80]
     if not (first or last):
         return jsonify({"ok": False, "error": "Enter at least a first or last name"}), 400
     is_primary = 1 if d.get("is_primary") else 0
     if is_primary:
-        # Only one primary contact per organisation, or "who do we call" has no
-        # single answer.
+        # Only one primary per organisation, or "who do we call" has no single
+        # answer.
         db_exec("UPDATE crm_contacts SET is_primary=0 WHERE org_id=?", (org_id,))
-    vals = (org_id, first, last, str(d.get("job_title", ""))[:100], str(d.get("email", ""))[:120],
-            str(d.get("phone", ""))[:40], str(d.get("mobile", ""))[:40], is_primary,
-            str(d.get("notes", ""))[:1000], _crm_now())
+    g = lambda k: str(d.get(k, "") or "").strip()[:200]
+    vals = tuple(g(k) for k in CRM_CONTACT_FIELDS)
+    setclause = ", ".join(f"{k}=?" for k in CRM_CONTACT_FIELDS)
     if cid:
-        db_exec("UPDATE crm_contacts SET org_id=?, first_name=?, last_name=?, job_title=?, email=?, "
-                "phone=?, mobile=?, is_primary=?, notes=?, updated_at=? WHERE id=?", vals + (int(cid),))
-    else:
-        db_exec("INSERT INTO crm_contacts(org_id, first_name, last_name, job_title, email, phone, "
-                "mobile, is_primary, notes, updated_at, created_by, created_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", vals + (current_user(), _crm_now()))
-    return jsonify({"ok": True})
+        db_exec(f"UPDATE crm_contacts SET {setclause}, org_id=?, is_primary=?, updated_at=? WHERE id=?",
+                vals + (org_id, is_primary, _crm_now(), int(cid)))
+        _crm_udf_save("contact", int(cid), d.get("udfs"))
+        return jsonify({"ok": True, "id": int(cid)})
+    marks = ",".join("?" * (len(CRM_CONTACT_FIELDS) + 6))
+    db_exec(f"INSERT INTO crm_contacts({','.join(CRM_CONTACT_FIELDS)}, org_id, is_primary, ref_id, "
+            f"created_by, created_at, updated_at) VALUES({marks})",
+            vals + (org_id, is_primary, _crm_new_ref("crm_contacts"), current_user(),
+                    _crm_now(), _crm_now()))
+    r = db_query("SELECT id FROM crm_contacts ORDER BY id DESC LIMIT 1")
+    new_id = r[0][0] if r else None
+    if new_id:
+        _crm_udf_save("contact", new_id, d.get("udfs"))
+    return jsonify({"ok": True, "id": new_id})
 
 @app.route("/api/crm/opportunities", methods=["GET"])
 def api_crm_opportunities():
