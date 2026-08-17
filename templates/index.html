@@ -73,7 +73,10 @@
   .crm-grid tbody tr:nth-child(even){background:rgba(127,127,127,.035)}
   .crm-grid tbody tr:hover{background:var(--navy-pale)}
   .crm-grid tbody tr[data-sel]{background:var(--navy-pale);box-shadow:inset 3px 0 0 var(--navy)}
-  .crm-grid td.num{text-align:right;font-variant-numeric:tabular-nums}
+  /* Everything left-aligned, including figures. Tabular numerals are kept so
+     digits still line up in a column without needing right alignment. */
+  .crm-grid td.num{text-align:left;font-variant-numeric:tabular-nums}
+  .crm-grid th{text-align:left}
   .crm-wrap{border:1px solid var(--border);border-radius:8px;overflow:auto;background:var(--surface);
     max-height:calc(100vh - 300px)}
   /* Toolbar: one quiet strip rather than competing blocks of colour. */
@@ -1149,12 +1152,48 @@ select:focus{outline:none;border-color:var(--green)}
       <label style="grid-column:1/-1">How it helps<input id="crm-f-cc_how" placeholder="filled from the Charity Commission"></label>
       <label style="grid-column:1/-1">Policies<input id="crm-f-cc_policies" placeholder="filled from the Charity Commission"></label>
       <label style="grid-column:1/-1">Notes<textarea id="crm-f-notes" rows="3"></textarea></label>
+      <div id="crm-f-udfwrap" style="grid-column:1/-1"></div>
     </div>
     <div class="modal-btns">
       <button class="btn btn-outline btn-sm" onclick="crmCloseOrgForm()">Cancel</button>
       <button class="btn btn-green btn-sm" onclick="crmSaveOrgForm()">Save</button>
     </div>
     <div id="crm-form-status" style="font-size:12px;margin-top:8px"></div>
+  </div>
+</div>
+
+<!-- Opportunity form. Replaces a chain of browser prompts: those showed one
+     field at a time with no way back, no idea how many were left, and no
+     validation until the end. -->
+<div class="modal-bg" id="crm-opp-modal">
+  <div class="modal" style="max-width:680px;width:94vw;max-height:88vh;overflow:auto">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <h3 id="crm-opp-title" style="margin:0">Opportunity</h3>
+      <span id="crm-opp-ref" style="font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--t3)"></span>
+      <span style="flex:1"></span>
+      <span onclick="crmCloseOppForm()" title="Close" style="cursor:pointer;font-size:20px;line-height:1;color:var(--t3);padding:0 4px">&times;</span>
+    </div>
+    <div id="crm-opp-org" style="font-size:12.5px;color:var(--t2);margin-bottom:12px"></div>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 12px;font-size:12.5px">
+      <label style="grid-column:1/-1">Title *<input id="crm-o-title" class="crm-input" placeholder="what the opportunity is"></label>
+      <label>Contact<select id="crm-o-contact" class="crm-input"></select></label>
+      <label>Owner<select id="crm-o-owner" class="crm-input">
+        <option value="9M">9 Mountains</option><option value="VF">Vantage Fundraising</option><option value="Both">Both</option>
+      </select></label>
+      <label>Sales process<select id="crm-o-process" class="crm-input" onchange="crmOppProcessChanged()"></select></label>
+      <label>Stage<select id="crm-o-stage" class="crm-input" onchange="crmOppStageChanged()"></select></label>
+      <label>Value (&pound;)<input id="crm-o-value" class="crm-input" type="number" step="0.01" placeholder="0"></label>
+      <label>Probability %<input id="crm-o-prob" class="crm-input" type="number" min="0" max="100" placeholder="0"></label>
+      <label>Expected close<input id="crm-o-close" class="crm-input" type="date"></label>
+      <label>Source<input id="crm-o-source" class="crm-input" placeholder="where it came from"></label>
+      <label style="grid-column:1/-1">Notes<textarea id="crm-o-notes" class="crm-input" rows="3"></textarea></label>
+      <div id="crm-o-udfwrap" style="grid-column:1/-1"></div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-outline btn-sm" onclick="crmCloseOppForm()">Cancel</button>
+      <button class="btn btn-green btn-sm" onclick="crmSaveOppForm()">Save</button>
+    </div>
+    <div id="crm-opp-status" style="font-size:12px;margin-top:8px"></div>
   </div>
 </div>
 
@@ -7369,6 +7408,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.60", date:"2026-08", title:"CRM: narrower columns, left-aligned throughout, custom fields, and a proper opportunity form",
+    changes:[
+      "Default column widths cut by roughly a third across both lists. The old ones were generous enough that only a few columns fitted on screen, which rather defeats a dense grid. They can still be dragged wider where a column needs it.",
+      "Everything is left-aligned now, figures and currency included. Tabular numerals are kept so digits still line up in a column without needing right alignment.",
+      "Creating an opportunity is a proper form rather than a chain of browser prompts. The old version asked one question at a time with no way back, no sense of how many were left, and no validation until the end. Everything is now on one screen \u2014 title, contact, owner, process, stage, value, probability, expected close, source and notes \u2014 and choosing a stage fills in its probability automatically while leaving it editable, since a particular deal can reasonably differ from its stage default.",
+      "Additional fields (UDFs) can be defined for both organisations and opportunities, under Actions \u2192 Manage additional fields. Five types: text, number, date, yes/no and a list of choices. They appear on the relevant form automatically \u2014 no code change needed to add one.",
+      "Deleting a field also removes the values stored against it, rather than leaving orphaned data that a field re-created under the same name would silently inherit.",
+    ]},
   { v:"2.59", date:"2026-08", title:"CRM lists: drag column widths, adjustable text size, and floating widgets kept to calling",
     changes:[
       "Column widths can be dragged from the right edge of any heading, exactly like a spreadsheet. Widths are remembered per person and per list, so a layout someone sets up survives a reload. \u21ba Widths puts them back to default.",
@@ -9414,7 +9461,9 @@ let _crmEditingId=null, _crmIsCharity=false;
 
 function crmNewOrg(){ crmOpenOrgForm({}); }
 function crmEditOrg(id){
-  fetch('/api/crm/org/'+id).then(r=>r.json()).then(d=>{ if(d.ok) crmOpenOrgForm(d.org); });
+  fetch('/api/crm/org/'+id).then(r=>r.json()).then(d=>{
+    if(d.ok){ d.org.udf_values=d.udf_values||{}; crmOpenOrgForm(d.org); }
+  });
 }
 function crmOpenOrgForm(o){
   _crmEditingId = o.id || null;
@@ -9422,6 +9471,10 @@ function crmOpenOrgForm(o){
   document.getElementById('crm-org-title').textContent = o.id ? 'Edit organisation' : 'New organisation';
   CRM_ORG_FIELDS.forEach(f=>{ const el=crmFieldEl(f); if(el) el.value = o[f]==null ? '' : o[f]; });
   const st=document.getElementById('crm-lookup-status'); if(st) st.textContent='';
+  // Definitions are fetched each time so a field added in another tab appears.
+  fetch('/api/crm/udfs?entity_type=org').then(r=>r.json()).then(d=>{
+    if(d.ok) crmRenderOrgUdfs(d.udfs||[], o.udf_values||{});
+  }).catch(()=>{});
   const fs=document.getElementById('crm-form-status'); if(fs) fs.textContent='';
   document.getElementById('crm-org-modal').classList.add('open');
 }
@@ -9456,9 +9509,77 @@ function crmLookupCharity(){
     }).catch(e=>{ st.textContent='\u26a0 '+esc(e.message); st.style.color='var(--red)'; });
 }
 
+// UDFs on the organisation form, rendered from their definitions so adding a
+// field needs no code change here.
+let _crmOrgUdfs=[];
+function crmRenderOrgUdfs(udfs, values){
+  _crmOrgUdfs=udfs||[];
+  const wrap=document.getElementById('crm-f-udfwrap');
+  if(!wrap) return;
+  if(!_crmOrgUdfs.length){ wrap.innerHTML=''; return; }
+  wrap.innerHTML='<div style="border-top:1px solid var(--border);margin:6px 0 8px;padding-top:9px;font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Additional fields</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 12px">'+
+    _crmOrgUdfs.map(u=>`<label>${esc(u.label)}${crmUdfInputHtml(u, (values||{})[u.key]||'')}</label>`).join('')+'</div>';
+}
+// ── Managing user-defined fields ───────────────────────────────────────────
+function crmManageUdfs(entityType){
+  const et=entityType||'org';
+  fetch('/api/crm/udfs?entity_type='+et).then(r=>r.json()).then(d=>{
+    if(!d.ok){ alert(d.error||'Failed'); return; }
+    const body=document.getElementById('crm-body');
+    body.innerHTML=`<div style="margin-bottom:10px">
+        <button class="btn btn-outline btn-sm" onclick="crmReload()">\u2190 Back</button>
+        <strong style="margin-left:8px">Additional fields \u2014 ${et==='org'?'Address Book':'Opportunities'}</strong>
+        <span class="crm-seg" style="margin-left:10px">
+          <button class="${et==='org'?'on':''}" onclick="crmManageUdfs('org')">Address Book</button>
+          <button class="${et==='opportunity'?'on':''}" onclick="crmManageUdfs('opportunity')">Opportunities</button>
+        </span>
+        <button class="btn btn-green btn-sm" style="margin-left:10px" onclick="crmEditUdf('${et}',null)">+ New field</button>
+      </div>
+      <div class="crm-panel" style="max-width:760px">
+        <p style="font-size:12.5px;color:var(--t2);margin:0 0 12px">
+          Fields you add here appear on every ${et==='org'?'organisation':'opportunity'} form and can be
+          filled in per record.</p>
+        ${(d.udfs||[]).length ? (d.udfs||[]).map(u=>`<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--s2);font-size:12.5px">
+          <strong style="min-width:170px">${esc(u.label)}</strong>
+          <span class="tagpill">${esc(u.field_type)}</span>
+          <span style="color:var(--t3);font-size:11px">${esc((u.options||[]).join(', '))}</span>
+          <span style="flex:1"></span>
+          <span onclick="crmEditUdf('${et}','${esc(u.key)}')" style="cursor:pointer;color:var(--t3);font-size:11px">edit</span>
+          <span onclick="crmDeleteUdf('${et}','${esc(u.key)}')" style="cursor:pointer;color:var(--red);font-size:11px">delete</span>
+        </div>`).join('') : '<div style="font-size:12.5px;color:var(--t3)">No additional fields yet.</div>'}
+      </div>`;
+  }).catch(e=>alert(e.message));
+}
+function crmEditUdf(et, key){
+  fetch('/api/crm/udfs?entity_type='+et).then(r=>r.json()).then(d=>{
+    const u=(d.udfs||[]).find(x=>x.key===key)||{label:'',field_type:'text',options:[]};
+    const label=prompt('Field name:', u.label||''); if(label===null||!label.trim()) return;
+    const ftype=prompt('Field type \u2014 text, number, date, yesno or list:', u.field_type||'text');
+    if(ftype===null) return;
+    let options=[];
+    if((ftype||'').trim().toLowerCase()==='list'){
+      const raw=prompt('Choices, separated by commas:', (u.options||[]).join(', '));
+      if(raw===null) return;
+      options=raw.split(',').map(x=>x.trim()).filter(Boolean);
+    }
+    fetch('/api/crm/udf',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({entity_type:et, key:key||'', label, field_type:ftype, options})})
+      .then(r=>r.json()).then(res=>{
+        if(!res.ok){ alert(res.error||'Failed'); return; }
+        crmManageUdfs(et);
+      }).catch(e=>alert(e.message));
+  });
+}
+function crmDeleteUdf(et, key){
+  if(!confirm('Delete this field?\n\nValues already entered against it on every record will be removed too.')) return;
+  fetch('/api/crm/udf',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({entity_type:et, key, action:'delete'})})
+    .then(()=>crmManageUdfs(et)).catch(e=>alert(e.message));
+}
 function crmSaveOrgForm(){
   const fs=document.getElementById('crm-form-status');
-  const payload={id:_crmEditingId, is_charity:_crmIsCharity?1:0};
+  const payload={id:_crmEditingId, is_charity:_crmIsCharity?1:0, udfs:crmCollectUdfs(_crmOrgUdfs)};
   CRM_ORG_FIELDS.forEach(f=>{ const el=crmFieldEl(f); payload[f]= el ? el.value : ''; });
   if(!(payload.name||'').trim()){
     fs.textContent='\u26a0 Company name is required.'; fs.style.color='var(--red)'; return;
@@ -9810,48 +9931,113 @@ function crmLoadProcesses(){
     return _crmProcesses;
   }).catch(()=>[]);
 }
-function crmNewOpp(orgId){ crmOppForm({org_id:orgId}); }
-function crmNewOppForContact(orgId, contactId){ crmOppForm({org_id:orgId, contact_id:contactId}); }
-function crmEditOpp(id){
-  fetch('/api/crm/opportunities').then(r=>r.json()).then(d=>{
-    const o=(d.opportunities||[]).find(x=>x.id===id);
-    if(o) crmOppForm(o); else alert('That opportunity is closed \u2014 open it from its organisation.');
-  });
+let _crmOppCtx=null;
+function crmNewOpp(orgId){ crmOpenOppForm(null, orgId); }
+function crmNewOppForContact(orgId, contactId){ crmOpenOppForm(null, orgId, contactId); }
+function crmEditOpp(id){ crmOpenOppForm(id); }
+// Kept so older call sites still work; both now open the same form.
+function crmOppForm(o){ crmOpenOppForm(o && o.id, o && o.org_id, o && o.contact_id); }
+
+function crmOpenOppForm(id, orgId, contactId){
+  const url = id ? '/api/crm/opportunity/'+id : '/api/crm/opportunity/new?org_id='+(orgId||0);
+  Promise.all([crmLoadProcesses(), fetch(url).then(r=>r.json())]).then(([procs, d])=>{
+    if(!d.ok){ alert(d.error||'Could not load'); return; }
+    const o = d.opportunity || {org_id:d.org_id, owner:'9M', status:'open'};
+    _crmOppCtx = {id: id||null, org_id: o.org_id||d.org_id||orgId, udfs: d.udfs||[]};
+    document.getElementById('crm-opp-title').textContent = id ? 'Edit opportunity' : 'New opportunity';
+    document.getElementById('crm-opp-ref').textContent = o.ref_id || '';
+    document.getElementById('crm-opp-org').innerHTML =
+      (d.org_name||o.org_name) ? 'For <strong>'+esc(d.org_name||o.org_name)+'</strong>' : '';
+    document.getElementById('crm-opp-status').textContent='';
+
+    const set=(elId,v)=>{ const e=document.getElementById(elId); if(e) e.value = (v==null?'':v); };
+    set('crm-o-title', o.title); set('crm-o-value', o.value||'');
+    set('crm-o-prob', o.probability||''); set('crm-o-close', o.expected_close||'');
+    set('crm-o-source', o.source||''); set('crm-o-notes', o.notes||'');
+    set('crm-o-owner', o.owner||'9M');
+
+    // Contacts belong to the organisation, so the list is built from it.
+    document.getElementById('crm-o-contact').innerHTML =
+      '<option value="">\u2014 none \u2014</option>'+
+      (d.contacts||[]).map(c=>`<option value="${c.id}" ${String(o.contact_id||contactId)===String(c.id)?'selected':''}>${esc(c.name)}</option>`).join('');
+
+    // Process drives the stage list, and stage drives probability.
+    const psel=document.getElementById('crm-o-process');
+    const def=(_crmProcesses.find(p=>p.is_default)||_crmProcesses[0]);
+    const chosenProc = o.process_id || (def && def.id) || '';
+    psel.innerHTML=_crmProcesses.map(p=>`<option value="${p.id}" ${String(chosenProc)===String(p.id)?'selected':''}>${esc(p.name)}</option>`).join('')
+      || '<option value="">(no processes defined)</option>';
+    crmOppProcessChanged(o.stage);
+    if(o.probability) set('crm-o-prob', o.probability);
+
+    crmRenderOppUdfs(d.udfs||[], d.udf_values||{});
+    document.getElementById('crm-opp-modal').classList.add('open');
+  }).catch(e=>alert(e.message));
 }
-// The stage list comes from the chosen process, so probability follows the
-// process definition rather than being typed in each time.
-function crmOppForm(o){
-  crmLoadProcesses().then(()=>{
-    const def=_crmProcesses.find(p=>p.is_default)||_crmProcesses[0];
-    const procId=o.process_id||(def&&def.id)||null;
-    const proc=_crmProcesses.find(p=>p.id===procId)||def;
-    const stageNames=(proc&&proc.stages||[]).map(st=>st.name);
-    const title=prompt('Opportunity title:', o.title||''); if(title===null||!title.trim()) return;
-    let processId=procId;
-    if(_crmProcesses.length>1){
-      const pick=prompt('Sales process:\n'+_crmProcesses.map((p,i)=>(i+1)+'. '+p.name).join('\n'),
-        String(Math.max(1,_crmProcesses.findIndex(p=>p.id===procId)+1)));
-      if(pick===null) return;
-      const idx=parseInt(pick,10)-1;
-      if(_crmProcesses[idx]) processId=_crmProcesses[idx].id;
-    }
-    const chosen=_crmProcesses.find(p=>p.id===processId)||proc;
-    const names=(chosen&&chosen.stages||[]).map(st=>st.name);
-    const stage=prompt('Stage \u2014 '+(names.join(', ')||'Lead'), o.stage||names[0]||'Lead');
-    if(stage===null) return;
-    const stObj=(chosen&&chosen.stages||[]).find(st=>st.name===stage);
-    const value=prompt('Value (\u00a3):', o.value||0);
-    const close=prompt('Expected close (YYYY-MM-DD):', o.expected_close||'');
-    const owner=prompt('Owner \u2014 9M, VF or Both:', o.owner||'9M');
-    fetch('/api/crm/opportunity',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({id:o.id, org_id:o.org_id, contact_id:o.contact_id||null, title, stage,
-        value, probability:(stObj?stObj.probability:(o.probability||0)),
-        expected_close:close, owner, process_id:processId, notes:o.notes||''})})
-      .then(r=>r.json()).then(d=>{
-        if(!d.ok){ alert(d.error||'Failed'); return; }
-        o.org_id && _crmView!=='pipe' ? crmOpenOrg(o.org_id) : crmReload();
-      }).catch(e=>alert(e.message));
+function crmCloseOppForm(){ document.getElementById('crm-opp-modal').classList.remove('open'); }
+
+function crmOppProcessChanged(keepStage){
+  const pid=document.getElementById('crm-o-process').value;
+  const proc=_crmProcesses.find(p=>String(p.id)===String(pid));
+  const ssel=document.getElementById('crm-o-stage');
+  const stages=(proc&&proc.stages)||[];
+  ssel.innerHTML=stages.map(st=>`<option value="${esc(st.name)}" ${keepStage===st.name?'selected':''}>${esc(st.name)}</option>`).join('')
+    || '<option value="Lead">Lead</option>';
+  if(!keepStage) crmOppStageChanged();
+}
+// Probability follows the stage, but stays editable — a particular deal can
+// reasonably differ from its stage's default.
+function crmOppStageChanged(){
+  const pid=document.getElementById('crm-o-process').value;
+  const proc=_crmProcesses.find(p=>String(p.id)===String(pid));
+  const name=document.getElementById('crm-o-stage').value;
+  const st=((proc&&proc.stages)||[]).find(x=>x.name===name);
+  if(st) document.getElementById('crm-o-prob').value=st.probability;
+}
+function crmRenderOppUdfs(udfs, values){
+  const wrap=document.getElementById('crm-o-udfwrap');
+  if(!udfs.length){ wrap.innerHTML=''; return; }
+  wrap.innerHTML='<div style="border-top:1px solid var(--border);margin:6px 0 8px;padding-top:9px;font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Additional fields</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 12px">'+
+    udfs.map(u=>`<label>${esc(u.label)}${crmUdfInputHtml(u, values[u.key]||'')}</label>`).join('')+'</div>';
+}
+function crmUdfInputHtml(u, val){
+  const id='crm-udf-'+u.key;
+  if(u.field_type==='list')
+    return `<select id="${id}" class="crm-input"><option value="">\u2014</option>`+
+      (u.options||[]).map(o=>`<option value="${esc(o)}" ${val===o?'selected':''}>${esc(o)}</option>`).join('')+'</select>';
+  if(u.field_type==='yesno')
+    return `<select id="${id}" class="crm-input"><option value="">\u2014</option>
+      <option value="Yes" ${val==='Yes'?'selected':''}>Yes</option>
+      <option value="No" ${val==='No'?'selected':''}>No</option></select>`;
+  const t = u.field_type==='number' ? 'number' : (u.field_type==='date' ? 'date' : 'text');
+  return `<input id="${id}" class="crm-input" type="${t}" value="${esc(val)}">`;
+}
+function crmCollectUdfs(udfs){
+  const out={};
+  (udfs||[]).forEach(u=>{
+    const el=document.getElementById('crm-udf-'+u.key);
+    if(el) out[u.key]=el.value;
   });
+  return out;
+}
+function crmSaveOppForm(){
+  const st=document.getElementById('crm-opp-status');
+  const g=id=>(document.getElementById(id)||{}).value||'';
+  if(!g('crm-o-title').trim()){ st.textContent='\u26a0 Give the opportunity a title.'; st.style.color='var(--red)'; return; }
+  st.textContent='Saving\u2026'; st.style.color='var(--t3)';
+  fetch('/api/crm/opportunity',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:_crmOppCtx.id, org_id:_crmOppCtx.org_id,
+      contact_id:g('crm-o-contact')||null, title:g('crm-o-title'),
+      owner:g('crm-o-owner'), process_id:g('crm-o-process')||null, stage:g('crm-o-stage'),
+      value:g('crm-o-value'), probability:g('crm-o-prob'), expected_close:g('crm-o-close'),
+      source:g('crm-o-source'), notes:g('crm-o-notes'),
+      udfs:crmCollectUdfs(_crmOppCtx.udfs)})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ st.textContent='\u26a0 '+esc(d.error||'Could not save'); st.style.color='var(--red)'; return; }
+      crmCloseOppForm();
+      (_crmOppCtx.org_id && _crmView!=='pipe') ? crmOpenOrg(_crmOppCtx.org_id) : crmReload();
+    }).catch(e=>{ st.textContent='\u26a0 '+esc(e.message); st.style.color='var(--red)'; });
 }
 // ── Sales processes ────────────────────────────────────────────────────────
 function crmManageProcesses(){
@@ -9998,6 +10184,7 @@ const CRM_MENUS = {
   Actions: [
     {label:'Create an opportunity\u2026', fn:'crmNewOppFromMenu()', needsSel:true},
     {label:'Manage sales processes\u2026', fn:'crmManageProcesses()'},
+    {label:'Manage additional fields\u2026', fn:"crmManageUdfs('org')"},
     {sep:true},
     {label:'Import address book\u2026', fn:"crmOpenImport('orgs')"},
     {label:'Import opportunities\u2026', fn:"crmOpenImport('opps')"},

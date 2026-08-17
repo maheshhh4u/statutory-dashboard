@@ -411,6 +411,28 @@ def db_init():
                     "CREATE INDEX IF NOT EXISTS ix_crm_orgs_reg ON crm_orgs(reg_number)"):
             try: client.execute(_ix)
             except Exception: pass
+        # User-defined fields. Defined once per entity type, then a value per
+        # record — the same shape Maximizer uses, and it means adding a field
+        # doesn't require a schema change.
+        client.execute("""CREATE TABLE IF NOT EXISTS crm_udf_defs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT,          -- org | opportunity
+            key TEXT,
+            label TEXT,
+            field_type TEXT,           -- text | number | date | yesno | list
+            options_json TEXT,         -- choices, when field_type = list
+            position INTEGER DEFAULT 0,
+            created_by TEXT, created_at TEXT
+        )""")
+        client.execute("""CREATE TABLE IF NOT EXISTS crm_udf_values (
+            entity_type TEXT,
+            entity_id INTEGER,
+            udf_key TEXT,
+            value TEXT,
+            PRIMARY KEY (entity_type, entity_id, udf_key)
+        )""")
+        try: client.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_crm_udf_key ON crm_udf_defs(entity_type, key)")
+        except Exception: pass
         # Saved column layouts per user and list, so each person can shape the
         # grid to how they work without affecting anyone else.
         client.execute("""CREATE TABLE IF NOT EXISTS crm_column_setup (
@@ -1676,33 +1698,123 @@ def api_crm_lookup_charity():
 # reads and its default width live in one place rather than being duplicated
 # between the grid, the column picker and the export.
 CRM_COLUMNS = {
+    # Widths trimmed: the earlier defaults were generous enough that only a few
+    # columns fitted on screen, which defeats the point of a dense grid. These
+    # fit typical content and can still be dragged wider where needed.
     "orgs": [
-        ("name", "Company", 260), ("ref_id", "Reference ID", 120),
-        ("owner", "Owner", 80), ("reg_number", "Charity no.", 110),
-        ("org_type", "Type", 110), ("main_contact", "Main contact", 150),
-        ("phone", "Phone 1", 130), ("phone2", "Phone 2", 130),
-        ("email", "Email 1", 200), ("email2", "Email 2", 200),
-        ("website", "Website", 180), ("address", "Address 1", 200),
-        ("address2", "Address 2", 160), ("city", "City / Town", 130),
-        ("county", "County", 120), ("postcode", "Postcode", 100),
-        ("country", "Country", 110), ("cc_what", "What it does", 200),
-        ("cc_who", "Who it helps", 200), ("cc_how", "How it helps", 200),
-        ("source", "Source", 120), ("contacts", "Contacts", 80),
-        ("open_opps", "Open opps", 90), ("updated_at", "Last updated", 130),
+        ("name", "Company", 190), ("ref_id", "Reference ID", 105),
+        ("owner", "Owner", 62), ("reg_number", "Charity no.", 88),
+        ("org_type", "Type", 90), ("main_contact", "Main contact", 115),
+        ("phone", "Phone 1", 105), ("phone2", "Phone 2", 105),
+        ("email", "Email 1", 150), ("email2", "Email 2", 150),
+        ("website", "Website", 130), ("address", "Address 1", 145),
+        ("address2", "Address 2", 120), ("city", "City / Town", 100),
+        ("county", "County", 95), ("postcode", "Postcode", 80),
+        ("country", "Country", 90), ("cc_what", "What it does", 150),
+        ("cc_who", "Who it helps", 150), ("cc_how", "How it helps", 150),
+        ("source", "Source", 95), ("contacts", "Contacts", 68),
+        ("open_opps", "Open opps", 76), ("updated_at", "Last updated", 105),
     ],
     "opps": [
-        ("title", "Opportunity", 240), ("ref_id", "Reference ID", 120),
-        ("org_name", "Company", 220), ("stage", "Stage", 120),
-        ("value", "Value", 110), ("probability", "Prob.", 70),
-        ("weighted", "Weighted", 110), ("expected_close", "Expected close", 130),
-        ("owner", "Owner", 80), ("status", "Status", 90),
-        ("source", "Source", 120),
+        ("title", "Opportunity", 180), ("ref_id", "Reference ID", 105),
+        ("org_name", "Company", 160), ("stage", "Stage", 95),
+        ("value", "Value", 85), ("probability", "Prob.", 58),
+        ("weighted", "Weighted", 85), ("expected_close", "Expected close", 105),
+        ("owner", "Owner", 62), ("status", "Status", 74),
+        ("source", "Source", 95),
     ],
 }
 CRM_DEFAULT_COLUMNS = {
     "orgs": ["name", "owner", "reg_number", "main_contact", "phone", "city", "contacts", "open_opps"],
     "opps": ["title", "org_name", "stage", "value", "probability", "weighted", "expected_close", "owner"],
 }
+
+CRM_UDF_TYPES = ["text", "number", "date", "yesno", "list"]
+
+def _crm_udf_defs(entity_type):
+    rows = db_query("SELECT id, key, label, field_type, options_json, position FROM crm_udf_defs "
+                    "WHERE entity_type=? ORDER BY position, id", (entity_type,)) or []
+    out = []
+    for r in rows:
+        try: opts = json.loads(r[4] or "[]")
+        except Exception: opts = []
+        out.append({"id": r[0], "key": r[1], "label": r[2], "field_type": r[3] or "text",
+                    "options": opts, "position": r[5] or 0})
+    return out
+
+def _crm_udf_values(entity_type, entity_id):
+    rows = db_query("SELECT udf_key, value FROM crm_udf_values WHERE entity_type=? AND entity_id=?",
+                    (entity_type, int(entity_id))) or []
+    return {r[0]: (r[1] or "") for r in rows}
+
+def _crm_udf_save(entity_type, entity_id, values):
+    """Values arrive keyed by UDF key. Unknown keys are ignored rather than
+    stored, so a stale form can't write fields that no longer exist."""
+    known = {d["key"] for d in _crm_udf_defs(entity_type)}
+    for k, v in (values or {}).items():
+        if k not in known:
+            continue
+        db_exec("DELETE FROM crm_udf_values WHERE entity_type=? AND entity_id=? AND udf_key=?",
+                (entity_type, int(entity_id), k))
+        if str(v).strip() != "":
+            db_exec("INSERT INTO crm_udf_values(entity_type, entity_id, udf_key, value) VALUES(?,?,?,?)",
+                    (entity_type, int(entity_id), k, str(v)[:500]))
+
+@app.route("/api/crm/udfs", methods=["GET"])
+def api_crm_udfs():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    et = (request.args.get("entity_type") or "org").strip()
+    if et not in ("org", "opportunity"):
+        return jsonify({"ok": False, "error": "Unknown record type"}), 400
+    return jsonify({"ok": True, "udfs": _crm_udf_defs(et), "types": CRM_UDF_TYPES})
+
+@app.route("/api/crm/udf", methods=["POST"])
+def api_crm_udf_save():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    et = str(d.get("entity_type", "")).strip()
+    if et not in ("org", "opportunity"):
+        return jsonify({"ok": False, "error": "Unknown record type"}), 400
+    act = str(d.get("action", "")).strip()
+
+    if act == "delete":
+        key = str(d.get("key", "")).strip()
+        # The stored values go too — leaving them would mean a field re-created
+        # under the same name silently inherited old data.
+        db_exec("DELETE FROM crm_udf_values WHERE entity_type=? AND udf_key=?", (et, key))
+        db_exec("DELETE FROM crm_udf_defs WHERE entity_type=? AND key=?", (et, key))
+        return jsonify({"ok": True})
+
+    label = str(d.get("label", "")).strip()[:60]
+    if not label:
+        return jsonify({"ok": False, "error": "Give the field a name"}), 400
+    ftype = str(d.get("field_type", "text")).strip().lower()
+    if ftype not in CRM_UDF_TYPES:
+        ftype = "text"
+    opts = [str(o).strip()[:60] for o in (d.get("options") or []) if str(o).strip()]
+    if ftype == "list" and not opts:
+        return jsonify({"ok": False, "error": "A list field needs at least one choice"}), 400
+
+    key = str(d.get("key", "")).strip()
+    if not key:
+        # Derived from the label so the stored key is readable in an export,
+        # with a numeric suffix if that name is taken.
+        base = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")[:40] or "field"
+        key = base
+        n = 2
+        while db_query("SELECT 1 FROM crm_udf_defs WHERE entity_type=? AND key=?", (et, key)):
+            key = f"{base}_{n}"; n += 1
+        pos = db_query("SELECT COALESCE(MAX(position),0)+1 FROM crm_udf_defs WHERE entity_type=?", (et,))
+        db_exec("INSERT INTO crm_udf_defs(entity_type, key, label, field_type, options_json, position, "
+                "created_by, created_at) VALUES(?,?,?,?,?,?,?,?)",
+                (et, key, label, ftype, json.dumps(opts), (pos[0][0] if pos else 0),
+                 current_user(), _crm_now()))
+    else:
+        db_exec("UPDATE crm_udf_defs SET label=?, field_type=?, options_json=? WHERE entity_type=? AND key=?",
+                (label, ftype, json.dumps(opts), et, key))
+    return jsonify({"ok": True, "key": key})
 
 @app.route("/api/crm/columns", methods=["GET"])
 def api_crm_columns():
@@ -1846,7 +1958,8 @@ def api_crm_org_detail(oid):
                                     "WHERE reg_number=? ORDER BY id DESC LIMIT 20",
                                     (org["reg_number"],)) or [])]
     return jsonify({"ok": True, "org": org, "contacts": contacts, "opportunities": opps,
-                    "notes": notes, "calls": calls, "stages": CRM_STAGES, "owners": CRM_OWNERS})
+                    "notes": notes, "calls": calls, "stages": CRM_STAGES, "owners": CRM_OWNERS,
+                    "udfs": _crm_udf_defs("org"), "udf_values": _crm_udf_values("org", oid)})
 
 @app.route("/api/crm/org", methods=["POST"])
 def api_crm_org_save():
@@ -1884,12 +1997,16 @@ def api_crm_org_save():
     if oid:
         setclause = ", ".join(f"{c.strip()}=?" for c in cols.split(","))
         db_exec(f"UPDATE crm_orgs SET {setclause} WHERE id=?", vals + (int(oid),))
+        _crm_udf_save("org", int(oid), d.get("udfs"))
         return jsonify({"ok": True, "id": int(oid)})
     placeholders = ",".join("?" * (len(cols.split(",")) + 3))
     db_exec(f"INSERT INTO crm_orgs({cols}, ref_id, created_by, created_at) VALUES({placeholders})",
             vals + (_crm_new_ref("crm_orgs"), current_user(), _crm_now()))
     r = db_query("SELECT id FROM crm_orgs WHERE name=? ORDER BY id DESC LIMIT 1", (name,))
-    return jsonify({"ok": True, "id": (r[0][0] if r else None)})
+    new_id = r[0][0] if r else None
+    if new_id:
+        _crm_udf_save("org", new_id, d.get("udfs"))
+    return jsonify({"ok": True, "id": new_id})
 
 @app.route("/api/crm/contact", methods=["POST"])
 def api_crm_contact_save():
@@ -1959,6 +2076,46 @@ def api_crm_opportunities():
                     "total_value": round(total, 2), "weighted_value": round(weighted, 2),
                     "owners": CRM_OWNERS})
 
+@app.route("/api/crm/opportunity/<int:pid>", methods=["GET"])
+def api_crm_opportunity_get(pid):
+    """One opportunity with everything the form needs — including closed ones,
+    which the pipeline list doesn't return."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    r = db_query("SELECT id, org_id, contact_id, title, owner, stage, value, probability, "
+                 "expected_close, status, source, notes, process_id, ref_id "
+                 "FROM crm_opportunities WHERE id=?", (pid,))
+    if not r:
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    v = r[0]
+    keys = ["id", "org_id", "contact_id", "title", "owner", "stage", "value", "probability",
+            "expected_close", "status", "source", "notes", "process_id", "ref_id"]
+    opp = {k: (v[i] if v[i] is not None else "") for i, k in enumerate(keys)}
+    org = db_query("SELECT name FROM crm_orgs WHERE id=?", (opp["org_id"],))
+    opp["org_name"] = org[0][0] if org else ""
+    contacts = [{"id": c[0], "name": ((c[1] or "") + " " + (c[2] or "")).strip() or "(no name)"}
+                for c in (db_query("SELECT id, first_name, last_name FROM crm_contacts WHERE org_id=? "
+                                   "ORDER BY is_primary DESC, last_name", (opp["org_id"],)) or [])]
+    return jsonify({"ok": True, "opportunity": opp, "contacts": contacts,
+                    "udfs": _crm_udf_defs("opportunity"),
+                    "udf_values": _crm_udf_values("opportunity", pid),
+                    "owners": CRM_OWNERS})
+
+@app.route("/api/crm/opportunity/new", methods=["GET"])
+def api_crm_opportunity_new():
+    """Everything the wizard needs to open a blank form for an organisation."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    try: org_id = int(request.args.get("org_id") or 0)
+    except Exception: org_id = 0
+    org = db_query("SELECT name FROM crm_orgs WHERE id=?", (org_id,)) if org_id else None
+    contacts = [{"id": c[0], "name": ((c[1] or "") + " " + (c[2] or "")).strip() or "(no name)"}
+                for c in (db_query("SELECT id, first_name, last_name FROM crm_contacts WHERE org_id=? "
+                                   "ORDER BY is_primary DESC, last_name", (org_id,)) or [])] if org_id else []
+    return jsonify({"ok": True, "org_id": org_id, "org_name": (org[0][0] if org else ""),
+                    "contacts": contacts, "udfs": _crm_udf_defs("opportunity"),
+                    "udf_values": {}, "owners": CRM_OWNERS})
+
 @app.route("/api/crm/opportunity", methods=["POST"])
 def api_crm_opportunity_save():
     if not current_user():
@@ -2006,13 +2163,17 @@ def api_crm_opportunity_save():
         db_exec("UPDATE crm_opportunities SET org_id=?, contact_id=?, title=?, owner=?, stage=?, value=?, "
                 "probability=?, expected_close=?, source=?, notes=?, process_id=?, updated_at=? WHERE id=?",
                 vals + (int(pid),))
+        _crm_udf_save("opportunity", int(pid), d.get("udfs"))
         return jsonify({"ok": True, "id": int(pid)})
     db_exec("INSERT INTO crm_opportunities(org_id, contact_id, title, owner, stage, value, probability, "
             "expected_close, source, notes, process_id, updated_at, ref_id, created_by, created_at) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             vals + (_crm_new_ref("crm_opportunities"), current_user(), _crm_now()))
     r = db_query("SELECT id FROM crm_opportunities ORDER BY id DESC LIMIT 1")
-    return jsonify({"ok": True, "id": (r[0][0] if r else None)})
+    new_id = r[0][0] if r else None
+    if new_id:
+        _crm_udf_save("opportunity", new_id, d.get("udfs"))
+    return jsonify({"ok": True, "id": new_id})
 
 @app.route("/api/crm/note", methods=["POST"])
 def api_crm_note_add():
