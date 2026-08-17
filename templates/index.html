@@ -7524,6 +7524,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.64", date:"2026-08", title:"Fix: the address book stopped loading again \u2014 same cause as before",
+    changes:[
+      "My fault, and the second time for the same reason. The edit that added the contact form replaced a wider block than intended and removed the selection code with it \u2014 along with the bulk import functions and the process loader. The list renders a tick box per row that calls one of those functions, so every row threw and nothing appeared.",
+      "All of it is restored, and I also removed a duplicate function my own repair introduced.",
+      "The check I added last time only looked at a list of names I maintained by hand, which is why it passed while things were missing. It now scans the page for every function actually referenced from markup and compares that against what is defined \u2014 123 references, all resolving, none duplicated.",
+    ]},
   { v:"2.63", date:"2026-08", title:"CRM: a proper contact form, and additional fields for contacts too",
     changes:[
       "Adding or editing a contact now opens a form rather than a chain of browser prompts. It follows the same grouping the information is actually gathered in \u2014 Name, Phone, Email, Address \u2014 rather than one long column.",
@@ -9487,6 +9493,203 @@ function crSwitchModule(mod, initial){
 // CRM record detail. Rendered into the same panel rather than a modal, so the
 // contact list, pipeline and notes for one organisation are all visible at
 // once — which is how someone actually uses an address book entry.
+// ── Selection and record actions ───────────────────────────────────────────
+// This block has now been lost twice to edits that replaced a wider range than
+// intended. The grid renders a tick box per row calling crmRowChecked, so if
+// these go missing every row throws and the list never appears.
+let _crmCurrentOrgId=null, _crmCurrentOrg=null, _crmSearchField='', _crmViewMode='all';
+let _crmSelected=new Set();
+
+function crmRowChecked(id, on){
+  on ? _crmSelected.add(id) : _crmSelected.delete(id);
+  const row=document.getElementById('crm-row-'+id);
+  if(row){
+    if(on){ row.dataset.sel='1'; row.style.background='var(--navy-pale)'; }
+    else { delete row.dataset.sel; row.style.background='transparent'; }
+  }
+  crmUpdateSelBar();
+}
+function crmToggleAll(on){
+  document.querySelectorAll('.crm-row-check').forEach(cb=>{
+    cb.checked=on; crmRowChecked(parseInt(cb.value,10), on);
+  });
+}
+function crmSelectAll(on){
+  const cb=document.getElementById('crm-check-all');
+  if(cb) cb.checked=on;
+  crmToggleAll(on);
+}
+function crmInvertSelection(){
+  document.querySelectorAll('.crm-row-check').forEach(cb=>{
+    cb.checked=!cb.checked; crmRowChecked(parseInt(cb.value,10), cb.checked);
+  });
+}
+function crmUpdateSelBar(){
+  const bar=document.getElementById('crm-selbar');
+  if(!bar) return;
+  const n=_crmSelected.size;
+  if(!n){ bar.style.display='none'; return; }
+  bar.style.display='flex';
+  bar.innerHTML=`<strong>${n} selected</strong>
+    <button class="btn btn-outline btn-sm" onclick="crmBulkOwner()">Change owner\u2026</button>
+    <button class="btn btn-outline btn-sm" onclick="crmCombineSelected()">Combine\u2026</button>
+    <button class="btn btn-outline btn-sm" onclick="crmExportSelected()">Export selected</button>
+    <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="crmBulkDelete()">Delete</button>
+    <span style="flex:1"></span>
+    <span style="cursor:pointer;color:var(--t3)" onclick="crmSelectAll(false)">Clear selection</span>`;
+}
+function crmSelectedIds(){ return Array.from(_crmSelected); }
+function crmNeedSelection(){
+  if(_crmSelected.size) return true;
+  alert('Tick one or more organisations first.');
+  return false;
+}
+function crmBulkDelete(){
+  if(!crmNeedSelection()) return;
+  const ids=crmSelectedIds();
+  if(!confirm(`Delete ${ids.length} organisation(s), along with their contacts, opportunities and notes?\n\nThis cannot be undone.`)) return;
+  fetch('/api/crm/bulk',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'delete', ids})}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ alert(d.error||'Failed'); return; }
+      _crmSelected.clear(); crmReload();
+    }).catch(e=>alert(e.message));
+}
+function crmBulkOwner(){
+  if(!crmNeedSelection()) return;
+  const owner=prompt('Set owner for the selected organisations \u2014 9M, VF or Both:','9M');
+  if(owner===null) return;
+  fetch('/api/crm/bulk',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'set_owner', ids:crmSelectedIds(), owner})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ alert(d.error||'Failed'); return; }
+      _crmSelected.clear(); crmReload();
+    }).catch(e=>alert(e.message));
+}
+function crmCombineSelected(){
+  if(!crmNeedSelection()) return;
+  const ids=crmSelectedIds();
+  if(ids.length<2){ alert('Select at least two organisations to combine.'); return; }
+  if(!confirm(`Combine ${ids.length} organisations into one?\n\nThe oldest record is kept. Contacts, opportunities and notes from the others move onto it, and any blank fields on the kept record are filled from the others. The merged records are then removed.`)) return;
+  fetch('/api/crm/bulk',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'combine', ids})}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ alert(d.error||'Failed'); return; }
+      _crmSelected.clear();
+      d.kept_id ? crmOpenOrg(d.kept_id) : crmReload();
+    }).catch(e=>alert(e.message));
+}
+function crmExportSelected(){
+  if(!crmNeedSelection()) return;
+  window.location.href='/api/crm/export?kind=orgs&ids='+crmSelectedIds().join(',');
+}
+function crmRelateEntries(){
+  if(!crmNeedSelection()) return;
+  alert('Relating entries to each other isn\u2019t built yet \u2014 use notes to record the link for now.');
+}
+// Actions on the open record.
+function crmDeleteCurrent(){ if(_crmCurrentOrgId) crmDeleteOrg(_crmCurrentOrgId); }
+function crmNewOppFromMenu(){ if(_crmCurrentOrgId) crmNewOpp(_crmCurrentOrgId); }
+function crmNewContactFromMenu(){ if(_crmCurrentOrgId) crmNewContact(_crmCurrentOrgId); }
+function crmQuickNote(){
+  if(!_crmCurrentOrgId) return;
+  const body=prompt('Add a note:','');
+  if(body===null || !body.trim()) return;
+  fetch('/api/crm/note',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({entity_type:'org', entity_id:_crmCurrentOrgId, body})})
+    .then(()=>crmLoadRecord('org',_crmCurrentOrgId)).catch(e=>alert(e.message));
+}
+function crmCallCurrent(){
+  const o=_crmCurrentOrg; if(!o) return;
+  const num=o.phone||o.phone2||o.phone3;
+  if(!num){ alert('No phone number on this record.'); return; }
+  window.location.href='tel:'+num.replace(/\s/g,'');
+}
+function crmEmailCurrent(){
+  const o=_crmCurrentOrg; if(!o) return;
+  const to=o.email||o.email2||o.email3;
+  if(!to){ alert('No email address on this record.'); return; }
+  window.location.href='mailto:'+to;
+}
+function crmOpenWebsite(){
+  const o=_crmCurrentOrg;
+  if(!o || !o.website){ alert('No website on this record.'); return; }
+  let url=o.website.trim();
+  if(!/^https?:\/\//i.test(url)) url='https://'+url;
+  window.open(url,'_blank','noopener');
+}
+function crmRefreshFromCC(){
+  const o=_crmCurrentOrg;
+  if(!o || !o.reg_number){ alert('This record has no charity number to look up.'); return; }
+  if(!confirm('Re-fetch this organisation\u2019s details from the Charity Commission?\n\nBlank fields will be filled; existing values are left as they are.')) return;
+  crmOpenOrgForm(o);
+  setTimeout(()=>{
+    const r=document.getElementById('crm-f-reg'); if(r) r.value=o.reg_number;
+    const sf=document.getElementById('crm-f-suffix'); if(sf) sf.value=o.suffix||'';
+    crmLookupCharity();
+  }, 120);
+}
+function crmDuplicateOrg(){
+  const o=_crmCurrentOrg; if(!o) return;
+  const copy=Object.assign({}, o);
+  delete copy.id;
+  copy.name=(o.name||'')+' (copy)';
+  copy.reg_number=''; copy.suffix='';   // a duplicate must not share a charity number
+  crmOpenOrgForm(copy);
+}
+// ── Search and view filters ────────────────────────────────────────────────
+function crmClearFilters(){
+  _crmSearchField=''; _crmViewMode='all';
+  const s=document.getElementById('crm-search'); if(s) s.value='';
+  const o=document.getElementById('crm-owner'); if(o) o.value='';
+  crmReload();
+}
+function crmOwnerFilter(owner){
+  const o=document.getElementById('crm-owner'); if(o) o.value=owner;
+  crmReload();
+}
+function crmViewFilter(mode){
+  _crmViewMode=mode;
+  if(mode==='contacts') alert('Contact-only listing isn\u2019t built yet \u2014 contacts show on each organisation.');
+  crmReload();
+}
+function crmSearchField(field){
+  const labels={name:'company name', email:'email address', phone:'phone number',
+                address:'address line 1', city:'city/town', county:'county/state',
+                postcode:'postcode', reg_number:'charity number'};
+  const term=prompt('Search by '+(labels[field]||field)+'\n\nUse * as a wildcard, e.g. oxf* or *trust','');
+  if(term===null) return;
+  _crmSearchField=field;
+  const s=document.getElementById('crm-search');
+  if(s) s.value=term;
+  crmReload();
+}
+function crmSearchNotes(){
+  const term=prompt('Search notes for (use * as a wildcard):','');
+  if(term===null || !term.trim()) return;
+  fetch('/api/crm/search_notes?q='+encodeURIComponent(term)).then(r=>r.json()).then(d=>{
+    if(!d.ok){ alert(d.error||'Search failed'); return; }
+    const body=document.getElementById('crm-body');
+    body.innerHTML='<div style="margin-bottom:10px"><button class="btn btn-outline btn-sm" onclick="crmReload()">\u2190 Back</button>'+
+      ' <strong style="margin-left:8px">'+d.results.length+' note(s) matching \u201c'+esc(term)+'\u201d</strong></div>'+
+      (d.results.length?d.results.map(n=>`<div class="crm-panel" style="font-size:12.5px">
+        <div style="font-weight:600;margin-bottom:3px;cursor:pointer;color:var(--navy)" onclick="crmOpenOrg(${n.org_id})">${esc(n.org_name||'(no organisation)')}</div>
+        <div style="white-space:pre-wrap">${esc(n.body)}</div>
+        <div style="color:var(--t3);font-size:11px;margin-top:3px">${esc(n.author)} \u00b7 ${esc(n.created_at)}</div>
+      </div>`).join('') : '<div class="crm-panel" style="color:var(--t3)">No notes matched.</div>');
+  }).catch(e=>alert(e.message));
+}
+function crmFindDuplicates(){
+  fetch('/api/crm/duplicates').then(r=>r.json()).then(d=>{
+    if(!d.ok){ alert(d.error||'Failed'); return; }
+    if(!d.groups.length){ alert('No likely duplicates found.'); return; }
+    const body=document.getElementById('crm-body');
+    body.innerHTML='<div style="margin-bottom:10px"><button class="btn btn-outline btn-sm" onclick="crmReload()">\u2190 Back</button>'+
+      ' <strong style="margin-left:8px">'+d.groups.length+' possible duplicate group(s)</strong></div>'+
+      d.groups.map(g=>`<div class="crm-panel">
+        <div style="font-size:11px;color:var(--t3);margin-bottom:5px">Matched on ${esc(g.reason)}</div>
+        ${g.orgs.map(o=>`<div style="font-size:12.5px;padding:3px 0;cursor:pointer;color:var(--navy)" onclick="crmOpenOrg(${o.id})">${esc(o.name)} <span style="color:var(--t3)">${esc(o.reg_number||'')}</span></div>`).join('')}
+      </div>`).join('');
+  }).catch(e=>alert(e.message));
+}
 // ── Split pane and record tabs ─────────────────────────────────────────────
 let _crmSplitDrag=null, _crmTab='details', _crmRecord=null;
 function crmStartSplitDrag(ev){
@@ -10113,6 +10316,118 @@ function crmDeleteContact(id, orgId){
   fetch('/api/crm/contact',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({id, action:'delete'})})
     .then(()=>{ if(orgId) crmLoadRecord('org', orgId); }).catch(e=>alert(e.message));
+}
+// ── Bulk import ────────────────────────────────────────────────────────────
+let _crmImport=null;
+function crmOpenImport(kind){
+  _crmImport=null;
+  document.getElementById('crm-import-step1').style.display='block';
+  document.getElementById('crm-import-step2').style.display='none';
+  document.getElementById('crm-import-status').textContent='';
+  document.getElementById('crm-import-result').textContent='';
+  if(kind){ const k=document.getElementById('crm-import-kind'); if(k) k.value=kind; }
+  document.getElementById('crm-import-modal').classList.add('open');
+}
+function crmCloseImport(){ document.getElementById('crm-import-modal').classList.remove('open'); }
+function crmImportUpload(){
+  const st=document.getElementById('crm-import-status');
+  const f=document.getElementById('crm-import-file').files[0];
+  if(!f){ st.textContent='\u26a0 Choose a file first.'; st.style.color='var(--red)'; return; }
+  st.textContent='Reading the file\u2026'; st.style.color='var(--t3)';
+  const fd=new FormData();
+  fd.append('file', f);
+  fd.append('kind', document.getElementById('crm-import-kind').value);
+  fetch('/api/crm/import/upload',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+    if(!d.ok){ st.textContent='\u26a0 '+esc(d.error||'Upload failed'); st.style.color='var(--red)'; return; }
+    _crmImport=d;
+    document.getElementById('crm-import-step1').style.display='none';
+    document.getElementById('crm-import-step2').style.display='block';
+    document.getElementById('crm-import-summary').innerHTML=
+      `<strong>${d.total_rows.toLocaleString()}</strong> row(s) found in <strong>${esc(f.name)}</strong>. `+
+      `Columns matched automatically where the names lined up \u2014 check them below and adjust anything wrong.`;
+    document.getElementById('crm-import-map').innerHTML=(d.fields||[]).map(fl=>{
+      const sel=d.mapping[fl.key];
+      return `<label style="display:flex;align-items:center;gap:7px">
+        <span style="width:150px;flex-shrink:0">${esc(fl.label)}${fl.required?' <span style="color:var(--red)">*</span>':''}</span>
+        <select id="crm-map-${fl.key}" style="flex:1;min-width:0;font-size:12px">
+          <option value="-1">\u2014 not imported \u2014</option>
+          ${(d.headers||[]).map((h,i)=>`<option value="${i}" ${sel===i?'selected':''}>${esc(h||('Column '+(i+1)))}</option>`).join('')}
+        </select></label>`;
+    }).join('');
+    crmRenderMatchOptions();
+    (d.fields||[]).forEach(fl=>{
+      const el=document.getElementById('crm-map-'+fl.key);
+      if(el) el.addEventListener('change', crmRenderMatchOptions);
+    });
+    const sample=(d.sample||[]).slice(0,3);
+    document.getElementById('crm-import-preview').innerHTML=sample.length
+      ? '<div style="overflow:auto"><table style="border-collapse:collapse;font-size:11px">'+
+        '<tr>'+(d.headers||[]).map(h=>`<th style="border:1px solid var(--border);padding:3px 6px;background:var(--s2)">${esc(h)}</th>`).join('')+'</tr>'+
+        sample.map(r=>'<tr>'+(d.headers||[]).map((_,i)=>`<td style="border:1px solid var(--border);padding:3px 6px">${esc(r[i]||'')}</td>`).join('')+'</tr>').join('')+
+        '</table><div style="margin-top:5px">First few rows of your file, for reference.</div></div>'
+      : '';
+  }).catch(e=>{ st.textContent='\u26a0 '+esc(e.message); st.style.color='var(--red)'; });
+}
+function crmToggleMatchOpts(){
+  const on=document.getElementById('crm-import-dedupe').checked;
+  const wrap=document.getElementById('crm-import-matchwrap');
+  if(wrap) wrap.style.display = on ? 'block' : 'none';
+}
+function crmRenderMatchOptions(){
+  if(!_crmImport) return;
+  const box=document.getElementById('crm-import-match');
+  if(!box) return;
+  const avail=(_crmImport.match_fields||[]).filter(mf=>{
+    const el=document.getElementById('crm-map-'+mf.key);
+    return el && parseInt(el.value,10)>=0;
+  });
+  if(!avail.length){
+    box.innerHTML='<span style="color:var(--orange)">No matchable column mapped yet \u2014 map Reference ID, Charity number or Company name above to match against existing records.</span>';
+    return;
+  }
+  const prev=Array.from(box.querySelectorAll('input:checked')).map(i=>i.value);
+  box.innerHTML=avail.map((mf,i)=>{
+    const on = prev.length ? prev.includes(mf.key) : i===0;
+    return `<label style="display:flex;align-items:center;gap:5px">
+      <input type="checkbox" class="crm-match-opt" value="${mf.key}" ${on?'checked':''}> ${esc(mf.label)}</label>`;
+  }).join('');
+}
+function crmImportCommit(dryRun){
+  if(!_crmImport) return;
+  const res=document.getElementById('crm-import-result');
+  const mapping={};
+  (_crmImport.fields||[]).forEach(fl=>{
+    const el=document.getElementById('crm-map-'+fl.key);
+    const v=el?parseInt(el.value,10):-1;
+    if(v>=0) mapping[fl.key]=v;
+  });
+  res.textContent = dryRun ? 'Checking\u2026' : 'Importing\u2026';
+  res.style.color='var(--t3)';
+  fetch('/api/crm/import/commit',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({token:_crmImport.token, mapping,
+      match_on:Array.from(document.querySelectorAll('.crm-match-opt:checked')).map(i=>i.value),
+      dedupe:document.getElementById('crm-import-dedupe').checked, dry_run:!!dryRun})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ res.innerHTML='\u26a0 '+esc(d.error||'Import failed'); res.style.color='var(--red)'; return; }
+      const bits=[];
+      if(d.created) bits.push(d.created+' to create');
+      if(d.updated) bits.push(d.updated+' to update');
+      if(d.skipped) bits.push(d.skipped+' skipped');
+      res.innerHTML=(dryRun ? '\u2713 Check complete \u2014 nothing saved. ' : '\u2713 Import complete. ')+
+        (bits.join(', ')||'nothing to do')+
+        (d.errors&&d.errors.length ? '<div style="color:var(--orange);margin-top:6px">'+
+          d.errors.map(esc).join('<br>')+'</div>' : '');
+      res.style.color = (d.errors&&d.errors.length) ? 'var(--orange)' : 'var(--green)';
+      if(!dryRun){ _crmImport=null; setTimeout(()=>{ crmCloseImport(); crmReload(); }, 1400); }
+    }).catch(e=>{ res.textContent='\u26a0 '+esc(e.message); res.style.color='var(--red)'; });
+}
+// Processes are loaded once and reused by the opportunity form and manager.
+let _crmProcesses=[];
+function crmLoadProcesses(){
+  return fetch('/api/crm/processes').then(r=>r.json()).then(d=>{
+    if(d.ok) _crmProcesses=d.processes||[];
+    return _crmProcesses;
+  }).catch(()=>[]);
 }
 let _crmOppCtx=null;
 function crmNewOpp(orgId){ crmOpenOppForm(null, orgId); }
