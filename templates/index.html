@@ -1162,6 +1162,40 @@ select:focus{outline:none;border-color:var(--green)}
   </div>
 </div>
 
+<!-- Additional field (UDF) editor. Same reasoning as the opportunity form:
+     a chain of prompts gave no overview and no way back. -->
+<div class="modal-bg" id="crm-udf-modal">
+  <div class="modal" style="max-width:520px;width:94vw">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <h3 id="crm-udf-title" style="margin:0">Additional field</h3>
+      <span style="flex:1"></span>
+      <span onclick="crmCloseUdfForm()" title="Close" style="cursor:pointer;font-size:20px;line-height:1;color:var(--t3);padding:0 4px">&times;</span>
+    </div>
+    <div id="crm-udf-for" style="font-size:12.5px;color:var(--t2);margin-bottom:12px"></div>
+    <div style="display:grid;gap:9px;font-size:12.5px">
+      <label>Field name *<input id="crm-u-label" class="crm-input" placeholder="e.g. Funding round"></label>
+      <label>Type
+        <select id="crm-u-type" class="crm-input" onchange="crmUdfTypeChanged()">
+          <option value="text">Text</option>
+          <option value="number">Number</option>
+          <option value="date">Date</option>
+          <option value="yesno">Yes / No</option>
+          <option value="list">List of choices</option>
+        </select>
+      </label>
+      <label id="crm-u-optwrap" style="display:none">Choices
+        <textarea id="crm-u-options" class="crm-input" rows="4" placeholder="One choice per line"></textarea>
+        <span style="font-size:11px;color:var(--t3)">One per line. These become the dropdown options.</span>
+      </label>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-outline btn-sm" onclick="crmCloseUdfForm()">Cancel</button>
+      <button class="btn btn-green btn-sm" onclick="crmSaveUdfForm()">Save</button>
+    </div>
+    <div id="crm-udf-status" style="font-size:12px;margin-top:8px"></div>
+  </div>
+</div>
+
 <!-- Opportunity form. Replaces a chain of browser prompts: those showed one
      field at a time with no way back, no idea how many were left, and no
      validation until the end. -->
@@ -1185,7 +1219,10 @@ select:focus{outline:none;border-color:var(--green)}
       <label>Value (&pound;)<input id="crm-o-value" class="crm-input" type="number" step="0.01" placeholder="0"></label>
       <label>Probability %<input id="crm-o-prob" class="crm-input" type="number" min="0" max="100" placeholder="0"></label>
       <label>Expected close<input id="crm-o-close" class="crm-input" type="date"></label>
+      <label>Status<select id="crm-o-status" class="crm-input"></select></label>
       <label>Source<input id="crm-o-source" class="crm-input" placeholder="where it came from"></label>
+      <div id="crm-o-dates" style="grid-column:1/-1;font-size:11.5px;color:var(--t3)"></div>
+      <div id="crm-o-history" style="grid-column:1/-1"></div>
       <label style="grid-column:1/-1">Notes<textarea id="crm-o-notes" class="crm-input" rows="3"></textarea></label>
       <div id="crm-o-udfwrap" style="grid-column:1/-1"></div>
     </div>
@@ -7408,6 +7445,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.61", date:"2026-08", title:"CRM: created and modified dates, a real status list with history, and a proper field editor",
+    changes:[
+      "Created and Modified dates are now available as columns on both the address book and opportunities, and shown on each record. Opportunities also get Status changed.",
+      "Opportunity status was only ever open, won or lost. It now has the full list: Created, In progress, Won, Lost, Abandoned and Suspended \u2014 selectable on the opportunity form.",
+      "Every status change is recorded, so each opportunity carries a history of when it moved and who moved it. A single \u201cstatus changed\u201d date can\u2019t tell you that a deal went In progress \u2192 Suspended \u2192 In progress \u2192 Won, and that sequence is often the interesting part.",
+      "Existing records read correctly: the old \u201copen\u201d value maps to In progress rather than showing a status that isn\u2019t in the list. And \u201copen pipeline\u201d now means anything not Won, Lost or Abandoned \u2014 defined once so the pipeline, the forecast and the per-organisation counts can\u2019t drift apart.",
+      "Creating an additional field is a proper form rather than a chain of browser prompts \u2014 name, type and choices on one screen, with the choices box appearing only for a list field rather than sitting there inviting input that would be ignored.",
+      "Won sets probability to 100%, Lost and Abandoned to 0%, since those are certainties either way.",
+    ]},
   { v:"2.60", date:"2026-08", title:"CRM: narrower columns, left-aligned throughout, custom fields, and a proper opportunity form",
     changes:[
       "Default column widths cut by roughly a third across both lists. The old ones were generous enough that only a few columns fitted on screen, which rather defeats a dense grid. They can still be dragged wider where a column needs it.",
@@ -9373,6 +9419,10 @@ function crmOpenOrg(id){
             ${field('Website',o.website)}
             ${field('Address',[o.address,o.address2,o.city,o.county,o.postcode,o.country].filter(Boolean).join(', '))}
             ${field('Source',o.source)}
+            ${(o.created_at||o.updated_at)?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--s2);font-size:11.5px;color:var(--t3)">
+              ${o.created_at?'Created '+esc(o.created_at)+(o.created_by?' by '+esc(o.created_by):''):''}
+              ${o.updated_at?'<br>Modified '+esc(o.updated_at):''}
+            </div>`:''}
             ${(o.cc_what||o.cc_who||o.cc_how||o.cc_policies)?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--s2)">
               <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;margin-bottom:5px">Charity Commission</div>
               ${field('What it does',o.cc_what)}${field('Who it helps',o.cc_who)}
@@ -9551,25 +9601,48 @@ function crmManageUdfs(entityType){
       </div>`;
   }).catch(e=>alert(e.message));
 }
+let _crmUdfCtx=null;
 function crmEditUdf(et, key){
   fetch('/api/crm/udfs?entity_type='+et).then(r=>r.json()).then(d=>{
     const u=(d.udfs||[]).find(x=>x.key===key)||{label:'',field_type:'text',options:[]};
-    const label=prompt('Field name:', u.label||''); if(label===null||!label.trim()) return;
-    const ftype=prompt('Field type \u2014 text, number, date, yesno or list:', u.field_type||'text');
-    if(ftype===null) return;
-    let options=[];
-    if((ftype||'').trim().toLowerCase()==='list'){
-      const raw=prompt('Choices, separated by commas:', (u.options||[]).join(', '));
-      if(raw===null) return;
-      options=raw.split(',').map(x=>x.trim()).filter(Boolean);
-    }
-    fetch('/api/crm/udf',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({entity_type:et, key:key||'', label, field_type:ftype, options})})
-      .then(r=>r.json()).then(res=>{
-        if(!res.ok){ alert(res.error||'Failed'); return; }
-        crmManageUdfs(et);
-      }).catch(e=>alert(e.message));
-  });
+    _crmUdfCtx={entity_type:et, key:key||''};
+    document.getElementById('crm-udf-title').textContent = key ? 'Edit field' : 'New field';
+    document.getElementById('crm-udf-for').textContent =
+      'For ' + (et==='org' ? 'organisations in the address book' : 'opportunities');
+    document.getElementById('crm-u-label').value=u.label||'';
+    document.getElementById('crm-u-type').value=u.field_type||'text';
+    document.getElementById('crm-u-options').value=(u.options||[]).join('\n');
+    document.getElementById('crm-udf-status').textContent='';
+    crmUdfTypeChanged();
+    document.getElementById('crm-udf-modal').classList.add('open');
+  }).catch(e=>alert(e.message));
+}
+function crmCloseUdfForm(){ document.getElementById('crm-udf-modal').classList.remove('open'); }
+// Choices only apply to a list field, so the box is hidden otherwise rather
+// than sitting there inviting input that would be ignored.
+function crmUdfTypeChanged(){
+  const t=document.getElementById('crm-u-type').value;
+  document.getElementById('crm-u-optwrap').style.display = (t==='list') ? 'block' : 'none';
+}
+function crmSaveUdfForm(){
+  const st=document.getElementById('crm-udf-status');
+  const label=(document.getElementById('crm-u-label').value||'').trim();
+  const ftype=document.getElementById('crm-u-type').value;
+  const options=(document.getElementById('crm-u-options').value||'')
+    .split('\n').map(x=>x.trim()).filter(Boolean);
+  if(!label){ st.textContent='\u26a0 Give the field a name.'; st.style.color='var(--red)'; return; }
+  if(ftype==='list' && !options.length){
+    st.textContent='\u26a0 A list field needs at least one choice.'; st.style.color='var(--red)'; return;
+  }
+  st.textContent='Saving\u2026'; st.style.color='var(--t3)';
+  fetch('/api/crm/udf',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({entity_type:_crmUdfCtx.entity_type, key:_crmUdfCtx.key,
+                         label, field_type:ftype, options})})
+    .then(r=>r.json()).then(res=>{
+      if(!res.ok){ st.textContent='\u26a0 '+esc(res.error||'Failed'); st.style.color='var(--red)'; return; }
+      crmCloseUdfForm();
+      crmManageUdfs(_crmUdfCtx.entity_type);
+    }).catch(e=>{ st.textContent='\u26a0 '+esc(e.message); st.style.color='var(--red)'; });
 }
 function crmDeleteUdf(et, key){
   if(!confirm('Delete this field?\n\nValues already entered against it on every record will be removed too.')) return;
@@ -9955,6 +10028,23 @@ function crmOpenOppForm(id, orgId, contactId){
     set('crm-o-prob', o.probability||''); set('crm-o-close', o.expected_close||'');
     set('crm-o-source', o.source||''); set('crm-o-notes', o.notes||'');
     set('crm-o-owner', o.owner||'9M');
+    // Status list comes from the server so the vocabulary lives in one place.
+    const ssel=document.getElementById('crm-o-status');
+    ssel.innerHTML=(d.statuses||[]).map(x=>`<option value="${esc(x)}" ${o.status===x?'selected':''}>${esc(x)}</option>`).join('');
+    // Dates are shown but not editable — they're recorded, not entered.
+    const dz=document.getElementById('crm-o-dates');
+    dz.innerHTML = id ? [
+      o.created_at?'Created '+esc(o.created_at)+(o.created_by?' by '+esc(o.created_by):''):'',
+      o.updated_at?'Modified '+esc(o.updated_at):'',
+      o.status_changed_at?'Status changed '+esc(o.status_changed_at):''
+    ].filter(Boolean).join(' \u00b7 ') : '';
+    const hz=document.getElementById('crm-o-history');
+    hz.innerHTML=(d.status_history||[]).length
+      ? '<div style="border-top:1px solid var(--border);margin:6px 0 6px;padding-top:8px;font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Status history</div>'+
+        (d.status_history||[]).map(h=>`<div style="font-size:11.5px;color:var(--t2);padding:2px 0">
+          ${h.from?esc(h.from)+' \u2192 ':''}<strong>${esc(h.to)}</strong>
+          <span style="color:var(--t3)"> \u00b7 ${esc(h.at)}${h.by?' \u00b7 '+esc(h.by):''}</span></div>`).join('')
+      : '';
 
     // Contacts belong to the organisation, so the list is built from it.
     document.getElementById('crm-o-contact').innerHTML =
@@ -10031,7 +10121,7 @@ function crmSaveOppForm(){
       contact_id:g('crm-o-contact')||null, title:g('crm-o-title'),
       owner:g('crm-o-owner'), process_id:g('crm-o-process')||null, stage:g('crm-o-stage'),
       value:g('crm-o-value'), probability:g('crm-o-prob'), expected_close:g('crm-o-close'),
-      source:g('crm-o-source'), notes:g('crm-o-notes'),
+      source:g('crm-o-source'), notes:g('crm-o-notes'), status:g('crm-o-status'),
       udfs:crmCollectUdfs(_crmOppCtx.udfs)})})
     .then(r=>r.json()).then(d=>{
       if(!d.ok){ st.textContent='\u26a0 '+esc(d.error||'Could not save'); st.style.color='var(--red)'; return; }
@@ -10313,6 +10403,11 @@ function crmCellHtml(rec, key, kind){
   if(key==='ref_id') return v?`<span style="font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--t3)">${esc(v)}</span>`:'\u2014';
   if(key==='name'||key==='title') return `<strong>${esc(v||'')}</strong>`;
   if(key==='contacts'||key==='open_opps') return v?String(v):'\u2014';
+  // Timestamps are stored to the second; the grid only needs the date, with
+  // the full value on hover.
+  if(['created_at','updated_at','status_changed_at'].includes(key))
+    return v?`<span title="${esc(String(v))}">${esc(String(v).slice(0,10))}</span>`:'\u2014';
+  if(key==='status') return v?`<span class="tagpill">${esc(v)}</span>`:'\u2014';
   if(key==='website'&&v) return esc(String(v).replace(/^https?:\/\//,''));
   return v===0?'0':(v?esc(String(v)):'\u2014');
 }

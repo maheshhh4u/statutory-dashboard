@@ -347,6 +347,23 @@ def db_init():
         )""")
         try: client.execute("CREATE INDEX IF NOT EXISTS ix_crm_pstages ON crm_process_stages(process_id, position)")
         except Exception: pass
+        # Status history. A record of when an opportunity moved between states,
+        # which the single "status changed at" date can't answer — a deal that
+        # went In progress > Suspended > In progress > Won has a story worth
+        # keeping.
+        client.execute("""CREATE TABLE IF NOT EXISTS crm_status_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            opportunity_id INTEGER,
+            from_status TEXT,
+            to_status TEXT,
+            changed_by TEXT,
+            changed_at TEXT
+        )""")
+        try: client.execute("CREATE INDEX IF NOT EXISTS ix_crm_status_hist ON crm_status_history(opportunity_id, id)")
+        except Exception: pass
+        for _col in ("status_changed_at TEXT",):
+            try: client.execute(f"ALTER TABLE crm_opportunities ADD COLUMN {_col}")
+            except Exception: pass
         # Reference IDs, Maximizer-style: a 12-character alphanumeric key shown
         # to users and safe to quote in an email or on the phone.
         for _col in ("ref_id TEXT",):
@@ -1319,7 +1336,7 @@ def api_crm_import_commit():
                         "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (r[0][0], title, owner, cell(row, "stage") or "Lead", value, prob,
                          cell(row, "expected_close")[:10], cell(row, "source"), cell(row, "notes"),
-                         "open", _crm_new_ref("crm_opportunities"), current_user(), _crm_now(), _crm_now()))
+                         "Created", _crm_new_ref("crm_opportunities"), current_user(), _crm_now(), _crm_now()))
                 created += 1
         except Exception as e:
             errors.append(f"Row {n}: {str(e)[:110]}")
@@ -1420,7 +1437,7 @@ def api_crm_forecast():
     owner = (request.args.get("owner") or "").strip()
     sql = ("SELECT o.id, o.title, o.stage, o.value, o.probability, o.expected_close, o.process_id, "
            "g.name FROM crm_opportunities o LEFT JOIN crm_orgs g ON g.id=o.org_id "
-           "WHERE o.status='open'")
+           "WHERE o." + CRM_OPEN_STATUS_SQL)
     params = []
     if owner in CRM_OWNERS:
         sql += " AND (o.owner=? OR o.owner='Both')"
@@ -1713,21 +1730,49 @@ CRM_COLUMNS = {
         ("country", "Country", 90), ("cc_what", "What it does", 150),
         ("cc_who", "Who it helps", 150), ("cc_how", "How it helps", 150),
         ("source", "Source", 95), ("contacts", "Contacts", 68),
-        ("open_opps", "Open opps", 76), ("updated_at", "Last updated", 105),
+        ("open_opps", "Open opps", 76), ("created_at", "Created", 105),
+        ("updated_at", "Modified", 105),
     ],
     "opps": [
         ("title", "Opportunity", 180), ("ref_id", "Reference ID", 105),
         ("org_name", "Company", 160), ("stage", "Stage", 95),
         ("value", "Value", 85), ("probability", "Prob.", 58),
         ("weighted", "Weighted", 85), ("expected_close", "Expected close", 105),
-        ("owner", "Owner", 62), ("status", "Status", 74),
-        ("source", "Source", 95),
+        ("owner", "Owner", 62), ("status", "Status", 88),
+        ("source", "Source", 95), ("created_at", "Created", 105),
+        ("updated_at", "Modified", 105), ("status_changed_at", "Status changed", 110),
     ],
 }
 CRM_DEFAULT_COLUMNS = {
     "orgs": ["name", "owner", "reg_number", "main_contact", "phone", "city", "contacts", "open_opps"],
     "opps": ["title", "org_name", "stage", "value", "probability", "weighted", "expected_close", "owner"],
 }
+
+# Opportunity statuses. "open" is kept as an alias for In progress so records
+# created before this list existed still read correctly rather than showing a
+# status that isn't in the list.
+CRM_OPP_STATUSES = ["Created", "In progress", "Won", "Lost", "Abandoned", "Suspended"]
+# A deal still in play: everything except the three states that end it.
+CRM_OPEN_STATUS_SQL = "status NOT IN ('Won','Lost','Abandoned')"
+CRM_STATUS_ALIASES = {"open": "In progress", "won": "Won", "lost": "Lost"}
+
+def _crm_norm_status(v):
+    t = str(v or "").strip()
+    if t in CRM_OPP_STATUSES:
+        return t
+    return CRM_STATUS_ALIASES.get(t.lower(), "In progress")
+
+def _crm_record_status(opp_id, from_status, to_status):
+    """Logs a status move. Only called when the value actually changes, so the
+    history stays a list of real transitions rather than every save."""
+    if _crm_norm_status(from_status) == _crm_norm_status(to_status):
+        return
+    now = _crm_now()
+    db_exec("INSERT INTO crm_status_history(opportunity_id, from_status, to_status, changed_by, changed_at) "
+            "VALUES(?,?,?,?,?)",
+            (int(opp_id), _crm_norm_status(from_status) if from_status else "",
+             _crm_norm_status(to_status), current_user() or "", now))
+    db_exec("UPDATE crm_opportunities SET status_changed_at=? WHERE id=?", (now, int(opp_id)))
 
 CRM_UDF_TYPES = ["text", "number", "date", "yesno", "list"]
 
@@ -1873,10 +1918,11 @@ def api_crm_orgs():
     # user's choice and the grid must be able to render any of them.
     _cols = ["id", "name", "owner", "reg_number", "org_type", "main_contact", "phone", "phone2",
              "email", "email2", "website", "address", "address2", "city", "county", "postcode",
-             "country", "cc_what", "cc_who", "cc_how", "source", "updated_at", "ref_id"]
+             "country", "cc_what", "cc_who", "cc_how", "source", "created_at", "updated_at", "ref_id"]
     sql = ("SELECT " + ", ".join("o." + c for c in _cols) + ", "
            "(SELECT COUNT(*) FROM crm_contacts c WHERE c.org_id=o.id) AS contact_count, "
-           "(SELECT COUNT(*) FROM crm_opportunities p WHERE p.org_id=o.id AND p.status='open') AS open_opps "
+           "(SELECT COUNT(*) FROM crm_opportunities p WHERE p.org_id=o.id AND p."
+           + CRM_OPEN_STATUS_SQL + ") AS open_opps "
            "FROM crm_orgs o WHERE 1=1")
     params = []
     if owner in CRM_OWNERS:
@@ -2048,8 +2094,9 @@ def api_crm_opportunities():
     actually takes."""
     owner = (request.args.get("owner") or "").strip()
     sql = ("SELECT o.id, o.title, o.stage, o.value, o.probability, o.expected_close, o.status, "
-           "o.owner, o.org_id, g.name, o.ref_id, o.source FROM crm_opportunities o "
-           "LEFT JOIN crm_orgs g ON g.id = o.org_id WHERE o.status='open'")
+           "o.owner, o.org_id, g.name, o.ref_id, o.source, o.created_at, o.updated_at, "
+           "o.status_changed_at FROM crm_opportunities o "
+           "LEFT JOIN crm_orgs g ON g.id = o.org_id WHERE o." + CRM_OPEN_STATUS_SQL)
     params = []
     if owner in CRM_OWNERS:
         sql += " AND (o.owner=? OR o.owner='Both')"
@@ -2062,9 +2109,11 @@ def api_crm_opportunities():
         prob = r[4] or 0
         opps.append({"id": r[0], "title": r[1] or "", "stage": r[2] or "Lead", "value": val,
                      "probability": prob, "weighted": round(val * (prob / 100.0), 2),
-                     "expected_close": r[5] or "", "status": r[6] or "open",
+                     "expected_close": r[5] or "", "status": _crm_norm_status(r[6]),
                      "owner": r[7] or "", "org_id": r[8], "org_name": r[9] or "",
-                     "ref_id": r[10] or "", "source": r[11] or ""})
+                     "ref_id": r[10] or "", "source": r[11] or "",
+                     "created_at": r[12] or "", "updated_at": r[13] or "",
+                     "status_changed_at": r[14] or ""})
     by_stage = {st: [o for o in opps if o["stage"] == st] for st in CRM_STAGES}
     total = sum(o["value"] for o in opps)
     # Weighted value is the honest number for a forecast: a £10k deal at 20%
@@ -2083,22 +2132,30 @@ def api_crm_opportunity_get(pid):
     if not current_user():
         return jsonify({"ok": False, "error": "Not signed in"}), 401
     r = db_query("SELECT id, org_id, contact_id, title, owner, stage, value, probability, "
-                 "expected_close, status, source, notes, process_id, ref_id "
+                 "expected_close, status, source, notes, process_id, ref_id, "
+                 "created_at, updated_at, status_changed_at, created_by "
                  "FROM crm_opportunities WHERE id=?", (pid,))
     if not r:
         return jsonify({"ok": False, "error": "Not found"}), 404
     v = r[0]
     keys = ["id", "org_id", "contact_id", "title", "owner", "stage", "value", "probability",
-            "expected_close", "status", "source", "notes", "process_id", "ref_id"]
+            "expected_close", "status", "source", "notes", "process_id", "ref_id",
+            "created_at", "updated_at", "status_changed_at", "created_by"]
     opp = {k: (v[i] if v[i] is not None else "") for i, k in enumerate(keys)}
     org = db_query("SELECT name FROM crm_orgs WHERE id=?", (opp["org_id"],))
     opp["org_name"] = org[0][0] if org else ""
     contacts = [{"id": c[0], "name": ((c[1] or "") + " " + (c[2] or "")).strip() or "(no name)"}
                 for c in (db_query("SELECT id, first_name, last_name FROM crm_contacts WHERE org_id=? "
                                    "ORDER BY is_primary DESC, last_name", (opp["org_id"],)) or [])]
+    opp["status"] = _crm_norm_status(opp.get("status"))
+    history = [{"from": h[0] or "", "to": h[1] or "", "by": h[2] or "", "at": h[3] or ""}
+               for h in (db_query("SELECT from_status, to_status, changed_by, changed_at "
+                                  "FROM crm_status_history WHERE opportunity_id=? ORDER BY id DESC LIMIT 30",
+                                  (pid,)) or [])]
     return jsonify({"ok": True, "opportunity": opp, "contacts": contacts,
                     "udfs": _crm_udf_defs("opportunity"),
                     "udf_values": _crm_udf_values("opportunity", pid),
+                    "statuses": CRM_OPP_STATUSES, "status_history": history,
                     "owners": CRM_OWNERS})
 
 @app.route("/api/crm/opportunity/new", methods=["GET"])
@@ -2114,7 +2171,8 @@ def api_crm_opportunity_new():
                                    "ORDER BY is_primary DESC, last_name", (org_id,)) or [])] if org_id else []
     return jsonify({"ok": True, "org_id": org_id, "org_name": (org[0][0] if org else ""),
                     "contacts": contacts, "udfs": _crm_udf_defs("opportunity"),
-                    "udf_values": {}, "owners": CRM_OWNERS})
+                    "udf_values": {}, "statuses": CRM_OPP_STATUSES, "status_history": [],
+                    "owners": CRM_OWNERS})
 
 @app.route("/api/crm/opportunity", methods=["POST"])
 def api_crm_opportunity_save():
@@ -2127,9 +2185,30 @@ def api_crm_opportunity_save():
         db_exec("DELETE FROM crm_notes WHERE entity_type='opportunity' AND entity_id=?", (int(pid or 0),))
         db_exec("DELETE FROM crm_opportunities WHERE id=?", (int(pid or 0),))
         return jsonify({"ok": True})
+    if act == "set_status":
+        new_status = _crm_norm_status(d.get("status"))
+        cur = db_query("SELECT status FROM crm_opportunities WHERE id=?", (int(pid or 0),))
+        old_status = cur[0][0] if cur else ""
+        # Probability follows a terminal status, since a won deal is certain
+        # and a lost one is not going to happen.
+        extra = ""
+        params = [new_status, _crm_now()]
+        if new_status == "Won":
+            extra = ", probability=100"
+        elif new_status in ("Lost", "Abandoned"):
+            extra = ", probability=0"
+        db_exec(f"UPDATE crm_opportunities SET status=?{extra}, updated_at=? WHERE id=?",
+                tuple(params) + (int(pid or 0),))
+        _crm_record_status(int(pid or 0), old_status, new_status)
+        return jsonify({"ok": True, "status": new_status})
+
     if act in ("won", "lost"):
+        new_status = "Won" if act == "won" else "Lost"
+        cur = db_query("SELECT status FROM crm_opportunities WHERE id=?", (int(pid or 0),))
+        old_status = cur[0][0] if cur else ""
         db_exec("UPDATE crm_opportunities SET status=?, stage=?, probability=?, updated_at=? WHERE id=?",
-                (act, "Won" if act == "won" else "Lost", 100 if act == "won" else 0, _crm_now(), int(pid or 0)))
+                (new_status, new_status, 100 if act == "won" else 0, _crm_now(), int(pid or 0)))
+        _crm_record_status(int(pid or 0), old_status, new_status)
         return jsonify({"ok": True})
     if act == "stage":
         st = str(d.get("stage", "")).strip()
@@ -2164,6 +2243,13 @@ def api_crm_opportunity_save():
                 "probability=?, expected_close=?, source=?, notes=?, process_id=?, updated_at=? WHERE id=?",
                 vals + (int(pid),))
         _crm_udf_save("opportunity", int(pid), d.get("udfs"))
+        if d.get("status"):
+            cur = db_query("SELECT status FROM crm_opportunities WHERE id=?", (int(pid),))
+            old_status = cur[0][0] if cur else ""
+            new_status = _crm_norm_status(d.get("status"))
+            if _crm_norm_status(old_status) != new_status:
+                db_exec("UPDATE crm_opportunities SET status=? WHERE id=?", (new_status, int(pid)))
+                _crm_record_status(int(pid), old_status, new_status)
         return jsonify({"ok": True, "id": int(pid)})
     db_exec("INSERT INTO crm_opportunities(org_id, contact_id, title, owner, stage, value, probability, "
             "expected_close, source, notes, process_id, updated_at, ref_id, created_by, created_at) "
@@ -2173,6 +2259,7 @@ def api_crm_opportunity_save():
     new_id = r[0][0] if r else None
     if new_id:
         _crm_udf_save("opportunity", new_id, d.get("udfs"))
+        _crm_record_status(new_id, "", "Created")
     return jsonify({"ok": True, "id": new_id})
 
 @app.route("/api/crm/note", methods=["POST"])
