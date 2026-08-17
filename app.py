@@ -347,6 +347,29 @@ def db_init():
         )""")
         try: client.execute("CREATE INDEX IF NOT EXISTS ix_crm_pstages ON crm_process_stages(process_id, position)")
         except Exception: pass
+        # Documents attached to a record. Two kinds deliberately:
+        #   link  — a URL (SharePoint, Drive). No storage cost, and it matches
+        #           how documents are handled today.
+        #   file  — a small file held in the database as base64. Render's disk
+        #           is wiped on every deploy, so a file written to disk would
+        #           silently vanish; the database survives. Size-capped for the
+        #           same reason a CRM shouldn't become a file server.
+        client.execute("""CREATE TABLE IF NOT EXISTS crm_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT,          -- org | opportunity
+            entity_id INTEGER,
+            kind TEXT,                 -- link | file
+            title TEXT,
+            url TEXT,
+            filename TEXT,
+            mime TEXT,
+            size_bytes INTEGER DEFAULT 0,
+            content_b64 TEXT,
+            uploaded_by TEXT,
+            created_at TEXT
+        )""")
+        try: client.execute("CREATE INDEX IF NOT EXISTS ix_crm_docs ON crm_documents(entity_type, entity_id)")
+        except Exception: pass
         # Status history. A record of when an opportunity moved between states,
         # which the single "status changed at" date can't answer — a deal that
         # went In progress > Suspended > In progress > Won has a story worth
@@ -1804,6 +1827,130 @@ def _crm_udf_save(entity_type, entity_id, values):
         if str(v).strip() != "":
             db_exec("INSERT INTO crm_udf_values(entity_type, entity_id, udf_key, value) VALUES(?,?,?,?)",
                     (entity_type, int(entity_id), k, str(v)[:500]))
+
+# Files are held in the database, so the cap matters: Turso's free tier is 5GB
+# and every read pulls the whole file over the network. Links have no such
+# limit and are the better answer for anything substantial.
+CRM_DOC_MAX_BYTES = 2 * 1024 * 1024
+
+def _crm_docs(entity_type, entity_id):
+    rows = db_query("SELECT id, kind, title, url, filename, mime, size_bytes, uploaded_by, created_at "
+                    "FROM crm_documents WHERE entity_type=? AND entity_id=? ORDER BY id DESC",
+                    (entity_type, int(entity_id))) or []
+    return [{"id": r[0], "kind": r[1], "title": r[2] or "", "url": r[3] or "",
+             "filename": r[4] or "", "mime": r[5] or "", "size_bytes": r[6] or 0,
+             "uploaded_by": r[7] or "", "created_at": r[8] or ""} for r in rows]
+
+@app.route("/api/crm/documents", methods=["GET"])
+def api_crm_documents():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    et = (request.args.get("entity_type") or "org").strip()
+    if et not in ("org", "opportunity"):
+        return jsonify({"ok": False, "error": "Unknown record type"}), 400
+    try: eid = int(request.args.get("entity_id") or 0)
+    except Exception: eid = 0
+    return jsonify({"ok": True, "documents": _crm_docs(et, eid),
+                    "max_bytes": CRM_DOC_MAX_BYTES})
+
+@app.route("/api/crm/document", methods=["POST"])
+def api_crm_document_save():
+    """Adds a link, or uploads a small file. Multipart when a file is present,
+    JSON for a link."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    f = request.files.get("file")
+    if f:
+        et = (request.form.get("entity_type") or "").strip()
+        try: eid = int(request.form.get("entity_id") or 0)
+        except Exception: eid = 0
+        title = (request.form.get("title") or f.filename or "Document")[:120]
+        raw = f.read()
+        if len(raw) > CRM_DOC_MAX_BYTES:
+            return jsonify({"ok": False, "error":
+                            f"That file is {len(raw)//1024}KB. The limit for stored files is "
+                            f"{CRM_DOC_MAX_BYTES//1024}KB — for anything larger, put it in SharePoint "
+                            f"and add a link instead."}), 400
+        if et not in ("org", "opportunity") or not eid:
+            return jsonify({"ok": False, "error": "Unknown record"}), 400
+        db_exec("INSERT INTO crm_documents(entity_type, entity_id, kind, title, filename, mime, "
+                "size_bytes, content_b64, uploaded_by, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (et, eid, "file", title, f.filename[:160], (f.mimetype or "")[:80], len(raw),
+                 _b64.b64encode(raw).decode(), current_user(), _crm_now()))
+        return jsonify({"ok": True})
+
+    d = request.json or {}
+    if str(d.get("action", "")) == "delete":
+        db_exec("DELETE FROM crm_documents WHERE id=?", (int(d.get("id") or 0),))
+        return jsonify({"ok": True})
+    et = str(d.get("entity_type", "")).strip()
+    try: eid = int(d.get("entity_id") or 0)
+    except Exception: eid = 0
+    if et not in ("org", "opportunity") or not eid:
+        return jsonify({"ok": False, "error": "Unknown record"}), 400
+    url = str(d.get("url", "")).strip()[:600]
+    if not url.lower().startswith(("http://", "https://")):
+        return jsonify({"ok": False, "error": "Enter a full link starting with http:// or https://"}), 400
+    title = str(d.get("title", "")).strip()[:120] or url.split("/")[-1][:120] or "Document"
+    db_exec("INSERT INTO crm_documents(entity_type, entity_id, kind, title, url, uploaded_by, created_at) "
+            "VALUES(?,?,?,?,?,?,?)", (et, eid, "link", title, url, current_user(), _crm_now()))
+    return jsonify({"ok": True})
+
+@app.route("/api/crm/document/<int:did>/download")
+def api_crm_document_download(did):
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    r = db_query("SELECT filename, mime, content_b64 FROM crm_documents WHERE id=? AND kind='file'", (did,))
+    if not r:
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    fn, mime, b64 = r[0]
+    try:
+        data = _b64.b64decode(b64 or "")
+    except Exception:
+        return jsonify({"ok": False, "error": "That file could not be read"}), 500
+    return Response(data, mimetype=(mime or "application/octet-stream"),
+                    headers={"Content-Disposition": f'attachment; filename="{(fn or "document")}"'})
+
+# ── Timeline and audit ─────────────────────────────────────────────────────
+@app.route("/api/crm/timeline", methods=["GET"])
+def api_crm_timeline():
+    """One chronology per record, pulled from the places things actually
+    happen — notes, calls, status moves and document additions — rather than a
+    separate activity log that would need maintaining in parallel."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    et = (request.args.get("entity_type") or "org").strip()
+    try: eid = int(request.args.get("entity_id") or 0)
+    except Exception: eid = 0
+    items = []
+    for n in (db_query("SELECT body, author, created_at FROM crm_notes "
+                       "WHERE entity_type=? AND entity_id=? ORDER BY id DESC LIMIT 50", (et, eid)) or []):
+        items.append({"type": "Note", "text": (n[0] or "")[:400], "who": n[1] or "", "at": n[2] or ""})
+    for dcm in _crm_docs(et, eid):
+        items.append({"type": "Document", "text": dcm["title"], "who": dcm["uploaded_by"], "at": dcm["created_at"]})
+    if et == "org":
+        reg = db_query("SELECT reg_number FROM crm_orgs WHERE id=?", (eid,))
+        regno = reg[0][0] if reg and reg[0][0] else ""
+        if regno:
+            for c in (db_query("SELECT outcome, caller, timestamp, duration_sec FROM call_log "
+                               "WHERE reg_number=? ORDER BY id DESC LIMIT 40", (regno,)) or []):
+                mins = round((c[3] or 0) / 60.0, 1)
+                items.append({"type": "Call", "text": f"{c[0] or 'Call'} ({mins} min)",
+                              "who": c[1] or "", "at": utc_to_display_str(c[2], "%Y-%m-%d %H:%M") or ""})
+        for o in (db_query("SELECT id, title FROM crm_opportunities WHERE org_id=?", (eid,)) or []):
+            for h in (db_query("SELECT from_status, to_status, changed_by, changed_at "
+                               "FROM crm_status_history WHERE opportunity_id=? ORDER BY id DESC LIMIT 10",
+                               (o[0],)) or []):
+                items.append({"type": "Status", "text": f"{o[1]}: {h[0] or 'new'} \u2192 {h[1]}",
+                              "who": h[2] or "", "at": h[3] or ""})
+    else:
+        for h in (db_query("SELECT from_status, to_status, changed_by, changed_at "
+                           "FROM crm_status_history WHERE opportunity_id=? ORDER BY id DESC LIMIT 30",
+                           (eid,)) or []):
+            items.append({"type": "Status", "text": f"{h[0] or 'new'} \u2192 {h[1]}",
+                          "who": h[2] or "", "at": h[3] or ""})
+    items.sort(key=lambda x: x["at"] or "", reverse=True)
+    return jsonify({"ok": True, "items": items[:120]})
 
 @app.route("/api/crm/udfs", methods=["GET"])
 def api_crm_udfs():

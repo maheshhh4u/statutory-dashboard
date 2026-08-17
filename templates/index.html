@@ -91,6 +91,23 @@
   .crm-seg button.on{background:var(--navy);color:#fff;font-weight:600}
   .crm-input{padding:5px 9px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;
     background:var(--surface);color:var(--t1)}
+  /* Split pane: list on top, tabbed detail below — the arrangement Maximizer
+     uses, so a record can be read without leaving the list. */
+  .crm-split{display:flex;flex-direction:column;gap:0;height:calc(100vh - 210px);min-height:420px}
+  .crm-split-top{flex:0 0 auto;overflow:hidden;display:flex;flex-direction:column}
+  .crm-split-top .crm-wrap{max-height:none;flex:1;border-radius:8px 8px 0 0;border-bottom:none}
+  .crm-splitter{height:9px;cursor:row-resize;background:var(--s2);border-left:1px solid var(--border);
+    border-right:1px solid var(--border);display:flex;align-items:center;justify-content:center}
+  .crm-splitter::after{content:"";width:34px;height:3px;border-radius:2px;background:var(--border)}
+  .crm-split-bottom{flex:1;min-height:150px;overflow:auto;border:1px solid var(--border);
+    border-radius:0 0 8px 8px;background:var(--surface)}
+  .crm-tabs{display:flex;gap:0;border-bottom:1px solid var(--border);padding:0 8px;
+    position:sticky;top:0;background:var(--surface);z-index:2;overflow-x:auto}
+  .crm-tabs button{background:none;border:none;font-size:12.5px;padding:9px 13px;cursor:pointer;
+    color:var(--t2);border-bottom:2px solid transparent;white-space:nowrap}
+  .crm-tabs button:hover{color:var(--navy)}
+  .crm-tabs button.on{color:var(--navy);font-weight:700;border-bottom-color:var(--navy)}
+  .crm-tabbody{padding:13px 15px}
   /* Detail view: a quiet two-column record, not a wall of cards. */
   .crm-panel{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:12px}
   .crm-panel h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--t3)}
@@ -7445,6 +7462,16 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.62", date:"2026-08", title:"CRM: split-pane layout with record tabs, and documents on every record",
+    changes:[
+      "The address book and the opportunities list now use a split pane \u2014 the list stays on top, the selected record opens below it in tabs. Moving between records no longer means going back and forth, and the divider can be dragged to give either half more room (remembered between visits).",
+      "Record tabs: Details, Contacts, Opportunities, Notes, User-Defined Fields, Documents, Timeline, Auditing and Related Entries. MailChimp and Leads left out as agreed.",
+      "Documents can be added to any organisation or opportunity, two ways. A link (SharePoint or anything else) has no size limit and matches how documents are handled today. A file can also be uploaded and stored, capped at 2MB.",
+      "Worth knowing why files are capped and links preferred: Render wipes its disk on every deploy, so an uploaded file written to disk would silently disappear. Stored files therefore live in the database, which survives \u2014 but a database is a poor file server, so anything substantial belongs in SharePoint with a link here.",
+      "Timeline pulls together notes, calls, status changes and documents into one chronology per record. It reads from where things actually happen rather than a separate activity log, so nothing needs maintaining in parallel and nothing can go out of step.",
+      "Auditing shows created, modified and status-changed dates with who did what, plus the full status history.",
+      "Related Entries shows calls logged against the same charity in the Prospect Generator \u2014 the link between the two sides of the system.",
+    ]},
   { v:"2.61", date:"2026-08", title:"CRM: created and modified dates, a real status list with history, and a proper field editor",
     changes:[
       "Created and Modified dates are now available as columns on both the address book and opportunities, and shown on each record. Opportunities also get Status changed.",
@@ -9389,6 +9416,287 @@ function crSwitchModule(mod, initial){
 // CRM record detail. Rendered into the same panel rather than a modal, so the
 // contact list, pipeline and notes for one organisation are all visible at
 // once — which is how someone actually uses an address book entry.
+// ── Split pane and record tabs ─────────────────────────────────────────────
+let _crmSplitDrag=null, _crmTab='details', _crmRecord=null;
+function crmStartSplitDrag(ev){
+  const top=document.getElementById('crm-split-top');
+  if(!top) return;
+  _crmSplitDrag={startY:ev.clientY, startH:top.offsetHeight};
+  document.addEventListener('mousemove', crmDoSplitDrag);
+  document.addEventListener('mouseup', crmEndSplitDrag);
+  ev.preventDefault();
+}
+function crmDoSplitDrag(ev){
+  if(!_crmSplitDrag) return;
+  const top=document.getElementById('crm-split-top');
+  const box=top&&top.parentElement;
+  if(!top||!box) return;
+  // Clamped so neither pane can be dragged away entirely.
+  const h=Math.max(110, Math.min(_crmSplitDrag.startH+(ev.clientY-_crmSplitDrag.startY), box.offsetHeight-140));
+  top.style.height=h+'px';
+  _crmSplitDrag.h=h;
+}
+function crmEndSplitDrag(){
+  document.removeEventListener('mousemove', crmDoSplitDrag);
+  document.removeEventListener('mouseup', crmEndSplitDrag);
+  if(_crmSplitDrag&&_crmSplitDrag.h){
+    try{ localStorage.setItem('crmSplitH', String(_crmSplitDrag.h)); }catch(e){}
+  }
+  _crmSplitDrag=null;
+}
+function crmRestoreSplit(){
+  const top=document.getElementById('crm-split-top');
+  if(!top) return;
+  try{
+    const h=parseInt(localStorage.getItem('crmSplitH')||'0',10);
+    if(h>110) top.style.height=h+'px';
+  }catch(e){}
+}
+// Selecting a row fills the lower pane rather than replacing the whole view.
+function crmSelectOpp(id){
+  document.querySelectorAll('#crm-split-top tbody tr').forEach(tr=>{
+    if(tr.id==='crm-row-'+id){ tr.style.background='var(--navy-pale)'; }
+    else if(!tr.dataset.sel){ tr.style.background=''; }
+  });
+  crmLoadRecord('opportunity', id);
+}
+function crmSelectOrg(id){
+  document.querySelectorAll('#crm-split-top tbody tr').forEach(tr=>{
+    if(tr.id==='crm-row-'+id){ tr.dataset.cur='1'; tr.style.background='var(--navy-pale)'; }
+    else if(!tr.dataset.sel){ delete tr.dataset.cur; tr.style.background=''; }
+  });
+  _crmCurrentOrgId=id;
+  crmLoadRecord('org', id);
+}
+const CRM_RECORD_TABS = {
+  org: ['details','contacts','opportunities','notes','udfs','documents','timeline','auditing','related'],
+  opportunity: ['details','notes','udfs','documents','timeline','auditing'],
+};
+const CRM_TAB_LABELS = {details:'Details', contacts:'Contacts', opportunities:'Opportunities',
+  notes:'Notes', udfs:'User-Defined Fields', documents:'Documents', timeline:'Timeline',
+  auditing:'Auditing', related:'Related Entries', interactions:'Interactions', activities:'Activities'};
+
+function crmLoadRecord(type, id){
+  const pane=document.getElementById('crm-split-bottom');
+  if(!pane) return;
+  pane.innerHTML='<div style="padding:22px;color:var(--t3);font-size:12.5px">Loading…</div>';
+  const url = type==='org' ? '/api/crm/org/'+id : '/api/crm/opportunity/'+id;
+  fetch(url).then(r=>r.json()).then(d=>{
+    if(!d.ok){ pane.innerHTML='<div class="err-box" style="margin:12px">'+esc(d.error||'Not found')+'</div>'; return; }
+    _crmRecord={type, id, data:d};
+    if(type==='org'){ _crmCurrentOrg=d.org; }
+    crmRenderRecordTabs();
+  }).catch(e=>{ pane.innerHTML='<div class="err-box" style="margin:12px">'+esc(e.message)+'</div>'; });
+}
+function crmSetTab(t){ _crmTab=t; crmRenderRecordTabs(); }
+function crmRenderRecordTabs(){
+  const pane=document.getElementById('crm-split-bottom');
+  if(!pane||!_crmRecord) return;
+  const tabs=CRM_RECORD_TABS[_crmRecord.type]||[];
+  if(!tabs.includes(_crmTab)) _crmTab=tabs[0];
+  pane.innerHTML='<div class="crm-tabs">'+
+    tabs.map(t=>`<button class="${t===_crmTab?'on':''}" onclick="crmSetTab('${t}')">${esc(CRM_TAB_LABELS[t]||t)}</button>`).join('')+
+    '</div><div class="crm-tabbody" id="crm-tabbody"></div>';
+  crmRenderTabBody();
+}
+function crmRenderTabBody(){
+  const box=document.getElementById('crm-tabbody');
+  if(!box||!_crmRecord) return;
+  const {type, id, data}=_crmRecord;
+  const o=data.org||data.opportunity||{};
+  const kv=(pairs)=>'<div class="crm-kv">'+pairs.filter(p=>p[1]).map(p=>
+    `<div class="k">${esc(p[0])}</div><div class="v">${p[2]?p[1]:esc(String(p[1]))}</div>`).join('')+'</div>';
+
+  if(_crmTab==='details'){
+    const head=`<div style="display:flex;align-items:center;gap:9px;margin-bottom:11px">
+        <strong style="font-size:14.5px">${esc(o.name||o.title||'')}</strong>
+        ${o.owner?`<span class="tagpill">${esc(o.owner)}</span>`:''}
+        ${o.ref_id?`<span style="font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--t3)">${esc(o.ref_id)}</span>`:''}
+        <span style="flex:1"></span>
+        ${type==='org'
+          ? `<button class="btn btn-outline btn-sm" onclick="crmEditOrg(${id})">Edit</button>
+             <button class="btn btn-outline btn-sm" onclick="crmNewOpp(${id})">+ Opportunity</button>`
+          : `<button class="btn btn-outline btn-sm" onclick="crmEditOpp(${id})">Edit</button>`}
+      </div>`;
+    box.innerHTML = head + (type==='org'
+      ? '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">'+
+        kv([['Charity number', o.reg_number?(o.reg_number+(o.suffix?'-'+o.suffix:'')):''],
+            ['Type', o.org_type],['Main contact', o.main_contact],
+            ['Phone', [o.phone,o.phone2,o.phone3].filter(Boolean).join(' \u00b7 ')],
+            ['Email', [o.email,o.email2,o.email3].filter(Boolean).join(' \u00b7 ')],
+            ['Website', o.website?`<a href="${esc(/^https?:/i.test(o.website)?o.website:'https://'+o.website)}" target="_blank" rel="noopener">${esc(o.website)}</a>`:'', true],
+            ['Address', [o.address,o.address2,o.city,o.county,o.postcode,o.country].filter(Boolean).join(', ')],
+            ['Source', o.source]])+
+        kv([['What it does', o.cc_what],['Who it helps', o.cc_who],['How it helps', o.cc_how],
+            ['Policies', o.cc_policies],['Notes', o.notes]])+
+        '</div>'
+      : kv([['Company', o.org_name],['Stage', o.stage],['Status', o.status],
+            ['Value', o.value?('\u00a3'+Number(o.value).toLocaleString()):''],
+            ['Probability', (o.probability||0)+'%'],
+            ['Expected close', o.expected_close],['Source', o.source],['Notes', o.notes]]));
+    return;
+  }
+  if(_crmTab==='contacts'){
+    box.innerHTML=`<div style="display:flex;margin-bottom:9px"><span style="flex:1"></span>
+      <button class="btn btn-outline btn-sm" onclick="crmNewContact(${id})">+ Add contact</button></div>`+
+      ((data.contacts||[]).length ? (data.contacts||[]).map(c=>`
+        <div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--s2);font-size:12.5px">
+          <strong style="min-width:150px">${esc(((c.first_name||'')+' '+(c.last_name||'')).trim()||'(no name)')}</strong>
+          ${c.is_primary?'<span class="tagpill">primary</span>':''}
+          <span style="color:var(--t3);min-width:130px">${esc(c.job_title||'')}</span>
+          <span style="flex:1;color:var(--t2)">${[c.email,c.phone,c.mobile].filter(Boolean).map(esc).join(' \u00b7 ')}</span>
+          <span onclick="crmNewOppForContact(${id},${c.id})" style="cursor:pointer;color:var(--navy);font-size:11px">+ opportunity</span>
+          <span onclick="crmEditContact(${c.id},${id})" style="cursor:pointer;color:var(--t3);font-size:11px">edit</span>
+        </div>`).join('') : '<div style="color:var(--t3);font-size:12.5px">No contacts yet.</div>');
+    return;
+  }
+  if(_crmTab==='opportunities'){
+    box.innerHTML=`<div style="display:flex;margin-bottom:9px"><span style="flex:1"></span>
+      <button class="btn btn-outline btn-sm" onclick="crmNewOpp(${id})">+ Add opportunity</button></div>`+
+      ((data.opportunities||[]).length ? (data.opportunities||[]).map(p=>`
+        <div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--s2);font-size:12.5px;cursor:pointer"
+             onclick="crmEditOpp(${p.id})">
+          <strong style="flex:1">${esc(p.title)}</strong>
+          <span class="tagpill">${esc(p.stage||'')}</span>
+          <span style="min-width:80px">${p.value?'\u00a3'+Number(p.value).toLocaleString():'\u2014'}</span>
+          <span style="color:var(--t3);min-width:44px">${p.probability||0}%</span>
+          <span style="color:var(--t3)">${esc(p.status||'')}</span>
+        </div>`).join('') : '<div style="color:var(--t3);font-size:12.5px">No opportunities yet.</div>');
+    return;
+  }
+  if(_crmTab==='notes'){
+    box.innerHTML=`<div style="display:flex;gap:7px;margin-bottom:10px">
+        <textarea id="crm-note-body" class="crm-input" rows="2" placeholder="Add a note\u2026" style="flex:1"></textarea>
+        <button class="btn btn-outline btn-sm" onclick="crmAddNoteTab('${type}',${id})">Add</button></div>`+
+      ((data.notes||[]).length ? (data.notes||[]).map(n=>`
+        <div style="padding:8px 0;border-bottom:1px solid var(--s2);font-size:12.5px">
+          <div style="white-space:pre-wrap">${esc(n.body)}</div>
+          <div style="color:var(--t3);font-size:11px;margin-top:3px">${esc(n.author)} \u00b7 ${esc(n.created_at)}</div>
+        </div>`).join('') : '<div style="color:var(--t3);font-size:12.5px">No notes yet.</div>');
+    return;
+  }
+  if(_crmTab==='udfs'){
+    const defs=data.udfs||[], vals=data.udf_values||{};
+    box.innerHTML=`<div style="display:flex;margin-bottom:9px"><span style="flex:1"></span>
+      <button class="btn btn-outline btn-sm" onclick="crmManageUdfs('${type}')">Manage fields</button></div>`+
+      (defs.length ? '<div class="crm-kv">'+defs.map(u=>
+        `<div class="k">${esc(u.label)}</div><div class="v">${esc(vals[u.key]||'\u2014')}</div>`).join('')+'</div>'
+        : '<div style="color:var(--t3);font-size:12.5px">No additional fields defined. Use <strong>Manage fields</strong> to add some.</div>');
+    return;
+  }
+  if(_crmTab==='documents'){ crmLoadDocuments(type, id); return; }
+  if(_crmTab==='timeline'){ crmLoadTimeline(type, id); return; }
+  if(_crmTab==='auditing'){
+    const hist=data.status_history||[];
+    box.innerHTML='<div class="crm-kv">'+
+      [['Created', o.created_at||''],['Created by', o.created_by||''],
+       ['Last modified', o.updated_at||''],['Status changed', o.status_changed_at||'']]
+       .filter(p=>p[1]).map(p=>`<div class="k">${esc(p[0])}</div><div class="v">${esc(p[1])}</div>`).join('')+
+      '</div>'+
+      (hist.length ? '<div style="margin-top:12px;font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Status changes</div>'+
+        hist.map(h=>`<div style="font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--s2)">
+          ${h.from?esc(h.from)+' \u2192 ':''}<strong>${esc(h.to)}</strong>
+          <span style="color:var(--t3)"> \u00b7 ${esc(h.at)}${h.by?' \u00b7 '+esc(h.by):''}</span></div>`).join('')
+        : '');
+    return;
+  }
+  if(_crmTab==='related'){
+    // Calls against the same charity are the genuine relation we hold today.
+    const calls=data.calls||[];
+    box.innerHTML = calls.length
+      ? '<div style="font-size:11.5px;color:var(--t3);margin-bottom:8px">Calls logged against this charity in the Prospect Generator \u2014 the same organisation, one history.</div>'+
+        calls.map(c=>`<div style="display:flex;gap:9px;padding:5px 0;border-bottom:1px solid var(--s2);font-size:12.5px">
+          <span style="flex:1">${esc(c.outcome||'\u2014')}</span>
+          <span style="color:var(--t3)">${esc(c.caller||'')}</span>
+          <span style="color:var(--t3)">${esc(c.date||'')}</span></div>`).join('')
+      : '<div style="color:var(--t3);font-size:12.5px">Nothing related yet. Set a charity number on this record to link it to calling activity.</div>';
+    return;
+  }
+  box.innerHTML='<div style="color:var(--t3);font-size:12.5px">Nothing here yet.</div>';
+}
+function crmAddNoteTab(type, id){
+  const el=document.getElementById('crm-note-body');
+  const body=(el&&el.value||'').trim();
+  if(!body) return;
+  fetch('/api/crm/note',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({entity_type:type, entity_id:id, body})})
+    .then(()=>crmLoadRecord(type,id)).catch(e=>alert(e.message));
+}
+// ── Documents ──────────────────────────────────────────────────────────────
+function crmLoadDocuments(type, id){
+  const box=document.getElementById('crm-tabbody');
+  box.innerHTML='<div style="color:var(--t3);font-size:12.5px">Loading…</div>';
+  fetch(`/api/crm/documents?entity_type=${type}&entity_id=${id}`).then(r=>r.json()).then(d=>{
+    if(!d.ok){ box.innerHTML='<div class="err-box">'+esc(d.error||'Failed')+'</div>'; return; }
+    const kb=Math.round((d.max_bytes||0)/1024);
+    box.innerHTML=`
+      <div style="background:var(--navy-pale);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:11px">
+        <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:7px">
+          <input id="crm-doc-title" class="crm-input" placeholder="title (optional)" style="width:170px">
+          <input id="crm-doc-url" class="crm-input" placeholder="https://\u2026 SharePoint or other link" style="flex:1;min-width:220px">
+          <button class="btn btn-outline btn-sm" onclick="crmAddDocLink('${type}',${id})">Add link</button>
+        </div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center">
+          <input type="file" id="crm-doc-file" style="font-size:12px">
+          <button class="btn btn-outline btn-sm" onclick="crmUploadDoc('${type}',${id})">Upload file</button>
+          <span style="font-size:11px;color:var(--t3)">Stored files are limited to ${kb}KB \u2014 for anything larger, add a SharePoint link instead.</span>
+        </div>
+        <div id="crm-doc-status" style="font-size:12px;margin-top:7px"></div>
+      </div>`+
+      ((d.documents||[]).length ? (d.documents||[]).map(doc=>`
+        <div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--s2);font-size:12.5px">
+          <span>${doc.kind==='link'?'\u{1F517}':'\u{1F4CE}'}</span>
+          <a href="${doc.kind==='link'?esc(doc.url):'/api/crm/document/'+doc.id+'/download'}" target="_blank" rel="noopener"
+             style="flex:1;color:var(--navy)">${esc(doc.title)}</a>
+          <span style="color:var(--t3);font-size:11px">${doc.size_bytes?Math.round(doc.size_bytes/1024)+'KB \u00b7 ':''}${esc(doc.uploaded_by)} \u00b7 ${esc((doc.created_at||'').slice(0,10))}</span>
+          <span onclick="crmDeleteDoc(${doc.id},'${type}',${id})" style="cursor:pointer;color:var(--red);font-size:11px">remove</span>
+        </div>`).join('') : '<div style="color:var(--t3);font-size:12.5px">No documents yet.</div>');
+  }).catch(e=>{ box.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
+}
+function crmAddDocLink(type, id){
+  const st=document.getElementById('crm-doc-status');
+  const url=(document.getElementById('crm-doc-url').value||'').trim();
+  if(!url){ st.textContent='\u26a0 Enter a link.'; st.style.color='var(--red)'; return; }
+  fetch('/api/crm/document',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({entity_type:type, entity_id:id, url,
+      title:(document.getElementById('crm-doc-title').value||'').trim()})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ st.textContent='\u26a0 '+esc(d.error||'Failed'); st.style.color='var(--red)'; return; }
+      crmLoadDocuments(type,id);
+    }).catch(e=>{ st.textContent='\u26a0 '+esc(e.message); st.style.color='var(--red)'; });
+}
+function crmUploadDoc(type, id){
+  const st=document.getElementById('crm-doc-status');
+  const f=document.getElementById('crm-doc-file').files[0];
+  if(!f){ st.textContent='\u26a0 Choose a file first.'; st.style.color='var(--red)'; return; }
+  st.textContent='Uploading\u2026'; st.style.color='var(--t3)';
+  const fd=new FormData();
+  fd.append('file', f); fd.append('entity_type', type); fd.append('entity_id', id);
+  fd.append('title', (document.getElementById('crm-doc-title').value||'').trim());
+  fetch('/api/crm/document',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+    if(!d.ok){ st.textContent='\u26a0 '+esc(d.error||'Failed'); st.style.color='var(--red)'; return; }
+    crmLoadDocuments(type,id);
+  }).catch(e=>{ st.textContent='\u26a0 '+esc(e.message); st.style.color='var(--red)'; });
+}
+function crmDeleteDoc(did, type, id){
+  if(!confirm('Remove this document?')) return;
+  fetch('/api/crm/document',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:did, action:'delete'})}).then(()=>crmLoadDocuments(type,id)).catch(()=>{});
+}
+function crmLoadTimeline(type, id){
+  const box=document.getElementById('crm-tabbody');
+  box.innerHTML='<div style="color:var(--t3);font-size:12.5px">Loading…</div>';
+  fetch(`/api/crm/timeline?entity_type=${type}&entity_id=${id}`).then(r=>r.json()).then(d=>{
+    if(!d.ok){ box.innerHTML='<div class="err-box">'+esc(d.error||'Failed')+'</div>'; return; }
+    const colour={Note:'var(--navy)', Call:'var(--green)', Status:'var(--purple)', Document:'var(--orange)'};
+    box.innerHTML=(d.items||[]).length ? (d.items||[]).map(it=>`
+      <div style="display:flex;gap:10px;padding:7px 0;border-bottom:1px solid var(--s2);font-size:12.5px">
+        <span style="width:74px;flex-shrink:0;color:${colour[it.type]||'var(--t3)'};font-weight:600">${esc(it.type)}</span>
+        <span style="flex:1;white-space:pre-wrap">${esc(it.text)}</span>
+        <span style="color:var(--t3);font-size:11px;white-space:nowrap">${esc(it.who)} \u00b7 ${esc(it.at)}</span>
+      </div>`).join('') : '<div style="color:var(--t3);font-size:12.5px">Nothing recorded yet.</div>';
+  }).catch(e=>{ box.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
+}
 function crmOpenOrg(id){
   const body=document.getElementById('crm-body');
   body.innerHTML='<div class="loading-txt" style="padding:20px">Loading…</div>';
@@ -10597,7 +10905,18 @@ function crmLoadBook(){
          <span style="flex:1"></span>
          ${crmListControls(true)}
        </div>`+
-      crmRenderGrid('orgs', d.orgs||[], 'crmOpenOrg', true);
+      // Split pane: the grid stays visible while a record is read below it,
+      // so moving between records doesn't mean going back and forth.
+      '<div class="crm-split">'+
+        '<div class="crm-split-top" id="crm-split-top" style="height:44%">'+
+          crmRenderGrid('orgs', d.orgs||[], 'crmSelectOrg', true)+
+        '</div>'+
+        '<div class="crm-splitter" onmousedown="crmStartSplitDrag(event)" title="Drag to resize"></div>'+
+        '<div class="crm-split-bottom" id="crm-split-bottom">'+
+          '<div style="padding:34px;text-align:center;color:var(--t3);font-size:12.5px">Select an organisation above to see its details.</div>'+
+        '</div>'+
+      '</div>';
+    crmRestoreSplit();
   }).catch(e=>{ body.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
 }
 let _crmPipeMode='board';   // board = stage columns, grid = configurable list
@@ -10623,7 +10942,17 @@ function crmLoadPipeline(){
         ${_crmPipeMode==='grid'?crmListControls(true):''}
       </div>`;
     if(_crmPipeMode==='grid'){
-      body.innerHTML=modeBar+crmRenderGrid('opps', d.opportunities||[], 'crmEditOpp', false);
+      body.innerHTML=modeBar+
+        '<div class="crm-split">'+
+          '<div class="crm-split-top" id="crm-split-top" style="height:44%">'+
+            crmRenderGrid('opps', d.opportunities||[], 'crmSelectOpp', false)+
+          '</div>'+
+          '<div class="crm-splitter" onmousedown="crmStartSplitDrag(event)" title="Drag to resize"></div>'+
+          '<div class="crm-split-bottom" id="crm-split-bottom">'+
+            '<div style="padding:34px;text-align:center;color:var(--t3);font-size:12.5px">Select an opportunity above to see its details.</div>'+
+          '</div>'+
+        '</div>';
+      crmRestoreSplit();
       return;
     }
     const open=d.stages.filter(s=>s!=='Won'&&s!=='Lost');
