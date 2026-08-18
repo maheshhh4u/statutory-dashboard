@@ -2028,10 +2028,37 @@ def api_intel_run(run_id):
                                      "WHERE charity_id=? ORDER BY id DESC LIMIT 12",
                                      (run["charity_id"],)) or [])]
 
+    # The signal register: every collected feature with its value, grouped by
+    # category. This is the evidence behind the scores — without it a score is
+    # an assertion, and a caller can't defend it on the phone.
+    signals = []
+    for f in (intel_query(
+            "SELECT fd.feature_key, fd.feature_name, fd.category, fd.value_type, "
+            "fv.value_number, fv.value_text, fv.value_bool, fv.confidence "
+            "FROM feature_values fv JOIN feature_definitions fd "
+            "ON fd.id = fv.feature_definition_id WHERE fv.analysis_run_id=? "
+            "ORDER BY fd.category, fd.feature_name", (run_id,)) or []):
+        vtype = f[3] or "text"
+        if vtype == "boolean":
+            val = "" if f[6] is None else ("Yes" if f[6] else "No")
+        elif vtype == "number":
+            val = "" if f[4] is None else str(f[4])
+        else:
+            val = f[5] or ""
+        signals.append({"key": f[0], "name": f[1] or f[0], "category": f[2] or "other",
+                        "type": vtype, "value": val, "confidence": f[7],
+                        "present": bool(str(val).strip())})
+
     crm = db_query("SELECT id, name FROM crm_orgs WHERE reg_number=?", (run["charity_number"],))
     run["crm"] = ({"id": crm[0][0], "name": crm[0][1]} if crm else None)
+    # Coverage tells you how much of the picture was actually collected, which
+    # is the honest caveat on any of the scores below.
+    covered = sum(1 for x in signals if x["present"])
+    run["coverage"] = {"collected": covered, "total": len(signals),
+                       "percent": round(100.0 * covered / len(signals)) if signals else 0}
     return jsonify({"ok": True, "run": run, "scores": scores, "diagnostics": diags,
-                    "problems": problems, "services": services, "history": history})
+                    "problems": problems, "services": services, "history": history,
+                    "signals": signals})
 
 @app.route("/api/intel/status", methods=["GET"])
 def api_intel_status():
