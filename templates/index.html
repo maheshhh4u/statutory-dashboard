@@ -1366,6 +1366,21 @@ select:focus{outline:none;border-color:var(--green)}
   </div>
 </div>
 
+<!-- Sales Generator: reads the intelligence database. This shows the results
+     of analysis runs; running a NEW scan needs the live Sales Generator
+     service, which is a separate integration (see the brief, section 3). -->
+<section id="tab-salesgen" class="section">
+  <div class="crm-bar">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%">
+      <h2 style="margin:0;font-size:16px;font-weight:700">&#128200; Sales Generator</h2>
+      <span style="font-size:12px;color:var(--t3)">Diagnostics and call briefs</span>
+      <span style="flex:1"></span>
+      <input id="sg-search" class="crm-input" placeholder="Search charity name or number" oninput="sgSearchDebounced()" style="width:240px">
+    </div>
+  </div>
+  <div id="sg-body"><div class="loading-txt" style="padding:20px">Loading&hellip;</div></div>
+</section>
+
 <section id="tab-adminbrief" class="section">
   <div class="card" style="padding:16px 18px;margin-bottom:14px">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -7544,6 +7559,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.66", date:"2026-08", title:"Sales Generator is live \u2014 diagnostics, Mountain scores and call briefs",
+    changes:[
+      "Sales Generator has moved from Planned to live in the launcher. It reads the intelligence imported last release: 12 charities, 136 analysis runs.",
+      "Open a charity and you get its call brief \u2014 headline, suggested opener, likely issues and cautions \u2014 followed by the Nine Mountains scored individually with their RAG rating and the reasoning behind each.",
+      "Also shown: which diagnostics triggered and how severely, the problems matched from the library, recommended service areas with their rationale, and the full history of analyses for that charity.",
+      "Linked to the CRM by charity number. Where a charity is already in the address book there\u2019s a direct link to it; where it isn\u2019t, one click creates the entry. That join is what makes this one platform rather than two systems sharing a login.",
+      "Worth being clear about the limit: this shows the results of analyses already run. Starting a NEW scan needs the Sales Generator service itself, which is a separate server-to-server integration and isn\u2019t connected yet. The page says so rather than leaving it to be discovered.",
+    ]},
   { v:"2.65", date:"2026-08", title:"Sales Generator intelligence connected as a second database",
     changes:[
       "The platform can now read the Sales Generator\u2019s intelligence \u2014 the signal library, diagnostics, problem library, analysis runs and sales briefs \u2014 from its own Turso database, separate from the CRM.",
@@ -9433,6 +9456,7 @@ function clearRemembered(){
 const CR_MODULE_TABS = {
   launcher:  ['launcher'],
   crm:       ['crm'],
+  sales:     ['salesgen'],
   prospects: ['home','calling','prospects','search','new','late','old','milestones'],
   admin:     ['adminbrief'],
   finance:   ['financebrief'],
@@ -9511,6 +9535,7 @@ function crSwitchModule(mod, initial){
   switchTab(first, firstBtn||null);
   crUpdateFloatingWidgets();
   if(mod==='crm'){ renderCrmMenubar(); crmReload(); }
+  if(mod==='sales') sgLoadList();
   if(mod==='admin') loadAdminBrief();
   if(mod==='finance') loadFinanceBrief();
   if(!initial){
@@ -10345,6 +10370,148 @@ function crmDeleteContact(id, orgId){
   fetch('/api/crm/contact',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({id, action:'delete'})})
     .then(()=>{ if(orgId) crmLoadRecord('org', orgId); }).catch(e=>alert(e.message));
+}
+// ══ Sales Generator ════════════════════════════════════════════════════════
+// Reads the intelligence database. RAG colours come from the data rather than
+// being derived from the score, because the scan sets them deliberately.
+let _sgSearchTimer=null;
+const SG_RAG={Green:'var(--green)', Amber:'var(--orange)', Red:'var(--red)'};
+function sgSearchDebounced(){ clearTimeout(_sgSearchTimer); _sgSearchTimer=setTimeout(sgLoadList,250); }
+function sgLoadList(){
+  const body=document.getElementById('sg-body');
+  const q=(document.getElementById('sg-search')||{}).value||'';
+  body.innerHTML='<div class="loading-txt" style="padding:20px">Loading…</div>';
+  fetch('/api/intel/charities?q='+encodeURIComponent(q)).then(r=>r.json()).then(d=>{
+    if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Could not load')+'</div>'; return; }
+    if(!d.configured){
+      body.innerHTML='<div class="crm-panel" style="color:var(--orange)">The intelligence database isn\u2019t configured. Set INTEL_DATABASE_URL and INTEL_AUTH_TOKEN in Render.</div>';
+      return;
+    }
+    const list=d.charities||[];
+    body.innerHTML=`<div style="font-size:12px;color:var(--t3);margin-bottom:8px">${list.length} charit${list.length===1?'y':'ies'} analysed</div>`+
+      (list.length ? '<div class="crm-wrap"><table class="crm-grid"><colgroup>'+
+        '<col style="width:240px"><col style="width:100px"><col style="width:90px"><col style="width:130px"><col style="width:160px"></colgroup>'+
+        '<thead><tr>'+['Charity','Charity no.','Runs','Last analysed','In CRM'].map(h=>`<th>${h}</th>`).join('')+'</tr></thead><tbody>'+
+        list.map(c=>`<tr onclick="${c.latest_run_id?`sgOpenRun(${c.latest_run_id})`:''}">
+          <td><strong>${esc(c.charity_name)}</strong></td>
+          <td>${esc(c.charity_number||'\u2014')}</td>
+          <td>${c.run_count||0}</td>
+          <td title="${esc(c.last_run)}">${esc((c.last_run||'').slice(0,10)||'\u2014')}</td>
+          <td>${c.crm?`<span class="tagpill">linked</span>`:'<span style="color:var(--t3)">not in CRM</span>'}</td>
+        </tr>`).join('')+'</tbody></table></div>'
+      : '<div class="crm-panel" style="color:var(--t3)">No analyses found. Import the Sales Generator file from Settings \u2192 Intelligence DB.</div>');
+  }).catch(e=>{ body.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
+}
+function sgOpenRun(runId){
+  const body=document.getElementById('sg-body');
+  body.innerHTML='<div class="loading-txt" style="padding:20px">Loading…</div>';
+  fetch('/api/intel/run/'+runId).then(r=>r.json()).then(d=>{
+    if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Not found')+'</div>'; return; }
+    const r=d.run, b=r.brief;
+    const mountains=(d.scores||[]).filter(s=>s.is_mountain);
+    const overall=(d.scores||[]).filter(s=>!s.is_mountain);
+    const pct=v=>Math.max(0,Math.min(100,Number(v)||0));
+    body.innerHTML=`
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <button class="btn btn-outline btn-sm" onclick="sgLoadList()">\u2190 Back</button>
+        <h2 style="margin:0;font-size:18px">${esc(r.charity_name)}</h2>
+        ${r.charity_number?`<span class="tagpill">${esc(r.charity_number)}</span>`:''}
+        ${r.priority?`<span class="tagpill">${esc(r.priority.replace(/_/g,' '))}</span>`:''}
+        <span style="flex:1"></span>
+        ${r.crm?`<button class="btn btn-outline btn-sm" onclick="sgOpenInCrm(${r.crm.id})">Open in CRM</button>`
+               :(r.charity_number?`<button class="btn btn-outline btn-sm" onclick="sgAddToCrm('${esc(r.charity_number)}')">Add to CRM</button>`:'')}
+        ${r.website?`<a class="btn btn-outline btn-sm" href="${esc(/^https?:/i.test(r.website)?r.website:'https://'+r.website)}" target="_blank" rel="noopener" style="text-decoration:none">Website</a>`:''}
+      </div>
+      ${b?`<div class="crm-panel" style="border-left:3px solid var(--navy)">
+        <h3>Call brief</h3>
+        ${b.headline?`<div style="font-size:13px;margin-bottom:9px">${esc(b.headline)}</div>`:''}
+        ${b.opener?`<div style="margin-bottom:9px"><span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Suggested opener</span>
+          <div style="font-size:13px;font-style:italic;margin-top:3px">\u201c${esc(b.opener)}\u201d</div></div>`:''}
+        ${b.issues?`<div style="margin-bottom:9px"><span style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase">Likely issues</span>
+          <div style="font-size:12.5px;margin-top:3px;white-space:pre-wrap">${esc(b.issues)}</div></div>`:''}
+        ${b.cautions?`<div><span style="font-size:11px;font-weight:700;color:var(--orange);text-transform:uppercase">Cautions</span>
+          <div style="font-size:12.5px;margin-top:3px;white-space:pre-wrap">${esc(b.cautions)}</div></div>`:''}
+      </div>`:''}
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+        ${overall.map(s=>`<div class="crm-panel" style="flex:1;min-width:170px;margin:0">
+          <div style="font-size:22px;font-weight:800;color:${SG_RAG[s.rag]||'var(--navy)'}">${s.value==null?'\u2014':Math.round(s.value)}</div>
+          <div style="font-size:12px;color:var(--t2);font-weight:600">${esc(s.label)}</div>
+          ${s.confidence!=null?`<div style="font-size:11px;color:var(--t3);margin-top:2px">confidence ${Math.round(s.confidence*100)}%</div>`:''}
+        </div>`).join('')}
+      </div>
+      <div class="crm-panel">
+        <h3>The Nine Mountains</h3>
+        ${mountains.map(s=>`<div style="margin-bottom:9px">
+          <div style="display:flex;align-items:baseline;gap:8px;font-size:12.5px">
+            <strong style="width:150px">${esc(s.label)}</strong>
+            <div style="flex:1;background:var(--s2);border-radius:3px;height:9px;overflow:hidden">
+              <div style="width:${pct(s.value)}%;height:100%;background:${SG_RAG[s.rag]||'var(--navy)'}"></div></div>
+            <span style="width:38px;text-align:right;font-variant-numeric:tabular-nums">${s.value==null?'\u2014':Math.round(s.value)}</span>
+            <span style="width:52px;color:${SG_RAG[s.rag]||'var(--t3)'};font-size:11px">${esc(s.rag||'')}</span>
+          </div>
+          ${s.summary?`<div style="font-size:11.5px;color:var(--t2);margin:2px 0 0 158px">${esc(s.summary)}</div>`:''}
+        </div>`).join('') || '<div style="color:var(--t3);font-size:12.5px">No scores recorded.</div>'}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">
+        <div class="crm-panel">
+          <h3>Diagnostics triggered</h3>
+          ${(d.diagnostics||[]).length ? (d.diagnostics||[]).map(x=>`
+            <div style="padding:6px 0;border-bottom:1px solid var(--s2);font-size:12.5px">
+              <div style="display:flex;gap:7px;align-items:baseline">
+                <strong>${esc(x.name||x.code)}</strong>
+                ${x.headline?'<span class="tagpill">headline</span>':''}
+                <span style="flex:1"></span>
+                ${x.severity!=null?`<span style="color:var(--t3);font-size:11px">severity ${x.severity}</span>`:''}
+              </div>
+              ${x.summary?`<div style="color:var(--t2);font-size:11.5px;margin-top:2px">${esc(x.summary)}</div>`:''}
+            </div>`).join('') : '<div style="color:var(--t3);font-size:12.5px">Nothing flagged.</div>'}
+        </div>
+        <div class="crm-panel">
+          <h3>Recommended services</h3>
+          ${(d.services||[]).length ? (d.services||[]).map(x=>`
+            <div style="padding:6px 0;border-bottom:1px solid var(--s2);font-size:12.5px">
+              <div style="display:flex;gap:7px"><strong style="flex:1">${esc(x.area)}</strong>
+                <span style="color:var(--navy);font-weight:700">${x.score==null?'':Math.round(x.score)}</span></div>
+              ${x.rationale?`<div style="color:var(--t2);font-size:11.5px;margin-top:2px">${esc(x.rationale)}</div>`:''}
+            </div>`).join('') : '<div style="color:var(--t3);font-size:12.5px">None recorded.</div>'}
+        </div>
+        <div class="crm-panel">
+          <h3>Matched problems</h3>
+          ${(d.problems||[]).length ? (d.problems||[]).map(x=>`
+            <div style="padding:6px 0;border-bottom:1px solid var(--s2);font-size:12.5px">
+              <div style="display:flex;gap:7px"><strong style="flex:1">${esc(x.title)}</strong>
+                <span style="color:var(--t3);font-size:11px">${esc(x.area||'')}</span></div>
+              ${x.explanation?`<div style="color:var(--t2);font-size:11.5px;margin-top:2px">${esc(x.explanation)}</div>`:''}
+            </div>`).join('') : '<div style="color:var(--t3);font-size:12.5px">None matched.</div>'}
+        </div>
+        <div class="crm-panel">
+          <h3>Analysis history</h3>
+          ${(d.history||[]).map(h=>`<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--s2);font-size:12.5px;cursor:pointer"
+              onclick="sgOpenRun(${h.id})">
+            <span style="flex:1">${esc((h.completed_at||'').slice(0,16)||'\u2014')}</span>
+            <span style="color:var(--t3)">${esc(h.status)}</span>
+            ${h.id===r.id?'<span class="tagpill">shown</span>':''}
+          </div>`).join('')}
+        </div>
+      </div>
+      <p style="font-size:11.5px;color:var(--t3);margin:14px 0 0;line-height:1.5">
+        These are the results of analyses already run. Starting a <em>new</em> scan needs the Sales Generator
+        service itself, which is a separate integration.
+      </p>`;
+  }).catch(e=>{ body.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
+}
+function sgOpenInCrm(orgId){
+  crSwitchModule('crm');
+  setTimeout(()=>crmOpenOrg(orgId), 400);   // let the CRM finish loading first
+}
+function sgAddToCrm(reg){
+  if(!confirm('Create an address book entry for this charity?')) return;
+  fetch('/api/crm/import_charity',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({reg_number:reg})}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ alert(d.error||'Failed'); return; }
+      alert(d.existing?'That charity was already in the CRM.':'Added to the CRM.');
+      sgLoadList();
+    }).catch(e=>alert(e.message));
 }
 // ── Intelligence database ──────────────────────────────────────────────────
 function loadIntelStatus(){

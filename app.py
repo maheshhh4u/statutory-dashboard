@@ -807,9 +807,9 @@ CR_MODULES = [
     {"id": "finance", "label": "Finance Briefing", "icon": "\U0001F4B7", "status": "live",
      "description": "Pipeline value, invoices and targets",
      "detail": "Meetings secured \u00b7 Billed / paid / outstanding \u00b7 Targets"},
-    {"id": "sales", "label": "Sales Generator", "icon": "\U0001F4C8", "status": "planned",
-     "description": "Turns prospects into conversations and meetings",
-     "detail": "Call scripting \u00b7 Sequences \u00b7 Meeting booking \u00b7 Outcome coaching"},
+    {"id": "sales", "label": "Sales Generator", "icon": "\U0001F4C8", "status": "live",
+     "description": "Charity diagnostics, Mountain scores and call briefs",
+     "detail": "Sales briefs \u00b7 Nine Mountain scores \u00b7 Diagnostics \u00b7 Problem matches \u00b7 Service recommendations"},
     {"id": "marketing", "label": "Marketing Generator", "icon": "\U0001F4E3", "status": "planned",
      "description": "Campaign and content support for 9M and clients",
      "detail": "Email campaigns \u00b7 Content planning \u00b7 Social scheduling"},
@@ -1920,6 +1920,118 @@ INTEL_IMPORT_ORDER = [
     "service_recommendation_results", "sales_brief_results",
 ]
 INTEL_SOURCE_FILE = "nine_mountains_sales_generator.db"
+
+# Human labels for the score components. The nine Mountains are what Nick's
+# brief calls the diagnostic dimensions; the first three are overall measures.
+INTEL_COMPONENTS = {
+    "operational_health": "Operational health", "sales_opportunity": "Sales opportunity",
+    "scan_confidence": "Scan confidence",
+    "mountain_service_delivery": "Service Delivery", "mountain_finance": "Finance",
+    "mountain_fundraising": "Fundraising", "mountain_it": "IT",
+    "mountain_marketing": "Marketing", "mountain_legal": "Legal",
+    "mountain_hr": "HR", "mountain_strategic_planning": "Strategic Planning",
+    "mountain_ninth": "Ninth Mountain",
+}
+
+@app.route("/api/intel/charities", methods=["GET"])
+def api_intel_charities():
+    """Charities with a completed analysis, most recent first. Matched to the
+    CRM by charity number so a scan and an address-book record describe the
+    same organisation."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    if not intel_available():
+        return jsonify({"ok": True, "charities": [], "configured": False})
+    q = (request.args.get("q") or "").strip().lower()
+    rows = intel_query(
+        "SELECT ch.id, ch.charity_number, ch.charity_name, ch.website_url, "
+        "MAX(a.id), MAX(a.completed_at), COUNT(a.id) "
+        "FROM charities ch LEFT JOIN analysis_runs a ON a.charity_id = ch.id "
+        "GROUP BY ch.id ORDER BY MAX(a.completed_at) DESC") or []
+    out = []
+    for r in rows:
+        if q and q not in str(r[2] or "").lower() and q not in str(r[1] or ""):
+            continue
+        out.append({"id": r[0], "charity_number": r[1] or "", "charity_name": r[2] or "",
+                    "website": r[3] or "", "latest_run_id": r[4], "last_run": r[5] or "",
+                    "run_count": r[6] or 0})
+    # Which of these already exist in the CRM — the join that makes the two
+    # halves of the platform one system rather than two.
+    regs = [c["charity_number"] for c in out if c["charity_number"]]
+    known = {}
+    if regs:
+        marks = ",".join("?" * len(regs))
+        for r in (db_query(f"SELECT reg_number, id, name FROM crm_orgs WHERE reg_number IN ({marks})",
+                           tuple(regs)) or []):
+            known[str(r[0])] = {"id": r[1], "name": r[2]}
+    for c in out:
+        c["crm"] = known.get(c["charity_number"])
+    return jsonify({"ok": True, "charities": out, "configured": True})
+
+@app.route("/api/intel/run/<int:run_id>", methods=["GET"])
+def api_intel_run(run_id):
+    """Everything from one analysis run: the sales brief, the Mountain scores,
+    what the diagnostics flagged, matched problems and recommended services."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    r = intel_query("SELECT a.id, a.charity_id, a.run_status, a.run_outcome_status, "
+                    "a.priority_recommendation, a.started_at, a.completed_at, "
+                    "ch.charity_name, ch.charity_number, ch.website_url "
+                    "FROM analysis_runs a JOIN charities ch ON ch.id=a.charity_id WHERE a.id=?",
+                    (run_id,))
+    if not r:
+        return jsonify({"ok": False, "error": "That analysis run wasn't found"}), 404
+    v = r[0]
+    run = {"id": v[0], "charity_id": v[1], "status": v[2] or "", "outcome": v[3] or "",
+           "priority": v[4] or "", "started_at": v[5] or "", "completed_at": v[6] or "",
+           "charity_name": v[7] or "", "charity_number": v[8] or "", "website": v[9] or ""}
+
+    brief = intel_query("SELECT headline_summary, likely_issues_summary, recommended_opener, "
+                        "cautions, confidence FROM sales_brief_results WHERE analysis_run_id=? "
+                        "ORDER BY id DESC LIMIT 1", (run_id,))
+    run["brief"] = ({"headline": brief[0][0] or "", "issues": brief[0][1] or "",
+                     "opener": brief[0][2] or "", "cautions": brief[0][3] or "",
+                     "confidence": brief[0][4]} if brief else None)
+
+    scores = [{"code": s[0], "label": INTEL_COMPONENTS.get(s[0], s[0]),
+               "value": s[1], "rag": s[2] or "", "confidence": s[3], "summary": s[4] or "",
+               "is_mountain": str(s[0]).startswith("mountain_")}
+              for s in (intel_query("SELECT component_code, score_value, rag, confidence, summary "
+                                    "FROM score_results WHERE analysis_run_id=?", (run_id,)) or [])]
+
+    diags = [{"code": d[0] or "", "name": d[1] or "", "category": d[2] or "",
+              "severity": d[3], "confidence": d[4], "summary": d[5] or "",
+              "headline": bool(d[6])}
+             for d in (intel_query(
+                 "SELECT df.diagnostic_code, df.diagnostic_name, df.category, dr.severity, "
+                 "dr.confidence, dr.result_summary, df.headline_flag "
+                 "FROM diagnostic_results dr JOIN diagnostic_definitions df "
+                 "ON df.id = dr.diagnostic_definition_id "
+                 "WHERE dr.analysis_run_id=? AND dr.triggered=1 ORDER BY dr.severity DESC",
+                 (run_id,)) or [])]
+
+    problems = [{"title": p[0] or "", "area": p[1] or "", "score": p[2],
+                 "confidence": p[3], "explanation": p[4] or ""}
+                for p in (intel_query(
+                    "SELECT pl.title, pl.area, pm.match_score, pm.confidence, pm.match_explanation "
+                    "FROM problem_match_results pm JOIN problem_library_items pl "
+                    "ON pl.id = pm.problem_library_item_id WHERE pm.analysis_run_id=? "
+                    "ORDER BY pm.match_score DESC LIMIT 12", (run_id,)) or [])]
+
+    services = [{"area": s[0] or "", "score": s[1], "rationale": s[2] or "", "confidence": s[3]}
+                for s in (intel_query("SELECT service_area, recommendation_score, rationale, confidence "
+                                      "FROM service_recommendation_results WHERE analysis_run_id=? "
+                                      "ORDER BY recommendation_score DESC", (run_id,)) or [])]
+
+    history = [{"id": h[0], "completed_at": h[1] or "", "status": h[2] or ""}
+               for h in (intel_query("SELECT id, completed_at, run_status FROM analysis_runs "
+                                     "WHERE charity_id=? ORDER BY id DESC LIMIT 12",
+                                     (run["charity_id"],)) or [])]
+
+    crm = db_query("SELECT id, name FROM crm_orgs WHERE reg_number=?", (run["charity_number"],))
+    run["crm"] = ({"id": crm[0][0], "name": crm[0][1]} if crm else None)
+    return jsonify({"ok": True, "run": run, "scores": scores, "diagnostics": diags,
+                    "problems": problems, "services": services, "history": history})
 
 @app.route("/api/intel/status", methods=["GET"])
 def api_intel_status():
