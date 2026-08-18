@@ -128,6 +128,33 @@
      the two look like one product. */
   .sg-hero{background:linear-gradient(135deg,var(--navy) 0%,var(--navy-l) 100%);
     color:#fff;border-radius:14px;padding:18px 20px;margin-bottom:14px}
+  /* Landing panel, matching Nick's: badge, title, status tiles down the right,
+     and the entry fields sitting on a lighter band with a mountain ridge. */
+  .sg-launch{position:relative;overflow:hidden;border-radius:18px;margin-bottom:16px;
+    background:linear-gradient(135deg,#2b4159 0%,#3d5872 55%,#5b7590 100%);color:#fff;
+    box-shadow:0 12px 30px rgba(30,58,95,.22)}
+  .sg-launch-top{display:flex;align-items:flex-start;gap:16px;padding:20px 22px 8px}
+  .sg-badge{width:58px;height:58px;flex-shrink:0;border-radius:14px;background:rgba(255,255,255,.14);
+    display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:800;letter-spacing:.5px}
+  .sg-launch h2{margin:0;font-size:27px;font-weight:800;color:#fff;line-height:1.15}
+  .sg-launch .sub{font-size:13.5px;opacity:.82;margin-top:3px}
+  .sg-tiles{display:flex;flex-direction:column;gap:8px;min-width:210px}
+  .sg-tile{background:rgba(255,255,255,.13);border-radius:10px;padding:9px 13px}
+  .sg-tile .k{font-size:12.5px;font-weight:700}
+  .sg-tile .v{font-size:12.5px;opacity:.85;margin-top:1px}
+  /* The ridge sits behind the entry row, as in Nick's design. */
+  .sg-launch-form{position:relative;background:rgba(255,255,255,.09);padding:14px 22px 20px;margin-top:14px}
+  .sg-launch-form::before{content:"";position:absolute;left:0;right:0;top:-26px;height:34px;
+    background:rgba(255,255,255,.07);
+    clip-path:polygon(0 100%,9% 42%,17% 72%,27% 26%,38% 66%,48% 34%,60% 74%,71% 30%,82% 68%,92% 40%,100% 100%)}
+  .sg-launch-row{position:relative;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+  .sg-field{flex:1;min-width:180px}
+  .sg-field label{display:block;font-size:12.5px;opacity:.85;margin-bottom:5px}
+  .sg-field input{width:100%;box-sizing:border-box;padding:11px 13px;border:none;border-radius:9px;
+    font-size:14px;background:#f8fafc;color:#1f2937}
+  .sg-run-btn{padding:12px 22px;border:none;border-radius:9px;background:#fff;color:var(--navy);
+    font-size:14.5px;font-weight:800;cursor:pointer;white-space:nowrap}
+  .sg-run-btn:hover{background:#eef2f7}
   .sg-hero h2{margin:0 0 3px;font-size:20px;color:#fff}
   .sg-hero .sub{font-size:12.5px;opacity:.85}
   .sg-hero-stats{display:flex;gap:22px;flex-wrap:wrap;margin-top:13px}
@@ -1435,15 +1462,41 @@ select:focus{outline:none;border-color:var(--green)}
      of analysis runs; running a NEW scan needs the live Sales Generator
      service, which is a separate integration (see the brief, section 3). -->
 <section id="tab-salesgen" class="section">
-  <div class="crm-bar">
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%">
-      <h2 style="margin:0;font-size:16px;font-weight:700">&#128200; Sales Generator</h2>
-      <span style="font-size:12px;color:var(--t3)">Diagnostics and call briefs</span>
-      <span style="flex:1"></span>
-      <input id="sg-search" class="crm-input" placeholder="Search charity name or number" oninput="sgSearchDebounced()" style="width:240px">
+  <!-- Landing panel, matching the Sales Generator interface Nick shared. -->
+  <div class="sg-launch" id="sg-launch">
+    <div class="sg-launch-top">
+      <div class="sg-badge">9M</div>
+      <div style="flex:1;min-width:0">
+        <h2>9 Mountains Sales Generator</h2>
+        <div class="sub">Base Camp Review</div>
+      </div>
+      <div class="sg-tiles">
+        <div class="sg-tile"><div class="k">Charity number</div><div class="v" id="sg-t-number">&ndash;</div></div>
+        <div class="sg-tile"><div class="k">Run status</div><div class="v" id="sg-t-status">Ready</div></div>
+        <div class="sg-tile"><div class="k">Scan confidence</div><div class="v" id="sg-t-conf">&ndash;</div></div>
+      </div>
+    </div>
+    <div class="sg-launch-form">
+      <div class="sg-launch-row">
+        <div class="sg-field">
+          <label for="sg-in-name">Charity name</label>
+          <input id="sg-in-name" list="sg-known" placeholder="Park View 4U CIO" onkeydown="if(event.key==='Enter')sgRunAnalysis()">
+          <datalist id="sg-known"></datalist>
+        </div>
+        <div class="sg-field">
+          <label for="sg-in-number">Charity number</label>
+          <input id="sg-in-number" placeholder="1168208" onkeydown="if(event.key==='Enter')sgRunAnalysis()">
+        </div>
+        <div class="sg-field">
+          <label for="sg-in-web">Website URL</label>
+          <input id="sg-in-web" placeholder="https://example.org">
+        </div>
+        <button class="sg-run-btn" onclick="sgRunAnalysis()">Run analysis</button>
+      </div>
+      <div id="sg-launch-msg" style="font-size:12.5px;margin-top:11px;min-height:17px;opacity:.92"></div>
     </div>
   </div>
-  <div id="sg-body"><div class="loading-txt" style="padding:20px">Loading&hellip;</div></div>
+  <div id="sg-body"></div>
 </section>
 
 <section id="tab-adminbrief" class="section">
@@ -7624,6 +7677,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.68", date:"2026-08", title:"Sales Generator opens on the Base Camp entry panel",
+    changes:[
+      "The module now opens on the entry panel from Nick\u2019s design \u2014 the 9M badge, \u201cBase Camp Review\u201d, the three status tiles down the right, and Charity name / Charity number / Website URL above a Run analysis button, with the mountain ridge behind them.",
+      "Typing a charity number or name and pressing Run analysis retrieves the Base Camp review for that charity. The name box suggests the charities that have actually been analysed, so it doesn\u2019t have to be typed from memory.",
+      "Being straight about what the button does: it cannot start a NEW scan \u2014 that needs the Sales Generator service itself, which isn\u2019t connected to this platform. What it does is find the analysis already held. When there isn\u2019t one, it says so in those words rather than appearing to fail.",
+      "The analyses already held are listed below the panel, so you can browse rather than needing to know a number.",
+      "Opening a review hides the entry panel (the review has its own header); \u201cNew analysis\u201d brings it back.",
+    ]},
   { v:"2.67", date:"2026-08", title:"Sales Generator rebuilt to match Nick\u2019s design",
     changes:[
       "The module now follows the structure and look of the Sales Generator interface Nick shared, so the two read as one product rather than two takes on the same data.",
@@ -10449,46 +10510,8 @@ function crmDeleteContact(id, orgId){
 // ══ Sales Generator ════════════════════════════════════════════════════════
 // Reads the intelligence database. RAG colours come from the data rather than
 // being derived from the score, because the scan sets them deliberately.
-let _sgSearchTimer=null;
 const SG_RAG={Green:'var(--green)', Amber:'var(--orange)', Red:'var(--red)'};
-function sgSearchDebounced(){ clearTimeout(_sgSearchTimer); _sgSearchTimer=setTimeout(sgLoadList,250); }
-function sgLoadList(){
-  const body=document.getElementById('sg-body');
-  const q=(document.getElementById('sg-search')||{}).value||'';
-  body.innerHTML='<div class="loading-txt" style="padding:20px">Loading…</div>';
-  fetch('/api/intel/charities?q='+encodeURIComponent(q)).then(r=>r.json()).then(d=>{
-    if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Could not load')+'</div>'; return; }
-    if(!d.configured){
-      body.innerHTML='<div class="crm-panel" style="color:var(--orange)">The intelligence database isn\u2019t configured. Set INTEL_DATABASE_URL and INTEL_AUTH_TOKEN in Render.</div>';
-      return;
-    }
-    const list=d.charities||[];
-    body.innerHTML=`<div style="font-size:12px;color:var(--t3);margin-bottom:8px">${list.length} charit${list.length===1?'y':'ies'} analysed</div>`+
-      (list.length ? '<div class="crm-wrap"><table class="crm-grid"><colgroup>'+
-        '<col style="width:240px"><col style="width:100px"><col style="width:90px"><col style="width:130px"><col style="width:160px"></colgroup>'+
-        '<thead><tr>'+['Charity','Charity no.','Runs','Last analysed','In CRM'].map(h=>`<th>${h}</th>`).join('')+'</tr></thead><tbody>'+
-        list.map(c=>`<tr onclick="${c.latest_run_id?`sgOpenRun(${c.latest_run_id})`:''}">
-          <td><strong>${esc(c.charity_name)}</strong></td>
-          <td>${esc(c.charity_number||'\u2014')}</td>
-          <td>${c.run_count||0}</td>
-          <td title="${esc(c.last_run)}">${esc((c.last_run||'').slice(0,10)||'\u2014')}</td>
-          <td>${c.crm?`<span class="tagpill">linked</span>`:'<span style="color:var(--t3)">not in CRM</span>'}</td>
-        </tr>`).join('')+'</tbody></table></div>'
-      : '<div class="crm-panel" style="color:var(--t3)">No analyses found. Import the Sales Generator file from Settings \u2192 Intelligence DB.</div>');
-  }).catch(e=>{ body.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
-}
-let _sgRun=null, _sgTab='diagnostics';
-// Strength and confidence are shown apart on purpose: a low score with low
-// confidence means "we couldn't find out", which is a completely different
-// conversation from "they're weak here".
-function sgStatusOf(sc){
-  const conf=sc.confidence==null?null:Number(sc.confidence);
-  if(conf!=null && conf<0.4) return {cls:'low-evidence', label:'Low evidence', colour:'var(--t3)'};
-  if(sc.rag==='Green') return {cls:'strong', label:'Strong', colour:'var(--green)'};
-  if(sc.rag==='Amber') return {cls:'watch', label:'Watch', colour:'var(--orange)'};
-  if(sc.rag==='Red') return {cls:'weak', label:'Weak', colour:'var(--red)'};
-  return {cls:'', label:'', colour:'var(--navy)'};
-}
+let _sgRun=null;
 // Colours and order taken from Nick's Sales Generator, so the two interfaces
 // read as one product rather than two takes on the same data.
 const SG_MOUNTAINS=[
@@ -10516,8 +10539,80 @@ function sgConfLabel(c){
   const n=Number(c);
   return 'Confidence: '+(n>=0.8?'High':n>=0.55?'Moderate':'Low')+' ('+Math.round(n*100)+'%)';
 }
+let _sgKnown=[];
+
+// Landing view: the entry panel, with the analysed charities listed below it
+// so someone can browse rather than having to know a number.
+function sgLoadList(){
+  const body=document.getElementById('sg-body');
+  const launch=document.getElementById('sg-launch');
+  if(launch) launch.style.display='';
+  sgResetTiles();
+  body.innerHTML='<div class="loading-txt" style="padding:20px">Loading…</div>';
+  fetch('/api/intel/charities').then(r=>r.json()).then(d=>{
+    if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Could not load')+'</div>'; return; }
+    if(!d.configured){
+      body.innerHTML='<div class="sg-panel" style="color:var(--orange)">The intelligence database isn\u2019t configured. Set INTEL_DATABASE_URL and INTEL_AUTH_TOKEN in Render.</div>';
+      return;
+    }
+    _sgKnown=d.charities||[];
+    // Feeds the name box, so typing offers what's actually been analysed.
+    const dl=document.getElementById('sg-known');
+    if(dl) dl.innerHTML=_sgKnown.map(c=>`<option value="${esc(c.charity_name)}">`).join('');
+    body.innerHTML=`<div class="sg-panel">
+      <h3>Analyses held \u2014 ${_sgKnown.length} charit${_sgKnown.length===1?'y':'ies'}</h3>
+      ${_sgKnown.length ? '<div class="crm-wrap" style="max-height:none"><table class="crm-grid"><colgroup>'+
+        '<col style="width:250px"><col style="width:105px"><col style="width:70px"><col style="width:120px"><col style="width:130px"></colgroup>'+
+        '<thead><tr>'+['Charity','Charity no.','Runs','Last analysed','In CRM'].map(h=>`<th>${h}</th>`).join('')+'</tr></thead><tbody>'+
+        _sgKnown.map(c=>`<tr onclick="${c.latest_run_id?`sgOpenRun(${c.latest_run_id})`:''}">
+          <td><strong>${esc(c.charity_name)}</strong></td>
+          <td>${esc(c.charity_number||'\u2014')}</td>
+          <td>${c.run_count||0}</td>
+          <td title="${esc(c.last_run)}">${esc((c.last_run||'').slice(0,10)||'\u2014')}</td>
+          <td>${c.crm?'<span class="tagpill">linked</span>':'<span style="color:var(--t3)">not in CRM</span>'}</td>
+        </tr>`).join('')+'</tbody></table></div>'
+      : '<div style="color:var(--t3);font-size:12.5px">Nothing analysed yet. Import the Sales Generator file from Settings \u2192 Intelligence DB.</div>'}
+    </div>`;
+  }).catch(e=>{ body.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
+}
+function sgResetTiles(){
+  const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.textContent=v; };
+  set('sg-t-number','\u2013'); set('sg-t-status','Ready'); set('sg-t-conf','\u2013');
+  const m=document.getElementById('sg-launch-msg'); if(m) m.textContent='';
+}
+// "Run analysis" retrieves the analysis already held for that charity. It
+// cannot start a new scan — that needs the Sales Generator service — so when
+// nothing is found it says exactly that rather than appearing to fail.
+function sgRunAnalysis(){
+  const msg=document.getElementById('sg-launch-msg');
+  const name=(document.getElementById('sg-in-name').value||'').trim();
+  const number=(document.getElementById('sg-in-number').value||'').trim();
+  if(!name && !number){
+    msg.innerHTML='\u26a0 Enter a charity name or number.'; return;
+  }
+  msg.textContent='Looking up\u2026';
+  document.getElementById('sg-t-status').textContent='Searching';
+  fetch('/api/intel/lookup',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({charity_name:name, charity_number:number})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ msg.innerHTML='\u26a0 '+esc(d.error||'Lookup failed'); sgResetTiles(); return; }
+      if(!d.found){
+        document.getElementById('sg-t-status').textContent='Not found';
+        msg.innerHTML='\u26a0 '+esc(d.message)+
+          ' <span style="opacity:.8">Browse the analyses already held below.</span>';
+        return;
+      }
+      document.getElementById('sg-t-number').textContent=d.charity_number||'\u2013';
+      document.getElementById('sg-t-status').textContent=d.status||'complete';
+      msg.innerHTML='\u2713 Found \u2014 opening the Base Camp review for <strong>'+esc(d.charity_name)+'</strong>';
+      sgOpenRun(d.run_id);
+    }).catch(e=>{ msg.innerHTML='\u26a0 '+esc(e.message); sgResetTiles(); });
+}
 function sgOpenRun(runId){
   const body=document.getElementById('sg-body');
+  // The review carries its own header, so the entry panel steps aside.
+  const launch=document.getElementById('sg-launch');
+  if(launch) launch.style.display='none';
   body.innerHTML='<div class="loading-txt" style="padding:20px">Loading…</div>';
   fetch('/api/intel/run/'+runId).then(r=>r.json()).then(d=>{
     if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Not found')+'</div>'; return; }
@@ -10593,7 +10688,7 @@ function sgOpenRun(runId){
 
     body.innerHTML=`
       <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:12px">
-        <button class="btn btn-outline btn-sm" onclick="sgLoadList()">\u2190 All charities</button>
+        <button class="btn btn-outline btn-sm" onclick="sgLoadList()">\u2190 New analysis</button>
         <span style="flex:1"></span>
         ${r.crm?`<button class="btn btn-outline btn-sm" onclick="sgOpenInCrm(${r.crm.id})">Open in CRM</button>`
                :(r.charity_number?`<button class="btn btn-outline btn-sm" onclick="sgAddToCrm('${esc(r.charity_number)}')">Add to CRM</button>`:'')}

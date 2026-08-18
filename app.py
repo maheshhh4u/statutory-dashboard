@@ -1968,6 +1968,47 @@ def api_intel_charities():
         c["crm"] = known.get(c["charity_number"])
     return jsonify({"ok": True, "charities": out, "configured": True})
 
+@app.route("/api/intel/lookup", methods=["POST"])
+def api_intel_lookup():
+    """Finds an existing analysis by charity number or name.
+
+    The Run analysis button can't start a NEW scan \u2014 that needs the Sales
+    Generator service itself. What it can do is find the scan already held for
+    that charity, which is what someone typing a number usually wants. When
+    there's nothing, the response says so plainly rather than failing."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    if not intel_available():
+        return jsonify({"ok": False, "error": "The intelligence database isn't configured."}), 400
+    d = request.json or {}
+    number = re.sub(r"[^0-9]", "", str(d.get("charity_number", "")))
+    name = str(d.get("charity_name", "")).strip()
+
+    row = None
+    if number:
+        row = intel_query("SELECT id, charity_name, charity_number FROM charities WHERE charity_number=?",
+                          (number,))
+    if not row and name:
+        row = intel_query("SELECT id, charity_name, charity_number FROM charities "
+                          "WHERE LOWER(charity_name)=?", (name.lower(),))
+        if not row:
+            row = intel_query("SELECT id, charity_name, charity_number FROM charities "
+                              "WHERE LOWER(charity_name) LIKE ? LIMIT 1", (f"%{name.lower()}%",))
+    if not row:
+        return jsonify({"ok": True, "found": False,
+                        "message": "No analysis has been run for that charity yet. Starting a new scan "
+                                   "needs the Sales Generator service, which isn't connected to this "
+                                   "platform yet."})
+    cid, cname, cnum = row[0][0], row[0][1], row[0][2]
+    runs = intel_query("SELECT id, completed_at, run_status FROM analysis_runs "
+                       "WHERE charity_id=? ORDER BY id DESC LIMIT 1", (cid,))
+    if not runs:
+        return jsonify({"ok": True, "found": False,
+                        "message": f"\u201c{cname}\u201d is in the intelligence database but has no completed analysis."})
+    return jsonify({"ok": True, "found": True, "run_id": runs[0][0],
+                    "charity_name": cname, "charity_number": cnum,
+                    "completed_at": runs[0][1] or "", "status": runs[0][2] or ""})
+
 @app.route("/api/intel/run/<int:run_id>", methods=["GET"])
 def api_intel_run(run_id):
     """Everything from one analysis run: the sales brief, the Mountain scores,
