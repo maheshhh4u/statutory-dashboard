@@ -40,6 +40,13 @@ POLICY_URL = f"{BULK_BASE}/publicextract.charity_policy.zip"
 # ─── Turso DB ─────────────────────────────────────────────────────────────────
 TURSO_URL   = os.environ.get("TURSO_DATABASE_URL", "")
 TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "")
+# Second database: the Sales Generator / intelligence layer. Kept separate on
+# purpose. It grows per analysis run (6,600 feature values from 12 charities
+# alone), the brief treats it as a distinct layer to be called rather than
+# embedded, and mixing it into the CRM database would weld the two together
+# just as the architecture asks for them to stay separable.
+INTEL_URL   = os.environ.get("INTEL_DATABASE_URL", "")
+INTEL_TOKEN = os.environ.get("INTEL_AUTH_TOKEN", "")
 
 # ─── OpenAI (AI pre-call insights) ────────────────────────────────────────────
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -64,6 +71,56 @@ def _new_conn():
     except Exception as e:
         print(f"[Turso] connect failed: {e}")
         return None
+
+def _new_intel_conn():
+    """Client for the intelligence database. Returns None when it isn't
+    configured, so every caller degrades to 'no intelligence available'
+    rather than failing."""
+    if not INTEL_URL or not INTEL_TOKEN:
+        return None
+    try:
+        import libsql_client
+        url = INTEL_URL.replace("libsql://", "https://", 1)
+        return libsql_client.create_client_sync(url=url, auth_token=INTEL_TOKEN)
+    except Exception as e:
+        print(f"[intel] connect failed: {e}")
+        return None
+
+def intel_query(sql, params=()):
+    """Read from the intelligence database. Deliberately read-only from this
+    application: the Sales Generator owns those tables and writes to them.
+    Two systems writing the same rows is how data quietly diverges."""
+    client = _new_intel_conn()
+    if not client:
+        return []
+    try:
+        rs = client.execute(sql, list(params) if params else [])
+        return [tuple(r) for r in rs.rows]
+    except Exception as e:
+        print(f"[intel] query error on '{sql[:60]}': {e}")
+        return []
+    finally:
+        try: client.close()
+        except Exception: pass
+
+def intel_exec(sql, params=()):
+    """Writes, used ONLY by the one-off import. Normal application code should
+    never call this."""
+    client = _new_intel_conn()
+    if not client:
+        return False
+    try:
+        client.execute(sql, list(params) if params else [])
+        return True
+    except Exception as e:
+        print(f"[intel] exec error on '{sql[:60]}': {e}")
+        return False
+    finally:
+        try: client.close()
+        except Exception: pass
+
+def intel_available():
+    return bool(INTEL_URL and INTEL_TOKEN)
 
 def db_init():
     """Create tables if they don't exist."""
@@ -1849,6 +1906,103 @@ def _crm_docs(entity_type, entity_id):
     return [{"id": r[0], "kind": r[1], "title": r[2] or "", "url": r[3] or "",
              "filename": r[4] or "", "mime": r[5] or "", "size_bytes": r[6] or 0,
              "uploaded_by": r[7] or "", "created_at": r[8] or ""} for r in rows]
+
+# ══ Intelligence database import ═══════════════════════════════════════════
+# One-off: loads the Sales Generator SQLite file Nick supplied into the second
+# Turso database. Run once from Settings, then the file can be removed from the
+# repository. Written as an endpoint rather than a script so it runs on the
+# server with the credentials already configured, and so it can be re-run if an
+# updated file arrives.
+INTEL_IMPORT_ORDER = [
+    "charities", "feature_definitions", "diagnostic_definitions",
+    "problem_library_items", "analysis_runs", "feature_values",
+    "diagnostic_results", "score_results", "problem_match_results",
+    "service_recommendation_results", "sales_brief_results",
+]
+INTEL_SOURCE_FILE = "nine_mountains_sales_generator.db"
+
+@app.route("/api/intel/status", methods=["GET"])
+def api_intel_status():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    if not intel_available():
+        return jsonify({"ok": True, "configured": False,
+                        "message": "INTEL_DATABASE_URL and INTEL_AUTH_TOKEN aren't set on the server."})
+    counts, total = {}, 0
+    for t in INTEL_IMPORT_ORDER:
+        r = intel_query(f"SELECT COUNT(*) FROM {t}")
+        n = (r[0][0] if r else 0)
+        counts[t] = n
+        total += n
+    return jsonify({"ok": True, "configured": True, "counts": counts, "total": total,
+                    "source_present": os.path.exists(INTEL_SOURCE_FILE)})
+
+@app.route("/api/intel/import", methods=["POST"])
+def api_intel_import():
+    """Copies the supplied SQLite file into the intelligence database.
+
+    Rows are inserted in batches and in dependency order (definitions before
+    the results that reference them). Existing tables are cleared first, so
+    re-running produces the same result rather than doubling the data."""
+    if not current_user_is_admin():
+        return jsonify({"ok": False, "error": "Administrators only"}), 403
+    if not intel_available():
+        return jsonify({"ok": False, "error":
+                        "The intelligence database isn't configured. Set INTEL_DATABASE_URL and "
+                        "INTEL_AUTH_TOKEN in Render, then redeploy."}), 400
+    path = (request.json or {}).get("path") or INTEL_SOURCE_FILE
+    if not os.path.exists(path):
+        return jsonify({"ok": False, "error":
+                        f"Can't find {path} in the application folder. Commit the .db file to the "
+                        f"repository root and redeploy, then run this again."}), 400
+
+    import sqlite3
+    src = sqlite3.connect(path)
+    src.row_factory = sqlite3.Row
+    client = _new_intel_conn()
+    if not client:
+        return jsonify({"ok": False, "error": "Could not connect to the intelligence database"}), 502
+
+    report, errors = {}, []
+    try:
+        for table in INTEL_IMPORT_ORDER:
+            try:
+                cols = [r[1] for r in src.execute(f"PRAGMA table_info({table})")]
+                if not cols:
+                    report[table] = "not in source file"
+                    continue
+                ddl = src.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                                  (table,)).fetchone()
+                if ddl and ddl[0]:
+                    try: client.execute(ddl[0])
+                    except Exception: pass          # already exists
+                try: client.execute(f"DELETE FROM {table}")
+                except Exception: pass
+                rows = src.execute(f"SELECT {','.join(cols)} FROM {table}").fetchall()
+                marks = ",".join("?" * len(cols))
+                stmt = f"INSERT INTO {table}({','.join(cols)}) VALUES({marks})"
+                # Batched: one statement per row over the network would take
+                # minutes for 6,600 feature values and risk a timeout.
+                batch, done = [], 0
+                for r in rows:
+                    batch.append(tuple(r))
+                    if len(batch) >= 200:
+                        client.batch([(stmt, list(v)) for v in batch]); done += len(batch); batch = []
+                if batch:
+                    client.batch([(stmt, list(v)) for v in batch]); done += len(batch)
+                report[table] = done
+            except Exception as e:
+                errors.append(f"{table}: {str(e)[:140]}")
+                report[table] = "failed"
+    finally:
+        try: src.close()
+        except Exception: pass
+        try: client.close()
+        except Exception: pass
+
+    return jsonify({"ok": not errors, "imported": report, "errors": errors,
+                    "message": ("Import complete." if not errors
+                                else "Import finished with problems — see the details.")})
 
 @app.route("/api/crm/documents", methods=["GET"])
 def api_crm_documents():

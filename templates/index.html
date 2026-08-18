@@ -2171,6 +2171,8 @@ select:focus{outline:none;border-color:var(--green)}
     <div style="display:flex;gap:4px;border-bottom:2px solid var(--s2);margin-bottom:16px">
       <button type="button" class="admin-tab-btn active" id="admin-tab-btn-timezone" onclick="switchAdminTab('timezone')"
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--navy);border-bottom:2px solid var(--navy);margin-bottom:-2px">🌍 Timezone</button>
+      <button type="button" class="admin-tab-btn" id="admin-tab-btn-intel" onclick="switchAdminTab('intel')"
+        style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">&#129504; Intelligence DB</button>
       <button type="button" class="admin-tab-btn" id="admin-tab-btn-email" onclick="switchAdminTab('email')"
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">&#9993; Email</button>
       <button type="button" class="admin-tab-btn" id="admin-tab-btn-aidocs" onclick="switchAdminTab('aidocs')"
@@ -2183,6 +2185,24 @@ select:focus{outline:none;border-color:var(--green)}
         style="background:none;border:none;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;margin-bottom:-2px">📋 Dropdowns</button>
     </div>
 
+    <div id="admin-tab-panel-intel" style="display:none">
+      <p style="font-size:13px;color:var(--t2);margin:0 0 12px">
+        The Sales Generator intelligence lives in its own database, separate from the CRM — it grows with every
+        analysis run and is designed to be called as a layer rather than embedded. This page loads the file
+        supplied by Nick into it, and shows what’s there.
+      </p>
+      <div id="intel-status" style="font-size:12.5px;margin-bottom:12px">Checking…</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-outline btn-sm" onclick="loadIntelStatus()">↻ Refresh</button>
+        <button class="btn btn-green btn-sm" onclick="runIntelImport()">Import from file</button>
+      </div>
+      <div id="intel-result" style="font-size:12.5px;margin-top:11px"></div>
+      <p style="font-size:11.5px;color:var(--t3);margin:12px 0 0;line-height:1.5">
+        Importing clears the tables first and reloads them, so running it twice gives the same result rather than
+        doubling the data. The file must be committed to the repository root as
+        <code>nine_mountains_sales_generator.db</code> — once imported it can be removed from the repository.
+      </p>
+    </div>
     <div id="admin-tab-panel-email" style="display:none">
       <p style="font-size:13px;color:var(--t2);margin:0 0 4px">
         Your own mailbox settings, used to send follow-ups and read replies. <strong>These are private to you</strong> &mdash;
@@ -7524,6 +7544,15 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.65", date:"2026-08", title:"Sales Generator intelligence connected as a second database",
+    changes:[
+      "The platform can now read the Sales Generator\u2019s intelligence \u2014 the signal library, diagnostics, problem library, analysis runs and sales briefs \u2014 from its own Turso database, separate from the CRM.",
+      "Kept separate deliberately. It grows with every analysis run (6,643 feature values from just 12 charities), the architecture brief treats it as a layer to be called rather than embedded, and merging it into the CRM tables would weld the two together exactly where they need to stay separable.",
+      "Access from this application is read-only: the Sales Generator owns those tables and writes to them. Two systems writing the same rows is how data quietly diverges.",
+      "New \ud83e\udde0 Intelligence DB tab in Settings shows what\u2019s connected and how many rows are in each table, and runs the one-off import of the supplied file.",
+      "The import clears and reloads rather than appending, so running it twice gives the same result instead of doubling the data. Rows go over in batches of 200 \u2014 one statement per row would take minutes for 11,500 rows and risk timing out.",
+      "I rehearsed the full import locally first: all 11,496 rows across 11 tables load correctly, and the result is queryable by charity number, which is the same key already joining the CRM to the prospecting side.",
+    ]},
   { v:"2.64", date:"2026-08", title:"Fix: the address book stopped loading again \u2014 same cause as before",
     changes:[
       "My fault, and the second time for the same reason. The edit that added the contact form replaced a wider block than intended and removed the selection code with it \u2014 along with the bulk import functions and the process loader. The list renders a tick box per row that calls one of those functions, so every row threw and nothing appeared.",
@@ -10317,6 +10346,43 @@ function crmDeleteContact(id, orgId){
     body:JSON.stringify({id, action:'delete'})})
     .then(()=>{ if(orgId) crmLoadRecord('org', orgId); }).catch(e=>alert(e.message));
 }
+// ── Intelligence database ──────────────────────────────────────────────────
+function loadIntelStatus(){
+  const box=document.getElementById('intel-status');
+  if(!box) return;
+  box.textContent='Checking\u2026';
+  fetch('/api/intel/status').then(r=>r.json()).then(d=>{
+    if(!d.ok){ box.innerHTML='<span style="color:var(--red)">'+esc(d.error||'Failed')+'</span>'; return; }
+    if(!d.configured){
+      box.innerHTML='<span style="color:var(--orange)">\u26a0 '+esc(d.message)+'</span>';
+      return;
+    }
+    const rows=Object.entries(d.counts||{});
+    box.innerHTML='<div style="margin-bottom:7px">'+
+      (d.total ? '<strong style="color:var(--green)">\u2713 Connected \u2014 '+d.total.toLocaleString()+' rows</strong>'
+               : '<strong style="color:var(--orange)">Connected, but empty \u2014 run the import below</strong>')+
+      (d.source_present ? '' : ' <span style="color:var(--t3)">\u00b7 source file not found in the repository</span>')+
+      '</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:3px 14px">'+
+      rows.map(([t,n])=>`<span style="color:var(--t2)">${esc(t)} <strong>${Number(n).toLocaleString()}</strong></span>`).join('')+
+      '</div>';
+  }).catch(e=>{ box.innerHTML='<span style="color:var(--red)">'+esc(e.message)+'</span>'; });
+}
+function runIntelImport(){
+  const res=document.getElementById('intel-result');
+  if(!confirm('Load the Sales Generator file into the intelligence database?\n\nExisting tables there are cleared and reloaded. This takes a minute or two.')) return;
+  res.innerHTML='Importing\u2026 this reads about 11,500 rows, so give it a minute.';
+  res.style.color='var(--t3)';
+  fetch('/api/intel/import',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({})}).then(r=>r.json()).then(d=>{
+      const lines=Object.entries(d.imported||{}).map(([t,n])=>`${esc(t)}: ${esc(String(n))}`);
+      res.innerHTML=(d.ok?'\u2713 ':'\u26a0 ')+esc(d.message||d.error||'')+
+        (lines.length?'<div style="color:var(--t2);margin-top:6px">'+lines.join('<br>')+'</div>':'')+
+        ((d.errors||[]).length?'<div style="color:var(--red);margin-top:6px">'+d.errors.map(esc).join('<br>')+'</div>':'');
+      res.style.color = d.ok ? 'var(--green)' : 'var(--red)';
+      loadIntelStatus();
+    }).catch(e=>{ res.innerHTML='\u26a0 '+esc(e.message); res.style.color='var(--red)'; });
+}
 // ── Bulk import ────────────────────────────────────────────────────────────
 let _crmImport=null;
 function crmOpenImport(kind){
@@ -11528,7 +11594,7 @@ function loadUsers(){
 }
 
 function switchAdminTab(tab){
-  const tabs=['timezone','email','aidocs','appearance','sql','dropdowns'];
+  const tabs=['timezone','intel','email','aidocs','appearance','sql','dropdowns'];
   tabs.forEach(t=>{
     const panel=document.getElementById('admin-tab-panel-'+t);
     const btn=document.getElementById('admin-tab-btn-'+t);
@@ -11743,6 +11809,7 @@ function openAdmin(){
   loadTimezoneSetting();
   loadThemeSetting();
   loadAiDocs();
+  loadIntelStatus();
   loadEmailSettings();
 }
 function closeAdmin(){document.getElementById('admin-modal').classList.remove('open');}
