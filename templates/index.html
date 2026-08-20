@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>9 Mountains · Prospecting Dashboard</title>
+<title>9 Mountains Platform</title>
 <!-- The browser falls back to the host's own icon when a page declares none,
      which is why Render's logo was showing in the tab. The mark is already in
      /static for the header, so it just needed pointing at. -->
@@ -46,6 +46,18 @@
      from their own x/y/w/h, not from the container's height. --cr-page-h is
      set by crSetPageSize(). */
   #cr-gridstack { height: var(--cr-page-h, 720px) !important; }
+  /* ── Platform hero (launcher) ──────────────────────────────────────────
+     Echoes the site's own hero band: navy ground, gold headline accent, a
+     mountain ridge along the bottom edge separating it from the page below. */
+  .platform-hero{position:relative;overflow:hidden;text-align:center;
+    background:linear-gradient(160deg,var(--navy) 0%,var(--navy-d) 100%);
+    color:#fff;padding:38px 20px 46px;margin:-8px -8px 30px}
+  .platform-hero-mark{height:58px;margin-bottom:14px;filter:brightness(0) invert(1)}
+  .platform-hero h1{margin:0 0 8px;font-size:28px;font-weight:800;letter-spacing:.02em;color:#fff}
+  .platform-hero p{margin:0;font-size:13.5px;color:var(--gold);font-weight:600;letter-spacing:.03em}
+  .platform-hero-ridge{position:absolute;left:0;right:0;bottom:0;height:26px;background:var(--bg);
+    clip-path:polygon(0 100%,7% 38%,14% 68%,22% 22%,31% 60%,40% 30%,50% 66%,
+      60% 24%,69% 58%,78% 20%,87% 62%,94% 34%,100% 100%)}
   /* ── CRM grid ──────────────────────────────────────────────────────────
      Dense, aligned, and quiet: a CRM list is read all day, so row height,
      consistent alignment and a calm header matter more than decoration. */
@@ -216,18 +228,23 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
-  /* 9 Mountains brand colors */
-  --navy:#1e3a5f;       /* primary brand navy from logo */
-  --navy-d:#152a44;     /* darker navy for hover */
-  --navy-l:#2d5683;     /* lighter accent */
-  --navy-pale:#e7edf4;  /* very pale navy tint */
-  --gold:#e8b339;       /* yellow/gold CTA */
-  --gold-d:#c89829;     /* darker gold hover */
-  --gold-l:#fef4d8;     /* pale gold badge */
-  --gold-text:#7a5d10;  /* readable gold text */
+  /* 9 Mountains brand colours, taken directly from the 9mountains.co.uk site
+     rather than the earlier approximation, so the platform and the public
+     site read as one brand. Navy #303654, gold #ebc46a and the warm cream
+     #ede8d6 are the site's actual palette. */
+  --navy:#303654;        /* the site's heading/panel navy */
+  --navy-d:#20243a;      /* darker, for hover states */
+  --navy-l:#748ba7;      /* the site's steel-blue accent */
+  --navy-pale:#edf1f5;   /* the site's pale panel tint */
+  --gold:#ebc46a;        /* the site's CTA gold */
+  --gold-d:#d0ab4f;      /* darker gold hover */
+  --gold-l:#f8edd2;      /* pale gold badge */
+  --gold-text:#7a5d10;   /* readable gold text */
+  --cream:#ede8d6;       /* the site's warm section background */
+  --cream-d:#d0c5a2;     /* the site's cream/border accent */
 
-  --bg:#fafbfc;--surface:#fff;--s2:#f0f3f7;--border:#dde3ec;
-  --text:#1a1d23;--t2:#5a6070;--t3:#9aa0ac;
+  --bg:#f7f8fa;--surface:#fff;--s2:#eef1f5;--border:#dbe1e8;
+  --text:#22263a;--t2:#565c76;--t3:#8992a6;
   --red:#9a1a1a;--redl:#fdecea;
   --orange:#8b4200;--orangel:#fef0e6;
   --purple:#5a1a7a;--purplel:#f3eef8;
@@ -531,7 +548,13 @@ select:focus{outline:none;border-color:var(--green)}
 </head>
 <body>
 <header class="hdr">
-  <div class="hdr-brand"><div class="hdr-logo"><img src="/static/9m-mark.png" alt="9 Mountains"></div><div><div class="hdr-title">Prospecting Dashboard</div><div class="hdr-sub">9 Mountains · Charity Commission Live Data</div></div></div>
+  <div class="hdr-brand" id="hdr-brand" onclick="crGoHome()" title="Back to the platform home" style="cursor:pointer">
+  <div class="hdr-logo"><img src="/static/9m-mark.png" alt="9 Mountains"></div>
+  <div>
+    <div class="hdr-title" id="hdr-title">9 Mountains Platform</div>
+    <div class="hdr-sub" id="hdr-sub">Charity Commission Live Data</div>
+  </div>
+</div>
   <div style="display:flex;align-items:center;gap:10px">
     <div style="display:flex;align-items:center;gap:7px">
       <span style="font-size:11px;color:rgba(255,255,255,.5)">Calling as:</span>
@@ -1169,12 +1192,15 @@ select:focus{outline:none;border-color:var(--green)}
      application, so the platform reads as a set of tools rather than one
      dashboard with extras bolted on. -->
 <section id="tab-launcher" class="section">
-  <div style="max-width:1080px;margin:0 auto;padding:8px 0 30px">
-    <div style="text-align:center;margin-bottom:26px">
-      <img src="/static/9m-mark.png" alt="9 Mountains" style="height:56px;margin-bottom:12px">
-      <h1 style="margin:0 0 6px;font-size:26px;color:var(--navy)">9 Mountains Platform</h1>
-      <p id="launcher-greeting" style="margin:0;font-size:13.5px;color:var(--t2)">Choose an application to get started</p>
-    </div>
+  <!-- Hero styled after the 9mountains.co.uk homepage: navy panel, gold
+       accent, a mountain-ridge silhouette along the bottom edge. -->
+  <div class="platform-hero">
+    <img src="/static/9m-mark.png" alt="9 Mountains" class="platform-hero-mark">
+    <h1>9 Mountains Platform</h1>
+    <p id="launcher-greeting">Choose an application to get started</p>
+    <div class="platform-hero-ridge"></div>
+  </div>
+  <div style="max-width:1080px;margin:0 auto;padding:0 0 30px">
     <div id="launcher-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px">
       <div class="loading-txt" style="padding:20px">Loading&hellip;</div>
     </div>
@@ -7677,6 +7703,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.69", date:"2026-08", title:"Platform retheme to match 9mountains.co.uk, and a header that knows where you are",
+    changes:[
+      "Colours taken directly from the 9 Mountains website rather than the earlier approximation: navy #303654, gold #ebc46a, and the warm cream #ede8d6 used for the launcher cards. Applied through the existing colour variables, so every screen picked it up at once rather than needing individual changes.",
+      "The header used to say \u201cProspecting Dashboard\u201d everywhere, including inside the CRM and Sales Generator \u2014 hardcoded rather than reflecting where you actually were. It now shows the name of whichever module is open, and the browser tab and sign-in page match.",
+      "Clicking the logo or title returns to the platform launcher from anywhere, the way a site logo normally works.",
+      "The launcher hero now has a mountain-ridge silhouette along its bottom edge, echoing the site\u2019s own hero band, and live application cards pick up the gold top border and cream background from the site rather than sitting in a plain white card.",
+      "The sign-in and account pages, previously built with their own hardcoded colours rather than the shared palette, now match the rest of the platform.",
+    ]},
   { v:"2.68", date:"2026-08", title:"Sales Generator opens on the Base Camp entry panel",
     changes:[
       "The module now opens on the entry panel from Nick\u2019s design \u2014 the 9M badge, \u201cBase Camp Review\u201d, the three status tiles down the right, and Charity name / Charity number / Website URL above a Run analysis button, with the mountain ridge behind them.",
@@ -9626,9 +9660,10 @@ function renderLauncher(){
     // Planned apps are shown but not clickable — visible roadmap without
     // implying they work.
     return `<div ${live?`onclick="crSwitchModule('${m.id}')"`:''}
-      style="border:1px solid var(--border);border-radius:10px;padding:18px 18px 16px;background:var(--surface);
+      style="border:1px solid ${live?'var(--cream-d)':'var(--border)'};border-top:3px solid ${live?'var(--gold)':'var(--border)'};
+             border-radius:10px;padding:18px 18px 16px;background:${live?'var(--cream)':'var(--surface)'};
              ${live?'cursor:pointer':'opacity:.62'};transition:box-shadow .15s,transform .15s"
-      ${live?`onmouseover="this.style.boxShadow='0 6px 20px rgba(30,58,95,.13)';this.style.transform='translateY(-2px)'"
+      ${live?`onmouseover="this.style.boxShadow='0 6px 20px rgba(48,54,84,.14)';this.style.transform='translateY(-2px)'"
               onmouseout="this.style.boxShadow='none';this.style.transform='none'"`:''}>
       <div style="display:flex;align-items:center;gap:9px;margin-bottom:7px">
         <span style="font-size:21px">${m.icon}</span>
@@ -9641,7 +9676,29 @@ function renderLauncher(){
     </div>`;
   }).join('');
 }
+// Header identity: "Prospecting Dashboard" used to be hardcoded, so it said
+// the same thing on every module including the CRM and Sales Generator, which
+// is confusing when you've navigated away from prospecting entirely. It now
+// reflects wherever you actually are, and doubles as a Home button — clicking
+// the logo or title returns to the launcher, same as clicking a site logo
+// anywhere else.
+const CR_MODULE_TITLES = {
+  launcher:  ['9 Mountains Platform', 'Charity Commission Live Data'],
+  prospects: ['Prospect Generator', 'Charity Commission Live Data'],
+  crm:       ['CRM', 'Address Book & Opportunities'],
+  admin:     ['Admin Briefing', 'Team Activity & Data Health'],
+  finance:   ['Finance Briefing', 'Pipeline, Invoices & Targets'],
+  sales:     ['Sales Generator', 'Diagnostics & Call Briefs'],
+};
+function crUpdateHeaderIdentity(mod){
+  const [title, sub] = CR_MODULE_TITLES[mod] || CR_MODULE_TITLES.launcher;
+  const t=document.getElementById('hdr-title'), s=document.getElementById('hdr-sub');
+  if(t) t.textContent=title;
+  if(s) s.textContent=sub;
+}
+function crGoHome(){ crSwitchModule('launcher'); }
 function crSwitchModule(mod, initial){
+  crUpdateHeaderIdentity(CR_MODULE_TABS[mod] ? mod : 'launcher');
   if(!CR_MODULE_TABS[mod]) mod='prospects';
   _crModule=mod;
   const sel=document.getElementById('module-switcher');

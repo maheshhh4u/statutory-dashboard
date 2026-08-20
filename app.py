@@ -5851,22 +5851,22 @@ LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8">
 
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
- body{margin:0;font-family:Inter,system-ui,sans-serif;background:#1e3a5f;display:flex;align-items:center;justify-content:center;min-height:100vh}
+ body{margin:0;font-family:Inter,system-ui,sans-serif;background:#303654;display:flex;align-items:center;justify-content:center;min-height:100vh}
  .card{background:#fff;border-radius:12px;padding:30px 32px;width:330px;box-shadow:0 12px 40px rgba(0,0,0,.28)}
- h1{font-size:19px;margin:0 0 4px;color:#1e3a5f}
+ h1{font-size:19px;margin:0 0 4px;color:#303654}
  p.sub{font-size:12.5px;color:#667;margin:0 0 20px}
  label{display:block;font-size:12px;color:#556;margin:12px 0 4px;font-weight:600}
  input[type=text],input[type=password]{width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #d5d9e0;border-radius:6px;font-size:14px}
- input:focus{outline:none;border-color:#1e3a5f}
+ input:focus{outline:none;border-color:#303654}
  .row{display:flex;align-items:center;gap:7px;margin-top:14px;font-size:12.5px;color:#556}
- button{width:100%;margin-top:18px;padding:10px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer}
+ button{width:100%;margin-top:18px;padding:10px;background:#303654;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer}
  button:hover{background:#16304f}
  .err{background:#fdeaea;border:1px solid #f5c2c2;color:#a02c2c;padding:8px 10px;border-radius:6px;font-size:12.5px;margin-bottom:14px}
  .hint{font-size:11.5px;color:#889;margin-top:14px;line-height:1.45}
 </style></head><body>
 <div class="card">
   <h1>9 Mountains</h1>
-  <p class="sub">Prospecting Dashboard</p>
+  <p class="sub">Platform</p>
   {ERROR}
   <form method="post" action="/login">
     <input type="hidden" name="next" value="{NEXT}">
@@ -5998,7 +5998,7 @@ ADMIN_USERS_PAGE = """<!doctype html><html><head><meta charset="utf-8">
  html[data-theme="dark"] code{background:#242932;color:#e6e9ef}
  html[data-theme="dark"]{color-scheme:dark}
  body{margin:0;font-family:Inter,system-ui,sans-serif;background:#f5f6f8;color:#223}
- header{background:#1e3a5f;color:#fff;padding:14px 22px;display:flex;align-items:center;gap:14px}
+ header{background:#303654;color:#fff;padding:14px 22px;display:flex;align-items:center;gap:14px}
  header h1{font-size:16px;margin:0;font-weight:700}
  header a{color:#cfe0f5;font-size:12.5px;text-decoration:none;margin-left:14px}
  header a:first-of-type{margin-left:auto}
@@ -12121,7 +12121,7 @@ RC_TEST_PAGE_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   *{box-sizing:border-box}
-  body{font-family:-apple-system,Segoe UI,Inter,sans-serif;background:#f3f5f8;color:#1e3a5f;margin:0;padding:30px;line-height:1.5}
+  body{font-family:-apple-system,Segoe UI,Inter,sans-serif;background:#f3f5f8;color:#303654;margin:0;padding:30px;line-height:1.5}
   .wrap{max-width:760px;margin:0 auto;background:#fff;border-radius:14px;padding:32px;box-shadow:0 4px 20px rgba(30,58,95,.10)}
   h1{margin:0 0 4px;font-size:24px}
   .sub{color:#7b8896;font-size:13px;margin-bottom:24px}
@@ -12129,20 +12129,20 @@ RC_TEST_PAGE_HTML = """<!DOCTYPE html>
   .status-row.ok{border-color:#2d7a3a;background:#eef9f1}
   .status-row.err{border-color:#c0392b;background:#fdecec}
   .status-row.busy{border-color:#e8b339;background:#fef8e8}
-  .pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:#e0e7ee;color:#1e3a5f;text-transform:uppercase;letter-spacing:.04em}
+  .pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:#e0e7ee;color:#303654;text-transform:uppercase;letter-spacing:.04em}
   .ok .pill{background:#2d7a3a;color:#fff}
   .err .pill{background:#c0392b;color:#fff}
   .busy .pill{background:#e8b339;color:#fff}
   .row{display:flex;gap:10px;margin-bottom:14px}
-  input[type=tel]{flex:1;padding:12px 14px;border:1.5px solid #cfd6df;border-radius:8px;font-size:15px;font-family:inherit;color:#1e3a5f}
-  input[type=tel]:focus{outline:none;border-color:#1e3a5f;box-shadow:0 0 0 3px rgba(232,179,57,.2)}
+  input[type=tel]{flex:1;padding:12px 14px;border:1.5px solid #cfd6df;border-radius:8px;font-size:15px;font-family:inherit;color:#303654}
+  input[type=tel]:focus{outline:none;border-color:#303654;box-shadow:0 0 0 3px rgba(232,179,57,.2)}
   button{padding:12px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .12s}
-  .btn-call{background:#1e3a5f;color:#fff}
+  .btn-call{background:#303654;color:#fff}
   .btn-call:hover:not(:disabled){background:#152a44;transform:translateY(-1px);box-shadow:0 4px 10px rgba(30,58,95,.25)}
   .btn-hang{background:#c0392b;color:#fff}
   .btn-hang:hover:not(:disabled){background:#a02f23}
   button:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none}
-  .timer{font-family:'JetBrains Mono',Consolas,monospace;font-size:32px;text-align:center;color:#1e3a5f;font-weight:700;margin:20px 0;letter-spacing:.04em}
+  .timer{font-family:'JetBrains Mono',Consolas,monospace;font-size:32px;text-align:center;color:#303654;font-weight:700;margin:20px 0;letter-spacing:.04em}
   .log{margin-top:24px;background:#0f1729;color:#a8c5e2;border-radius:8px;padding:14px 18px;height:260px;overflow-y:auto;font-family:'JetBrains Mono',Consolas,monospace;font-size:12px;line-height:1.7}
   .log .l-info{color:#a8c5e2}
   .log .l-warn{color:#e8b339}
@@ -12162,7 +12162,7 @@ RC_TEST_PAGE_HTML = """<!DOCTYPE html>
 
   <div class="row" style="margin-bottom:8px">
     <label for="cidSelect" style="display:flex;align-items:center;font-size:12px;color:#7b8896;font-weight:600;padding-right:10px">Outbound caller ID:</label>
-    <select id="cidSelect" style="flex:1;padding:10px;border:1.5px solid #cfd6df;border-radius:8px;font-size:13px;font-family:inherit;color:#1e3a5f">
+    <select id="cidSelect" style="flex:1;padding:10px;border:1.5px solid #cfd6df;border-radius:8px;font-size:13px;font-family:inherit;color:#303654">
       <option value="default">[Default — let RingCentral pick]</option>
       <option value="freephone">+44 800 208 4749 (company freephone)</option>
       <option value="direct">+44 121 818 4992 (her direct line)</option>
@@ -12631,7 +12631,7 @@ RC_RINGOUT_PAGE_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   *{box-sizing:border-box}
-  body{font-family:-apple-system,Segoe UI,Inter,sans-serif;background:#f3f5f8;color:#1e3a5f;margin:0;padding:30px;line-height:1.5}
+  body{font-family:-apple-system,Segoe UI,Inter,sans-serif;background:#f3f5f8;color:#303654;margin:0;padding:30px;line-height:1.5}
   .wrap{max-width:680px;margin:0 auto;background:#fff;border-radius:14px;padding:32px;box-shadow:0 4px 20px rgba(30,58,95,.10)}
   h1{margin:0 0 4px;font-size:24px}
   .sub{color:#7b8896;font-size:13px;margin-bottom:20px}
@@ -12639,17 +12639,17 @@ RC_RINGOUT_PAGE_HTML = """<!DOCTYPE html>
   .info strong{color:#1d7a3a}
   .row{display:flex;gap:10px;margin-bottom:14px;align-items:center}
   label{font-size:12px;font-weight:700;color:#7b8896;text-transform:uppercase;letter-spacing:.04em;min-width:130px}
-  input[type=tel]{flex:1;padding:12px 14px;border:1.5px solid #cfd6df;border-radius:8px;font-size:15px;font-family:inherit;color:#1e3a5f}
-  input[type=tel]:focus{outline:none;border-color:#1e3a5f;box-shadow:0 0 0 3px rgba(232,179,57,.2)}
+  input[type=tel]{flex:1;padding:12px 14px;border:1.5px solid #cfd6df;border-radius:8px;font-size:15px;font-family:inherit;color:#303654}
+  input[type=tel]:focus{outline:none;border-color:#303654;box-shadow:0 0 0 3px rgba(232,179,57,.2)}
   button{padding:14px 28px;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s}
-  .btn-call{background:#1e3a5f;color:#fff;width:100%;font-size:16px;padding:16px}
+  .btn-call{background:#303654;color:#fff;width:100%;font-size:16px;padding:16px}
   .btn-call:hover:not(:disabled){background:#152a44;box-shadow:0 4px 12px rgba(30,58,95,.30)}
   button:disabled{opacity:.4;cursor:not-allowed}
   .status{margin:18px 0;padding:14px 18px;border-radius:8px;border-left:4px solid #ccc;font-size:14px;background:#f7f9fc}
   .status.ok{border-color:#1d7a3a;background:#eef9f1}
   .status.err{border-color:#c0392b;background:#fdecec}
   .status.busy{border-color:#e8b339;background:#fef8e8}
-  .pill{display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:99px;background:#e0e7ee;color:#1e3a5f;text-transform:uppercase;letter-spacing:.04em;margin-right:8px}
+  .pill{display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:99px;background:#e0e7ee;color:#303654;text-transform:uppercase;letter-spacing:.04em;margin-right:8px}
   .ok .pill{background:#1d7a3a;color:#fff}
   .err .pill{background:#c0392b;color:#fff}
   .busy .pill{background:#e8b339;color:#fff}
