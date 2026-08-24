@@ -2,3 +2,4 @@ venv/
 __pycache__/ 
 *.pyc 
 debug_*.py 
+9M-sales-generator/ 
