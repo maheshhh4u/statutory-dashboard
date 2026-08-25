@@ -1499,7 +1499,7 @@ select:focus{outline:none;border-color:var(--green)}
       <div class="sg-tiles">
         <div class="sg-tile"><div class="k">Charity number</div><div class="v" id="sg-t-number">&ndash;</div></div>
         <div class="sg-tile"><div class="k">Run status</div><div class="v" id="sg-t-status">Ready</div></div>
-        <div class="sg-tile"><div class="k">Scan confidence</div><div class="v" id="sg-t-conf">&ndash;</div></div>
+        <div class="sg-tile" id="sg-t-live-tile"><div class="k">Live scanning</div><div class="v" id="sg-t-live">Checking&hellip;</div></div>
       </div>
     </div>
     <div class="sg-launch-form">
@@ -7703,6 +7703,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.70", date:"2026-08", title:"Sales Generator can run a genuinely fresh analysis",
+    changes:[
+      "Nick's Sales Generator backend arrived as a complete FastAPI application \u2014 its own database, its own authentication, a different web framework entirely from this platform's Flask. It can't be pasted into one file with this one; it has to run as its own service, which is exactly the server-to-server design the architecture brief already called for. This release wires the platform up to call it.",
+      "When the Sales Generator service is configured (SALES_GENERATOR_URL and SALES_GENERATOR_TOKEN), pressing Run analysis starts a genuinely new scan \u2014 the service fetches the charity's website, reads its Charity Commission record and accounts, and scores it \u2014 then shows the result using the exact same Base Camp / Mountain Range / Best Route Up screens already built. When it isn't configured, the button still finds an analysis already held, same as before, and says plainly why a new one can't be started.",
+      "The two sources describe confidence differently \u2014 the imported database holds a 0-1 number, the live service returns a word (High/Moderate/Low) \u2014 and both now display correctly rather than one producing NaN%.",
+      "A new tile on the entry panel shows whether live scanning is connected, checked automatically when the module opens.",
+      "This is genuinely additive: the working mountain-card display, the CRM linking, and everything else built over the last several releases is untouched. The only change to existing rendering is a safe extract-and-reuse, so a live result and a stored result use the identical, already-tested display code.",
+    ]},
   { v:"2.69", date:"2026-08", title:"Platform retheme to match 9mountains.co.uk, and a header that knows where you are",
     changes:[
       "Colours taken directly from the 9 Mountains website rather than the earlier approximation: navy #303654, gold #ebc46a, and the warm cream #ede8d6 used for the launcher cards. Applied through the existing colour variables, so every screen picked it up at once rather than needing individual changes.",
@@ -9728,7 +9736,7 @@ function crSwitchModule(mod, initial){
   switchTab(first, firstBtn||null);
   crUpdateFloatingWidgets();
   if(mod==='crm'){ renderCrmMenubar(); crmReload(); }
-  if(mod==='sales') sgLoadList();
+  if(mod==='sales'){ sgCheckLive(); sgLoadList(); }
   if(mod==='admin') loadAdminBrief();
   if(mod==='finance') loadFinanceBrief();
   if(!initial){
@@ -10591,10 +10599,22 @@ function sgStatus(score, rag){
   if(rag==='Amber'||score<70) return ['watch','Watch'];
   return ['strong','Strong'];
 }
+// Confidence arrives two ways: a 0-1 number from the intelligence database,
+// or a text band ("High"/"Moderate"/"Low") straight from a live analysis.
+// Handled once here so nothing downstream has to know which source it came
+// from.
 function sgConfLabel(c){
-  if(c==null) return '';
+  if(c==null || c==='') return '';
+  if(typeof c==='string') return 'Confidence: '+c;
   const n=Number(c);
+  if(isNaN(n)) return 'Confidence: '+c;
   return 'Confidence: '+(n>=0.8?'High':n>=0.55?'Moderate':'Low')+' ('+Math.round(n*100)+'%)';
+}
+function sgConfCell(c){
+  if(c==null || c==='') return '\u2014';
+  if(typeof c==='string') return c;
+  const n=Number(c);
+  return isNaN(n) ? '\u2014' : Math.round(n*100)+'%';
 }
 let _sgKnown=[];
 
@@ -10634,19 +10654,64 @@ function sgLoadList(){
 }
 function sgResetTiles(){
   const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.textContent=v; };
-  set('sg-t-number','\u2013'); set('sg-t-status','Ready'); set('sg-t-conf','\u2013');
+  set('sg-t-number','\u2013'); set('sg-t-status','Ready');
   const m=document.getElementById('sg-launch-msg'); if(m) m.textContent='';
 }
 // "Run analysis" retrieves the analysis already held for that charity. It
 // cannot start a new scan — that needs the Sales Generator service — so when
 // nothing is found it says exactly that rather than appearing to fail.
+let _sgLiveConfigured=null;
+function sgCheckLive(){
+  return fetch('/api/intel/live_status').then(r=>r.json()).then(d=>{
+    _sgLiveConfigured = d.ok && d.configured;
+    const t=document.getElementById('sg-t-live');
+    if(t) t.textContent = _sgLiveConfigured ? 'Connected' : 'Not connected';
+    return _sgLiveConfigured;
+  }).catch(()=>{ _sgLiveConfigured=false; return false; });
+}
+// When the live Sales Generator service is configured, this runs a genuinely
+// fresh analysis. When it isn't, it falls back to finding an analysis already
+// held — same as before — and says plainly why nothing new can be started.
 function sgRunAnalysis(){
   const msg=document.getElementById('sg-launch-msg');
   const name=(document.getElementById('sg-in-name').value||'').trim();
   const number=(document.getElementById('sg-in-number').value||'').trim();
+  const website=(document.getElementById('sg-in-web').value||'').trim();
   if(!name && !number){
     msg.innerHTML='\u26a0 Enter a charity name or number.'; return;
   }
+  const go=()=>{
+    if(_sgLiveConfigured) sgRunLive(name, number, website, msg);
+    else sgRunLookupOnly(name, number, msg);
+  };
+  if(_sgLiveConfigured===null) sgCheckLive().then(go); else go();
+}
+function sgRunLive(name, number, website, msg){
+  if(!number){ msg.innerHTML='\u26a0 A charity number is needed to run a fresh analysis.'; return; }
+  if(!name){ msg.innerHTML='\u26a0 A charity name is needed to run a fresh analysis.'; return; }
+  document.getElementById('sg-t-status').textContent='Running\u2026';
+  document.getElementById('sg-t-number').textContent=number;
+  msg.innerHTML='Running a fresh analysis \u2014 this reads the website and the Charity Commission record, so it can take up to a minute.';
+  msg.style.color='';
+  fetch('/api/intel/run_live',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({charity_name:name, charity_number:number, website})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){
+        document.getElementById('sg-t-status').textContent='Failed';
+        msg.innerHTML='\u26a0 '+esc(d.error||'The analysis could not be completed.');
+        return;
+      }
+      document.getElementById('sg-t-status').textContent='Complete';
+      msg.innerHTML='\u2713 Analysis complete for <strong>'+esc(d.run.charity_name)+'</strong>';
+      const launch=document.getElementById('sg-launch');
+      if(launch) launch.style.display='none';
+      sgRenderRun(d, d.run.id);
+    }).catch(e=>{
+      document.getElementById('sg-t-status').textContent='Failed';
+      msg.innerHTML='\u26a0 '+esc(e.message);
+    });
+}
+function sgRunLookupOnly(name, number, msg){
   msg.textContent='Looking up\u2026';
   document.getElementById('sg-t-status').textContent='Searching';
   fetch('/api/intel/lookup',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -10673,6 +10738,15 @@ function sgOpenRun(runId){
   body.innerHTML='<div class="loading-txt" style="padding:20px">Loading…</div>';
   fetch('/api/intel/run/'+runId).then(r=>r.json()).then(d=>{
     if(!d.ok){ body.innerHTML='<div class="err-box">'+esc(d.error||'Not found')+'</div>'; return; }
+    sgRenderRun(d, runId);
+  }).catch(e=>{ body.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
+}
+// Split out so a LIVE analysis result (from the Sales Generator service, same
+// JSON shape as the intelligence database) can be rendered with this exact,
+// already-tested code, without a second copy of the mountain-card markup.
+function sgRenderRun(d, runId){
+  const body=document.getElementById('sg-body');
+  {
     const r=d.run, b=r.brief||{};
     const byCode={}; (d.scores||[]).forEach(x=>byCode[x.code]=x);
     const op=byCode['operational_health']||{}, sales=byCode['sales_opportunity']||{}, conf=byCode['scan_confidence']||{};
@@ -10757,7 +10831,7 @@ function sgOpenRun(runId){
         <div class="sg-hero-stats">
           <div class="sg-hero-stat"><div class="v">${op.value==null?'\u2014':Math.round(op.value)}</div><div class="k">Operational health</div></div>
           <div class="sg-hero-stat"><div class="v">${sales.value==null?'\u2014':Math.round(sales.value)}</div><div class="k">Sales opportunity</div></div>
-          <div class="sg-hero-stat"><div class="v">${conf.value==null?'\u2014':Math.round(conf.value)+'%'}</div><div class="k">Scan confidence</div></div>
+          <div class="sg-hero-stat"><div class="v">${conf.value!=null?Math.round(conf.value)+'%':(b.confidence||'\u2014')}</div><div class="k">Scan confidence</div></div>
           <div class="sg-hero-stat"><div class="v">${(d.diagnostics||[]).length}</div><div class="k">Diagnostics triggered</div></div>
         </div>
       </div>
@@ -10777,12 +10851,11 @@ function sgOpenRun(runId){
         <div id="sg-detail" class="crm-tabbody"></div>
       </div>
       <p style="font-size:11.5px;color:var(--t3);margin:0 0 8px">
-        These are the results of an analysis already run. Starting a <em>new</em> scan needs the Sales Generator
-        service itself, which is a separate integration.
+        ${d.live ? 'This is a fresh analysis, just run.' : 'These are the results of an analysis already run.'}
       </p>`;
     _sgRun=d;
     sgDetailTab('diagnostics', runId, null);
-  }).catch(e=>{ body.innerHTML='<div class="err-box">'+esc(e.message)+'</div>'; });
+  }
 }
 function sgDetailTab(tab, runId, btn){
   if(btn){ btn.parentElement.querySelectorAll('button').forEach(x=>x.classList.remove('on')); btn.classList.add('on'); }
@@ -10817,7 +10890,7 @@ function sgDetailTab(tab, runId, btn){
         <td style="padding:5px 9px;border-bottom:1px solid var(--s2)"><strong>${esc(s.label)}</strong></td>
         <td style="padding:5px 9px;border-bottom:1px solid var(--s2)">${s.value==null?'\u2014':Math.round(s.value)}</td>
         <td style="padding:5px 9px;border-bottom:1px solid var(--s2);color:${SG_RAG[s.rag]||'var(--t3)'}">${esc(s.rag||'\u2014')}</td>
-        <td style="padding:5px 9px;border-bottom:1px solid var(--s2)">${s.confidence==null?'\u2014':Math.round(s.confidence*100)+'%'}</td>
+        <td style="padding:5px 9px;border-bottom:1px solid var(--s2)">${sgConfCell(s.confidence)}</td>
         <td style="padding:5px 9px;border-bottom:1px solid var(--s2);color:var(--t2)">${esc(s.summary||'')}</td>
       </tr>`).join('')+'</tbody></table>';
   } else {

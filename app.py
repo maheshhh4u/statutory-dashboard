@@ -47,6 +47,14 @@ TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "")
 # just as the architecture asks for them to stay separable.
 INTEL_URL   = os.environ.get("INTEL_DATABASE_URL", "")
 INTEL_TOKEN = os.environ.get("INTEL_AUTH_TOKEN", "")
+# Live Sales Generator service (Nick's FastAPI app, run as its own deployment).
+# Kept as an HTTP call rather than merged code: it's a different framework
+# (FastAPI/ASGI vs this app's Flask/WSGI) with its own database and its own
+# auth, and the brief already specifies this exact shape — a service to call,
+# not code to absorb.
+SALES_GEN_URL      = os.environ.get("SALES_GENERATOR_URL", "").rstrip("/")
+SALES_GEN_TOKEN    = os.environ.get("SALES_GENERATOR_TOKEN", "")
+SALES_GEN_USERNAME = os.environ.get("SALES_GENERATOR_USERNAME", "9m")
 
 # ─── OpenAI (AI pre-call insights) ────────────────────────────────────────────
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -1967,6 +1975,137 @@ def api_intel_charities():
     for c in out:
         c["crm"] = known.get(c["charity_number"])
     return jsonify({"ok": True, "charities": out, "configured": True})
+
+def sales_gen_available():
+    return bool(SALES_GEN_URL and SALES_GEN_TOKEN)
+
+def _sg_call(method, path, json_body=None, timeout=75):
+    """Calls Nick's Sales Generator service. A generous timeout is deliberate:
+    creating an analysis run is synchronous on that end — it fetches the
+    charity's website, calls the Charity Commission API and reads the accounts
+    PDF before it responds — so a short timeout would abort a request that was
+    genuinely still working, not stuck."""
+    if not sales_gen_available():
+        return False, "The Sales Generator service isn't configured (SALES_GENERATOR_URL / SALES_GENERATOR_TOKEN)."
+    url = f"{SALES_GEN_URL}{path}"
+    try:
+        r = requests.request(method, url, json=json_body, timeout=timeout,
+                             auth=(SALES_GEN_USERNAME, SALES_GEN_TOKEN))
+        if r.status_code >= 400:
+            try: detail = r.json().get("detail", r.text[:200])
+            except Exception: detail = r.text[:200]
+            return False, f"Sales Generator returned {r.status_code}: {detail}"
+        return True, r.json()
+    except requests.exceptions.Timeout:
+        return False, "The Sales Generator didn't respond in time. It may still be working — try again shortly."
+    except requests.exceptions.ConnectionError:
+        return False, "Could not reach the Sales Generator service. Check it's running and the URL is correct."
+    except Exception as e:
+        return False, f"Sales Generator call failed: {str(e)[:150]}"
+
+def _sg_conf_label(c):
+    """Confidence arrives as a float (0-1) from the intelligence database but
+    as a text band ('High'/'Moderate'/'Low') from the live service — the two
+    endpoints genuinely return different shapes for the same idea. Normalised
+    here so the frontend can format one thing consistently rather than needing
+    to know which source it came from."""
+    if c is None:
+        return None
+    if isinstance(c, str):
+        return c
+    try:
+        n = float(c)
+        return "High" if n >= 0.8 else "Moderate" if n >= 0.55 else "Low"
+    except Exception:
+        return str(c)
+
+def _sg_normalize_live_result(run_id, results, diagnostics, matches):
+    """Reshapes the live service's response into exactly the JSON shape
+    /api/intel/run/<id> already returns, so the existing, already-tested
+    mountain-card rendering can display a live analysis without any new
+    frontend code for the common path."""
+    charity = results.get("charity") or {}
+    overall = results.get("overall") or {}
+    brief = results.get("sales_brief") or {}
+    run = {
+        "id": run_id, "charity_id": None, "status": "complete",
+        "outcome": overall.get("run_outcome_status") or "complete",
+        "priority": overall.get("priority_recommendation") or "",
+        "started_at": "", "completed_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "charity_name": charity.get("name") or "", "charity_number": charity.get("charity_number") or "",
+        "website": charity.get("website_url") or "",
+        "brief": {
+            "headline": brief.get("headline_summary") or "",
+            # The live endpoint doesn't return a separate "likely issues"
+            # paragraph the way the imported database does — top_issues is the
+            # closest equivalent, so it's joined into the same field.
+            "issues": "\n".join(results.get("top_issues") or []),
+            "opener": brief.get("recommended_opener") or "",
+            "cautions": brief.get("cautions") or "",
+            "confidence": _sg_conf_label(overall.get("scan_confidence")),
+        },
+    }
+    scores = [{"code": s.get("component_code"), "label": INTEL_COMPONENTS.get(s.get("component_code"), s.get("component_code")),
+              "value": s.get("score"), "rag": s.get("rag") or "",
+              "confidence": _sg_conf_label(s.get("confidence")), "confidence_is_band": True,
+              "summary": s.get("summary") or "",
+              "is_mountain": str(s.get("component_code") or "").startswith("mountain_")}
+             for s in results.get("score_components") or []]
+    diags = [{"code": d.get("diagnostic_code") or "", "name": d.get("name") or "",
+             "category": d.get("category") or "", "severity": d.get("severity"),
+             "confidence": _sg_conf_label(d.get("confidence")), "confidence_is_band": True,
+             "summary": d.get("summary") or "", "headline": False}
+            for d in (diagnostics.get("diagnostics") or []) if d.get("triggered")]
+    problems = [{"title": m.get("problem_title") or "", "area": m.get("service_area") or "",
+                "score": m.get("match_score"), "confidence": _sg_conf_label(m.get("confidence")),
+                "confidence_is_band": True, "explanation": m.get("match_explanation") or ""}
+               for m in (matches.get("problem_matches") or [])]
+    services = [{"area": s, "score": None, "rationale": "", "confidence": None}
+                for s in (results.get("top_services") or [])]
+    return {"ok": True, "run": run, "scores": scores, "diagnostics": diags,
+            "problems": problems, "services": services, "history": [], "live": True}
+
+@app.route("/api/intel/live_status", methods=["GET"])
+def api_sg_live_status():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    return jsonify({"ok": True, "configured": sales_gen_available()})
+
+@app.route("/api/intel/run_live", methods=["POST"])
+def api_sg_run_live():
+    """Starts a genuinely new analysis via the live Sales Generator service."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    if not sales_gen_available():
+        return jsonify({"ok": False, "error":
+                        "The Sales Generator service isn't configured. Set SALES_GENERATOR_URL and "
+                        "SALES_GENERATOR_TOKEN in Render, then redeploy."}), 400
+    d = request.json or {}
+    number = re.sub(r"[^0-9]", "", str(d.get("charity_number", "")))
+    name = str(d.get("charity_name", "")).strip()
+    website = str(d.get("website", "")).strip() or None
+    if not number or not name:
+        return jsonify({"ok": False, "error": "A charity number and name are both needed to start an analysis."}), 400
+
+    u = _auth_get_user(current_user())
+    ok, created = _sg_call("POST", "/api/analysis-runs", {
+        "charity_number": number, "charity_name": name,
+        "website_override": website, "requested_by": _auth_caller_name(u) or current_user(),
+    })
+    if not ok:
+        return jsonify({"ok": False, "error": created}), 502
+    run_id = created.get("analysis_run_id")
+    if not run_id:
+        return jsonify({"ok": False, "error": "The Sales Generator didn't return a run id."}), 502
+
+    ok, results = _sg_call("GET", f"/api/analysis-runs/{run_id}/results")
+    if not ok:
+        return jsonify({"ok": False, "error": f"Analysis completed but results couldn't be read: {results}"}), 502
+    ok2, diagnostics = _sg_call("GET", f"/api/analysis-runs/{run_id}/diagnostics")
+    ok3, matches = _sg_call("GET", f"/api/analysis-runs/{run_id}/problem-matches")
+    payload = _sg_normalize_live_result(run_id, results,
+                                        diagnostics if ok2 else {}, matches if ok3 else {})
+    return jsonify(payload)
 
 @app.route("/api/intel/lookup", methods=["POST"])
 def api_intel_lookup():
