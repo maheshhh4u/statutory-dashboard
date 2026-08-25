@@ -7703,6 +7703,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.71", date:"2026-08", title:"Sales Generator: better diagnostics when a live call fails",
+    changes:[
+      "The error shown for a failed Sales Generator call was cut to 200 characters, which wasn't enough to see what actually went wrong \u2014 as seen with a 422 response that turned out to be an HTML page rather than JSON.",
+      "The full response \u2014 status, content type and up to 1,500 characters \u2014 is now printed to this platform's own Render log for every Sales Generator call, so a failure can be read in full rather than guessed at from a snippet.",
+      "When the Sales Generator returns an error that isn't JSON, the message now says so directly: that usually means the request never reached the Sales Generator application at all, and something in front of it intercepted the request first.",
+    ]},
   { v:"2.70", date:"2026-08", title:"Sales Generator can run a genuinely fresh analysis",
     changes:[
       "Nick's Sales Generator backend arrived as a complete FastAPI application \u2014 its own database, its own authentication, a different web framework entirely from this platform's Flask. It can't be pasted into one file with this one; it has to run as its own service, which is exactly the server-to-server design the architecture brief already called for. This release wires the platform up to call it.",

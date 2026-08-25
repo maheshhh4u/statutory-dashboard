@@ -1991,15 +1991,29 @@ def _sg_call(method, path, json_body=None, timeout=75):
     try:
         r = requests.request(method, url, json=json_body, timeout=timeout,
                              auth=(SALES_GEN_USERNAME, SALES_GEN_TOKEN))
+        ctype = r.headers.get("content-type", "")
+        # Full detail goes to THIS server's own log — 200 characters shown in
+        # the browser is rarely enough to actually diagnose a problem, and
+        # printing here costs nothing.
+        print(f"[sales-gen] {method} {path} -> {r.status_code} ({ctype}) "
+              f"len={len(r.content)}\n{r.text[:1500]}")
         if r.status_code >= 400:
-            try: detail = r.json().get("detail", r.text[:200])
-            except Exception: detail = r.text[:200]
+            if "json" in ctype:
+                try: detail = r.json().get("detail", r.text[:300])
+                except Exception: detail = r.text[:300]
+            else:
+                # Non-JSON on an error status is itself the useful fact — it
+                # usually means the request never reached the application at
+                # all (a platform or proxy page intercepted it first).
+                detail = (f"non-JSON response (content-type: {ctype or 'none'}) — "
+                          f"this usually means the request didn't reach the Sales Generator "
+                          f"application itself. First 300 characters: {r.text[:300]}")
             return False, f"Sales Generator returned {r.status_code}: {detail}"
         return True, r.json()
     except requests.exceptions.Timeout:
         return False, "The Sales Generator didn't respond in time. It may still be working — try again shortly."
-    except requests.exceptions.ConnectionError:
-        return False, "Could not reach the Sales Generator service. Check it's running and the URL is correct."
+    except requests.exceptions.ConnectionError as e:
+        return False, f"Could not reach the Sales Generator service at {url}. Check the URL is correct and the service is running. ({str(e)[:150]})"
     except Exception as e:
         return False, f"Sales Generator call failed: {str(e)[:150]}"
 
