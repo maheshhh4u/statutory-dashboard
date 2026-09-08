@@ -1484,6 +1484,20 @@ select:focus{outline:none;border-color:var(--green)}
   </div>
 </div>
 
+<!-- Control Panel: Nick's own FastAPI app, embedded via iframe rather than
+     rebuilt natively. It already has a complete, working UI — a Command
+     Centre, Marketing Hub, Team Capability directory and weekly AI review —
+     none of which exist anywhere else in the platform. Iframing brings it
+     inside the platform's own header and navigation rather than sending
+     someone to a separate tab, at a fraction of the effort a native rebuild
+     would take. -->
+<section id="tab-controlpanel" class="section" style="padding:0;height:calc(100vh - 140px)">
+  <div id="cp-frame-wrap" style="height:100%;display:flex;flex-direction:column">
+    <div id="cp-status" style="padding:14px 18px;font-size:12.5px;color:var(--t3)">Loading&hellip;</div>
+    <iframe id="cp-iframe" style="display:none;flex:1;width:100%;border:none;background:#fff" title="9M Control Panel"></iframe>
+  </div>
+</section>
+
 <!-- Sales Generator: reads the intelligence database. This shows the results
      of analysis runs; running a NEW scan needs the live Sales Generator
      service, which is a separate integration (see the brief, section 3). -->
@@ -7703,6 +7717,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.74", date:"2026-09", title:"Control Panel added as another application on the platform",
+    changes:[
+      "Nick's Control Panel is now live in the launcher \u2014 the same navigation, same header, same place every other application lives.",
+      "Embedded rather than rebuilt: it's Nick's own working screens shown directly inside the platform's shell, not a native reimplementation. It already has a complete, working Command Centre, Marketing Hub, Team Capability directory and weekly AI review \u2014 none of which exist anywhere else in the platform \u2014 and redoing 1,600 lines of finished, working code natively would have meant a great deal of effort for no real gain over what's already there.",
+      "Configured through CONTROL_PANEL_URL, checked before anything loads, with a clear message if it isn't set rather than a blank panel.",
+      "Worth having on record, since it's a genuine trade-off rather than a free addition: this and the platform's own CRM now hold separate, independently-editable copies of the address book and pipeline. They can drift apart from here. That was a deliberate choice, made knowingly, to bring everything in now and decide what to trim or merge later.",
+    ]},
   { v:"2.73", date:"2026-09", title:"Save a fresh analysis so it doesn't disappear",
     changes:[
       "A live analysis only ever existed in the browser tab that ran it \u2014 refresh, or navigate away, and it was gone. New \ud83d\udcbe Save button on a fresh result writes it into the intelligence database, the same place the historical ones live, so it appears in \u201cAnalyses held\u201d and can be found again by searching that charity from then on.",
@@ -9654,6 +9675,7 @@ function clearRemembered(){
 const CR_MODULE_TABS = {
   launcher:  ['launcher'],
   crm:       ['crm'],
+  controlpanel: ['controlpanel'],
   sales:     ['salesgen'],
   prospects: ['home','calling','prospects','search','new','late','old','milestones'],
   admin:     ['adminbrief'],
@@ -9717,6 +9739,7 @@ const CR_MODULE_TITLES = {
   admin:     ['Admin Briefing', 'Team Activity & Data Health'],
   finance:   ['Finance Briefing', 'Pipeline, Invoices & Targets'],
   sales:     ['Sales Generator', 'Diagnostics & Call Briefs'],
+  controlpanel: ['Control Panel', "Nick's Command Centre"],
 };
 function crUpdateHeaderIdentity(mod){
   const [title, sub] = CR_MODULE_TITLES[mod] || CR_MODULE_TITLES.launcher;
@@ -9756,6 +9779,7 @@ function crSwitchModule(mod, initial){
   switchTab(first, firstBtn||null);
   crUpdateFloatingWidgets();
   if(mod==='crm'){ renderCrmMenubar(); crmReload(); }
+  if(mod==='controlpanel') cpLoad();
   if(mod==='sales'){ sgCheckLive(); sgLoadList(); }
   if(mod==='admin') loadAdminBrief();
   if(mod==='finance') loadFinanceBrief();
@@ -10640,6 +10664,28 @@ let _sgKnown=[];
 
 // Landing view: the entry panel, with the analysed charities listed below it
 // so someone can browse rather than having to know a number.
+// ── Control Panel ──────────────────────────────────────────────────────────
+// Loaded fresh each time the module is opened rather than cached, so an
+// iframe left pointed at a stale session never lingers — and set only once
+// per visit, so switching away and back doesn't reload the whole app inside
+// it unnecessarily.
+let _cpLoaded=false;
+function cpLoad(){
+  if(_cpLoaded) return;
+  const status=document.getElementById('cp-status');
+  const frame=document.getElementById('cp-iframe');
+  fetch('/api/control_panel/status').then(r=>r.json()).then(d=>{
+    if(!d.ok){ status.textContent='\u26a0 '+(d.error||'Could not check status'); return; }
+    if(!d.configured){
+      status.innerHTML='\u26a0 CONTROL_PANEL_URL isn\u2019t set on this platform\u2019s Render service. Add it in Environment, pointing at the Control Panel\u2019s own address, then redeploy.';
+      return;
+    }
+    frame.src=d.url;
+    frame.style.display='block';
+    status.style.display='none';
+    _cpLoaded=true;
+  }).catch(e=>{ status.textContent='\u26a0 '+e.message; });
+}
 function sgLoadList(){
   const body=document.getElementById('sg-body');
   const launch=document.getElementById('sg-launch');

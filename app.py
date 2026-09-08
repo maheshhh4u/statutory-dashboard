@@ -55,6 +55,11 @@ INTEL_TOKEN = os.environ.get("INTEL_AUTH_TOKEN", "")
 SALES_GEN_URL      = os.environ.get("SALES_GENERATOR_URL", "").rstrip("/")
 SALES_GEN_TOKEN    = os.environ.get("SALES_GENERATOR_TOKEN", "")
 SALES_GEN_USERNAME = os.environ.get("SALES_GENERATOR_USERNAME", "9m")
+# Control Panel: Nick's own FastAPI app, with its own complete browser UI.
+# Embedded via iframe rather than rebuilt — it already has a working Command
+# Centre, Marketing Hub and more; re-implementing that natively would mean
+# redoing someone else's finished work for no real gain.
+CONTROL_PANEL_URL = os.environ.get("CONTROL_PANEL_URL", "").rstrip("/")
 
 # ─── OpenAI (AI pre-call insights) ────────────────────────────────────────────
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -818,6 +823,9 @@ CR_MODULES = [
     {"id": "sales", "label": "Sales Generator", "icon": "\U0001F4C8", "status": "live",
      "description": "Charity diagnostics, Mountain scores and call briefs",
      "detail": "Sales briefs \u00b7 Nine Mountain scores \u00b7 Diagnostics \u00b7 Problem matches \u00b7 Service recommendations"},
+    {"id": "controlpanel", "label": "Control Panel", "icon": "\U0001F9ED", "status": "live",
+     "description": "Nick's Command Centre \u2014 pipeline, marketing hub, team capability and weekly AI review",
+     "detail": "Command Centre \u00b7 Marketing Hub \u00b7 Team Capability \u00b7 Weekly AI Review \u00b7 Commercial Goals"},
     {"id": "marketing", "label": "Marketing Generator", "icon": "\U0001F4E3", "status": "planned",
      "description": "Campaign and content support for 9M and clients",
      "detail": "Email campaigns \u00b7 Content planning \u00b7 Social scheduling"},
@@ -2088,6 +2096,12 @@ def _sg_normalize_live_result(run_id, results, diagnostics, matches):
                 for s in (results.get("top_services") or [])]
     return {"ok": True, "run": run, "scores": scores, "diagnostics": diags,
             "problems": problems, "services": services, "history": [], "live": True}
+
+@app.route("/api/control_panel/status", methods=["GET"])
+def api_control_panel_status():
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    return jsonify({"ok": True, "configured": bool(CONTROL_PANEL_URL), "url": CONTROL_PANEL_URL or None})
 
 @app.route("/api/intel/live_status", methods=["GET"])
 def api_sg_live_status():
