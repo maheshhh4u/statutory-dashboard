@@ -7717,6 +7717,11 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.75", date:"2026-09", title:"Control Panel greets the person actually signed in",
+    changes:[
+      "The auto-login fix that removed Control Panel's login screen defaulted the identity to \u201cNick\u201d for everyone, since that matched its own existing default. Now the platform passes through the name of whoever is actually signed in, and Control Panel greets them by it \u2014 provided that name is one it recognises from its own people list; otherwise it falls back to Nick rather than guessing.",
+      "Verified the name-matching directly: correct on an exact match, correct case-insensitively, and correct falling back to Nick for an unrecognised name or a blank value, before this went anywhere near the deployed file.",
+    ]},
   { v:"2.74", date:"2026-09", title:"Control Panel added as another application on the platform",
     changes:[
       "Nick's Control Panel is now live in the launcher \u2014 the same navigation, same header, same place every other application lives.",
@@ -10680,7 +10685,11 @@ function cpLoad(){
       status.innerHTML='\u26a0 CONTROL_PANEL_URL isn\u2019t set on this platform\u2019s Render service. Add it in Environment, pointing at the Control Panel\u2019s own address, then redeploy.';
       return;
     }
-    frame.src=d.url;
+    // Passed as a query param so Control Panel can greet the person actually
+    // signed into the platform, rather than a name hardcoded when its own
+    // login screen was bypassed.
+    const person = currentCaller || '';
+    frame.src = d.url + (person ? '?person=' + encodeURIComponent(person) : '');
     frame.style.display='block';
     status.style.display='none';
     _cpLoaded=true;
