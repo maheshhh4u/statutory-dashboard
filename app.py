@@ -2079,9 +2079,10 @@ def _sg_normalize_live_result(run_id, results, diagnostics, matches):
              "confidence": _sg_conf_label(d.get("confidence")), "confidence_is_band": True,
              "summary": d.get("summary") or "", "headline": False}
             for d in (diagnostics.get("diagnostics") or []) if d.get("triggered")]
-    problems = [{"title": m.get("problem_title") or "", "area": m.get("service_area") or "",
-                "score": m.get("match_score"), "confidence": _sg_conf_label(m.get("confidence")),
-                "confidence_is_band": True, "explanation": m.get("match_explanation") or ""}
+    problems = [{"code": m.get("problem_code") or "", "title": m.get("problem_title") or "",
+                "area": m.get("service_area") or "", "score": m.get("match_score"),
+                "confidence": _sg_conf_label(m.get("confidence")), "confidence_is_band": True,
+                "explanation": m.get("match_explanation") or ""}
                for m in (matches.get("problem_matches") or [])]
     services = [{"area": s, "score": None, "rationale": "", "confidence": None}
                 for s in (results.get("top_services") or [])]
@@ -2097,6 +2098,109 @@ def api_sg_live_status():
     # rather than needing a failed scan and a log dive to notice.
     return jsonify({"ok": True, "configured": sales_gen_available(),
                     "configured_url": SALES_GEN_URL or None})
+
+@app.route("/api/intel/save_live_run", methods=["POST"])
+def api_sg_save_live_run():
+    """Persists a live analysis into the intelligence database, so it survives
+    past the browser tab that ran it.
+
+    Worth being explicit about what this is and isn't: it archives a result
+    the Sales Generator already computed and returned — the same write an
+    import would make, just for one run instead of a whole file — rather than
+    computing anything itself. There is exactly one source of truth for a
+    score (the Sales Generator); this only decides how long a copy of its
+    output is kept.
+
+    Necessary because the Sales Generator's own database is a local file on
+    Render, wiped on every redeploy of that service. Without this, a fresh
+    analysis exists only until the browser tab closes."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    if not intel_available():
+        return jsonify({"ok": False, "error": "The intelligence database isn't configured, so there's nowhere to save this to."}), 400
+    d = request.json or {}
+    run = d.get("run") or {}
+    reg = re.sub(r"[^0-9]", "", str(run.get("charity_number", "")))
+    name = str(run.get("charity_name", "")).strip()
+    if not reg or not name:
+        return jsonify({"ok": False, "error": "Missing charity details — nothing to save."}), 400
+
+    # Reuse the charity row if one already exists (matched by number, the same
+    # key used everywhere else this project joins the two sides together),
+    # rather than creating a duplicate on a second analysis of the same charity.
+    existing = intel_query("SELECT id FROM charities WHERE charity_number=?", (reg,))
+    if existing:
+        cid = existing[0][0]
+    else:
+        intel_exec("INSERT INTO charities(charity_number, charity_name, website_url) VALUES(?,?,?)",
+                   (reg, name, str(run.get("website", ""))[:300]))
+        r2 = intel_query("SELECT id FROM charities WHERE charity_number=?", (reg,))
+        if not r2:
+            return jsonify({"ok": False, "error": "Could not create a charity record to save against."}), 502
+        cid = r2[0][0]
+
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    u = _auth_get_user(current_user())
+    intel_exec("INSERT INTO analysis_runs(charity_id, requested_by, run_status, run_outcome_status, "
+              "priority_recommendation, started_at, completed_at) VALUES(?,?,?,?,?,?,?)",
+              (cid, _auth_caller_name(u) or current_user(), "complete",
+               str(run.get("outcome", "")), str(run.get("priority", "")),
+               str(run.get("completed_at") or now), str(run.get("completed_at") or now)))
+    r3 = intel_query("SELECT id FROM analysis_runs WHERE charity_id=? ORDER BY id DESC LIMIT 1", (cid,))
+    if not r3:
+        return jsonify({"ok": False, "error": "The analysis record could not be created."}), 502
+    run_id = r3[0][0]
+
+    for s in (d.get("scores") or []):
+        intel_exec("INSERT INTO score_results(analysis_run_id, component_code, score_value, rag, confidence, summary) "
+                  "VALUES(?,?,?,?,?,?)",
+                  (run_id, s.get("code"), s.get("value"), s.get("rag"), s.get("confidence"), s.get("summary")))
+
+    for diag in (d.get("diagnostics") or []):
+        code = str(diag.get("code") or "")
+        drow = intel_query("SELECT id FROM diagnostic_definitions WHERE diagnostic_code=?", (code,)) if code else None
+        if drow:
+            did = drow[0][0]
+        else:
+            intel_exec("INSERT INTO diagnostic_definitions(diagnostic_code, diagnostic_name, category, headline_flag) "
+                      "VALUES(?,?,?,?)",
+                      (code, diag.get("name", ""), diag.get("category", ""), 1 if diag.get("headline") else 0))
+            d2 = intel_query("SELECT id FROM diagnostic_definitions WHERE diagnostic_code=?", (code,))
+            did = d2[0][0] if d2 else None
+        if did:
+            intel_exec("INSERT INTO diagnostic_results(analysis_run_id, diagnostic_definition_id, triggered, "
+                      "severity, confidence, result_summary) VALUES(?,?,?,?,?,?)",
+                      (run_id, did, 1, diag.get("severity"), diag.get("confidence"), diag.get("summary")))
+
+    for m in (d.get("problems") or []):
+        # A saved problem match without a code (older payload shape) falls
+        # back to matching on its title, so it still de-duplicates sensibly.
+        code = str(m.get("code") or "") or ("TITLE:" + str(m.get("title", "")))
+        prow = intel_query("SELECT id FROM problem_library_items WHERE problem_code=?", (code,))
+        if prow:
+            pid = prow[0][0]
+        else:
+            intel_exec("INSERT INTO problem_library_items(problem_code, title, area) VALUES(?,?,?)",
+                      (code, m.get("title", ""), m.get("area", "")))
+            p2 = intel_query("SELECT id FROM problem_library_items WHERE problem_code=?", (code,))
+            pid = p2[0][0] if p2 else None
+        if pid:
+            intel_exec("INSERT INTO problem_match_results(analysis_run_id, problem_library_item_id, match_score, "
+                      "confidence, match_explanation) VALUES(?,?,?,?,?)",
+                      (run_id, pid, m.get("score"), m.get("confidence"), m.get("explanation")))
+
+    for sv in (d.get("services") or []):
+        intel_exec("INSERT INTO service_recommendation_results(analysis_run_id, service_area, recommendation_score, "
+                  "rationale, confidence) VALUES(?,?,?,?,?)",
+                  (run_id, sv.get("area"), sv.get("score"), sv.get("rationale"), sv.get("confidence")))
+
+    b = run.get("brief") or {}
+    intel_exec("INSERT INTO sales_brief_results(analysis_run_id, headline_summary, likely_issues_summary, "
+              "recommended_opener, cautions, confidence) VALUES(?,?,?,?,?,?)",
+              (run_id, b.get("headline", ""), b.get("issues", ""), b.get("opener", ""),
+               b.get("cautions", ""), b.get("confidence")))
+
+    return jsonify({"ok": True, "run_id": run_id, "charity_id": cid})
 
 @app.route("/api/intel/run_live", methods=["POST"])
 def api_sg_run_live():

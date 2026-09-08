@@ -7703,6 +7703,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.73", date:"2026-09", title:"Save a fresh analysis so it doesn't disappear",
+    changes:[
+      "A live analysis only ever existed in the browser tab that ran it \u2014 refresh, or navigate away, and it was gone. New \ud83d\udcbe Save button on a fresh result writes it into the intelligence database, the same place the historical ones live, so it appears in \u201cAnalyses held\u201d and can be found again by searching that charity from then on.",
+      "This matters more than it might look: the Sales Generator's own database is a local file on Render, wiped on every redeploy of that service. Saving here is currently the only way a fresh analysis survives past today.",
+      "Saving reuses the existing charity record if one's already held (matched by charity number), rather than creating a duplicate \u2014 verified by rehearsing the exact write logic against a test database before it went anywhere near real data.",
+      "This purely archives a result the Sales Generator already computed and returned \u2014 nothing is recalculated or reinterpreted. There remains exactly one source of truth for a score; this only decides how long a copy of its output is kept.",
+      "The Save button disappears once a result is saved (or was never live to begin with), since there's nothing further to do at that point.",
+    ]},
   { v:"2.72", date:"2026-08", title:"Sales Generator errors now show the actual URL being called",
     changes:[
       "The same GitHub error came back twice, and the reason wasn't visible without digging through Render's tabs \u2014 the message never actually showed which URL had been called. It does now, on every failure.",
@@ -10838,6 +10846,8 @@ function sgRenderRun(d, runId){
       <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:12px">
         <button class="btn btn-outline btn-sm" onclick="sgLoadList()">\u2190 New analysis</button>
         <span style="flex:1"></span>
+        ${d.live ? `<button class="btn btn-green btn-sm" id="sg-save-btn" onclick="sgSaveLiveRun()">\u{1F4BE} Save</button>
+                     <span id="sg-save-msg" style="font-size:12px;color:var(--t3)"></span>` : ''}
         ${r.crm?`<button class="btn btn-outline btn-sm" onclick="sgOpenInCrm(${r.crm.id})">Open in CRM</button>`
                :(r.charity_number?`<button class="btn btn-outline btn-sm" onclick="sgAddToCrm('${esc(r.charity_number)}')">Add to CRM</button>`:'')}
         ${r.website?`<a class="btn btn-outline btn-sm" href="${esc(/^https?:/i.test(r.website)?r.website:'https://'+r.website)}" target="_blank" rel="noopener" style="text-decoration:none">Website</a>`:''}
@@ -10935,6 +10945,30 @@ function sgCopyBrief(runId){
   navigator.clipboard.writeText(lines).then(()=>{
     alert('Brief copied \u2014 paste it into a call note or email.');
   }).catch(()=>alert('Could not copy automatically. Select the text manually.'));
+}
+// Persists a live analysis into the intelligence database, so it survives
+// past this browser tab and appears in "Analyses held" from then on — exactly
+// like a historical run, since after this it genuinely is one.
+function sgSaveLiveRun(){
+  if(!_sgRun || !_sgRun.live) return;
+  const btn=document.getElementById('sg-save-btn');
+  const msg=document.getElementById('sg-save-msg');
+  if(btn){ btn.disabled=true; btn.textContent='Saving\u2026'; }
+  fetch('/api/intel/save_live_run',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(_sgRun)})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){
+        if(btn){ btn.disabled=false; btn.textContent='\u{1F4BE} Save'; }
+        if(msg){ msg.textContent='\u26a0 '+(d.error||'Could not save'); msg.style.color='var(--red)'; }
+        return;
+      }
+      // Reopen the now-permanent copy. This naturally removes the Save
+      // button too, since a record loaded from the database isn't "live".
+      sgOpenRun(d.run_id);
+    }).catch(e=>{
+      if(btn){ btn.disabled=false; btn.textContent='\u{1F4BE} Save'; }
+      if(msg){ msg.textContent='\u26a0 '+e.message; msg.style.color='var(--red)'; }
+    });
 }
 function sgOpenInCrm(orgId){
   crSwitchModule('crm');
