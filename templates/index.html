@@ -7703,6 +7703,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.72", date:"2026-08", title:"Sales Generator errors now show the actual URL being called",
+    changes:[
+      "The same GitHub error came back twice, and the reason wasn't visible without digging through Render's tabs \u2014 the message never actually showed which URL had been called. It does now, on every failure.",
+      "The specific case of SALES_GENERATOR_URL pointing at GitHub instead of the deployed service is now detected directly, with the fix spelled out in the message rather than a generic \u201cnon-JSON response\u201d.",
+      "The Live scanning tile on the entry panel now shows the exact configured URL on hover, so it can be checked at a glance without opening Render at all.",
+    ]},
   { v:"2.71", date:"2026-08", title:"Sales Generator: better diagnostics when a live call fails",
     changes:[
       "The error shown for a failed Sales Generator call was cut to 200 characters, which wasn't enough to see what actually went wrong \u2014 as seen with a 422 response that turned out to be an HTML page rather than JSON.",
@@ -10671,7 +10677,12 @@ function sgCheckLive(){
   return fetch('/api/intel/live_status').then(r=>r.json()).then(d=>{
     _sgLiveConfigured = d.ok && d.configured;
     const t=document.getElementById('sg-t-live');
-    if(t) t.textContent = _sgLiveConfigured ? 'Connected' : 'Not connected';
+    if(t){
+      t.textContent = _sgLiveConfigured ? 'Connected' : 'Not connected';
+      // The configured URL sits in the title, so a mistake (like a GitHub
+      // link) is visible on hover without needing to open Render at all.
+      t.title = d.configured_url ? 'Calling: '+d.configured_url : 'SALES_GENERATOR_URL is not set';
+    }
     return _sgLiveConfigured;
   }).catch(()=>{ _sgLiveConfigured=false; return false; });
 }

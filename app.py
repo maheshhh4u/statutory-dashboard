@@ -1998,24 +1998,33 @@ def _sg_call(method, path, json_body=None, timeout=75):
         print(f"[sales-gen] {method} {path} -> {r.status_code} ({ctype}) "
               f"len={len(r.content)}\n{r.text[:1500]}")
         if r.status_code >= 400:
+            body_lower = r.text[:2000].lower()
+            # This exact failure has recurred verbatim, always because
+            # SALES_GENERATOR_URL pointed at the GitHub repo instead of the
+            # deployed Render service. Named explicitly rather than left as a
+            # generic "non-JSON" message, since that's the one fact that
+            # settles it without digging through Render's tabs.
+            if "github" in body_lower and "json" not in ctype:
+                return False, (f"SALES_GENERATOR_URL is set to {SALES_GEN_URL} — that's a GitHub address, "
+                               f"not the deployed Sales Generator service. Render's service URL looks like "
+                               f"https://nine-mountains-sales-generator.onrender.com (check the exact one on "
+                               f"that service's own page) and needs to replace this value, followed by a "
+                               f"redeploy of the MAIN platform (not the Sales Generator).")
             if "json" in ctype:
                 try: detail = r.json().get("detail", r.text[:300])
                 except Exception: detail = r.text[:300]
             else:
-                # Non-JSON on an error status is itself the useful fact — it
-                # usually means the request never reached the application at
-                # all (a platform or proxy page intercepted it first).
                 detail = (f"non-JSON response (content-type: {ctype or 'none'}) — "
                           f"this usually means the request didn't reach the Sales Generator "
                           f"application itself. First 300 characters: {r.text[:300]}")
-            return False, f"Sales Generator returned {r.status_code}: {detail}"
+            return False, f"Sales Generator returned {r.status_code} calling {url} — {detail}"
         return True, r.json()
     except requests.exceptions.Timeout:
-        return False, "The Sales Generator didn't respond in time. It may still be working — try again shortly."
+        return False, f"The Sales Generator didn't respond in time calling {url}. It may still be working — try again shortly."
     except requests.exceptions.ConnectionError as e:
         return False, f"Could not reach the Sales Generator service at {url}. Check the URL is correct and the service is running. ({str(e)[:150]})"
     except Exception as e:
-        return False, f"Sales Generator call failed: {str(e)[:150]}"
+        return False, f"Sales Generator call failed ({url}): {str(e)[:150]}"
 
 def _sg_conf_label(c):
     """Confidence arrives as a float (0-1) from the intelligence database but
@@ -2083,7 +2092,11 @@ def _sg_normalize_live_result(run_id, results, diagnostics, matches):
 def api_sg_live_status():
     if not current_user():
         return jsonify({"ok": False, "error": "Not signed in"}), 401
-    return jsonify({"ok": True, "configured": sales_gen_available()})
+    # The configured URL is shown outright (never the token) so a mistake like
+    # a GitHub link sitting in SALES_GENERATOR_URL is visible at a glance,
+    # rather than needing a failed scan and a log dive to notice.
+    return jsonify({"ok": True, "configured": sales_gen_available(),
+                    "configured_url": SALES_GEN_URL or None})
 
 @app.route("/api/intel/run_live", methods=["POST"])
 def api_sg_run_live():
