@@ -976,6 +976,13 @@ select:focus{outline:none;border-color:var(--green)}
       <div class="adv-field"><label>Min Expenditure £</label><input type="number" id="adv-exp-min" placeholder="e.g. 100000"></div>
       <div class="adv-field"><label>Max Expenditure £</label><input type="number" id="adv-exp-max" placeholder="e.g. 5000000"></div>
       <div class="adv-field"><label>Location</label><input id="adv-location" placeholder="e.g. London, Manchester, SW1A"></div>
+      <div class="adv-field" style="grid-column:1/-1">
+        <label>What / Cause area <span style="font-weight:400;color:var(--t3)">(matches the charity's own activities description)</span></label>
+        <div style="display:flex;gap:7px">
+          <input id="adv-what" placeholder="e.g. cancer, homelessness, young carers — or ask AI below for a broader match" style="flex:1">
+          <button type="button" class="btn btn-outline btn-sm" onclick="openAiTermsModal()" style="white-space:nowrap">&#10024; Ask AI</button>
+        </div>
+      </div>
       <div class="adv-field"><label>Registered From</label><input type="date" id="adv-date-from"></div>
       <div class="adv-field"><label>Registered To</label><input type="date" id="adv-date-to"></div>
     </div>
@@ -1356,6 +1363,33 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-green btn-sm" onclick="crmSaveContactForm()">Save</button>
     </div>
     <div id="crm-contact-status" style="font-size:12px;margin-top:8px"></div>
+  </div>
+</div>
+
+<!-- AI search-term expansion. Turns a plain-language need into several
+     specific terms to match against a charity's own activities description
+     — the Charity Commission has no "cause area" filter, so this is the
+     closest a keyword search can get without scoring every charity
+     individually (which would mean 200,000+ AI calls per search). -->
+<div class="modal-bg" id="ai-terms-modal">
+  <div class="modal" style="max-width:520px;width:94vw">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <h3 style="margin:0">&#10024; Ask AI for search terms</h3>
+      <span style="flex:1"></span>
+      <span onclick="closeAiTermsModal()" title="Close" style="cursor:pointer;font-size:20px;line-height:1;color:var(--t3);padding:0 4px">&times;</span>
+    </div>
+    <p style="font-size:12.5px;color:var(--t2);margin:0 0 12px">
+      Describe what you're looking for in your own words. AI suggests specific terms likely to appear in a
+      charity's own description of its activities — you'll see them before anything is searched.
+    </p>
+    <textarea id="ai-terms-need" rows="2" placeholder="e.g. charities that support people affected by cancer" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--border);border-radius:6px;font-size:13px"></textarea>
+    <button class="btn btn-outline btn-sm" style="margin-top:9px" onclick="suggestAiTerms()">Suggest terms</button>
+    <div id="ai-terms-status" style="font-size:12px;margin-top:8px"></div>
+    <div id="ai-terms-list" style="margin-top:10px"></div>
+    <div class="modal-btns">
+      <button class="btn btn-outline btn-sm" onclick="closeAiTermsModal()">Cancel</button>
+      <button class="btn btn-green btn-sm" id="ai-terms-insert-btn" onclick="insertAiTerms()" style="display:none">Use selected terms</button>
+    </div>
   </div>
 </div>
 
@@ -7717,6 +7751,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.76", date:"2026-09", title:"AI-assisted search for charities by cause \u2014 \u201ccancer\u201d and beyond",
+    changes:[
+      "New \u201cWhat / Cause area\u201d field in Advanced Search, matching against a charity's own description of its activities \u2014 the Charity Commission has no structured \u201ccause\u201d filter, so this is the closest a search can get to \u201ccancer charities\u201d or \u201csupports young carers\u201d.",
+      "Typing one word works as a plain search. Next to it, \u2728 Ask AI takes a plain-language description and suggests several specific, related terms \u2014 for \u201ccancer\u201d that might include oncology, tumour/tumor, chemotherapy, leukaemia/leukemia \u2014 shown for review with each one untickable before anything is searched.",
+      "Deliberately one AI call per search, not one per charity: with 200,000+ charities in the bulk file, scoring each individually would be far too slow and costly. AI's only job is expanding the request into better terms; the same fast, memory-bounded search already used everywhere else does the actual filtering, matching if a charity's description contains ANY of the selected terms in a single pass.",
+      "The field behaves exactly like every other Advanced Search filter \u2014 it saves and reloads with saved searches, and clears with Clear Filters, rather than being a bolt-on that only half-works.",
+      "The results summary now states which terms were actually matched, so it's clear afterwards what a search actually searched for.",
+    ]},
   { v:"2.75", date:"2026-09", title:"Control Panel greets the person actually signed in",
     changes:[
       "The auto-login fix that removed Control Panel's login screen defaulted the identity to \u201cNick\u201d for everyone, since that matched its own existing default. Now the platform passes through the name of whoever is actually signed in, and Control Panel greets them by it \u2014 provided that name is one it recognises from its own people list; otherwise it falls back to Nick rather than guessing.",
@@ -9188,12 +9230,51 @@ function doSimple(){
   showSL();
   fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(data=>{sAll=data;renderSR(data,1);}).catch(e=>showSE(e.message));
 }
+// ── AI search-term expansion ───────────────────────────────────────────────
+let _aiTerms=[];
+function openAiTermsModal(){
+  document.getElementById('ai-terms-need').value='';
+  document.getElementById('ai-terms-status').textContent='';
+  document.getElementById('ai-terms-list').innerHTML='';
+  document.getElementById('ai-terms-insert-btn').style.display='none';
+  _aiTerms=[];
+  document.getElementById('ai-terms-modal').classList.add('open');
+}
+function closeAiTermsModal(){ document.getElementById('ai-terms-modal').classList.remove('open'); }
+function suggestAiTerms(){
+  const need=(document.getElementById('ai-terms-need').value||'').trim();
+  const status=document.getElementById('ai-terms-status');
+  if(!need){ status.textContent='\u26a0 Describe what you\u2019re looking for first.'; status.style.color='var(--red)'; return; }
+  status.textContent='Thinking\u2026'; status.style.color='var(--t3)';
+  document.getElementById('ai-terms-list').innerHTML='';
+  document.getElementById('ai-terms-insert-btn').style.display='none';
+  fetch('/api/ai/expand_search_terms',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({need})}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ status.textContent='\u26a0 '+esc(d.error||'Could not get suggestions'); status.style.color='var(--red)'; return; }
+      _aiTerms=d.terms||[];
+      status.textContent='Untick anything that doesn\u2019t look right, then use the selected terms.';
+      status.style.color='var(--t2)';
+      document.getElementById('ai-terms-list').innerHTML=_aiTerms.map((t,i)=>
+        `<label style="display:flex;align-items:center;gap:7px;padding:4px 0;font-size:13px">
+          <input type="checkbox" class="ai-term-chk" data-i="${i}" checked> ${esc(t)}</label>`).join('');
+      document.getElementById('ai-terms-insert-btn').style.display='';
+    }).catch(e=>{ status.textContent='\u26a0 '+esc(e.message); status.style.color='var(--red)'; });
+}
+function insertAiTerms(){
+  const chosen=Array.from(document.querySelectorAll('.ai-term-chk:checked')).map(c=>_aiTerms[parseInt(c.dataset.i,10)]);
+  if(!chosen.length){ document.getElementById('ai-terms-status').textContent='\u26a0 Select at least one term.'; return; }
+  // Pipe-separated: the backend matches a charity if its activities
+  // description contains ANY of these, in one pass over the bulk file
+  // rather than one search per term.
+  document.getElementById('adv-what').value=chosen.join('|');
+  closeAiTermsModal();
+}
 function doAdv(){
   const areas=areaPickerGetValues('advsearch');
   const whatSel=areaPickerGetValues('advsearch_what');
   const whoSel=areaPickerGetValues('advsearch_who');
   const howSel=areaPickerGetValues('advsearch_how');
-  const p=new URLSearchParams({name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),location:v('adv-location'),area_of_operation:areas.join(','),what_class:whatSel.join(','),who_class:whoSel.join(','),how_class:howSel.join(','),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),exp_min:v('adv-exp-min'),exp_max:v('adv-exp-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to'),limit:'50000'});
+  const p=new URLSearchParams({name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),location:v('adv-location'),area_of_operation:areas.join(','),what_class:whatSel.join(','),who_class:whoSel.join(','),how_class:howSel.join(','),what:v('adv-what'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),exp_min:v('adv-exp-min'),exp_max:v('adv-exp-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to'),limit:'50000'});
   console.log('[Advanced Search] full request URL:', '/api/advanced_search?'+p.toString());
   showSL();
   fetch('/api/advanced_search?'+p).then(r=>r.json()).then(d=>{
@@ -9203,6 +9284,8 @@ function doAdv(){
     const filterParts=[];
     if(areas.length) filterParts.push(`Area of Operation: <b>${areas.map(a=>esc(a)).join(', ')}</b>`);
     if(whatSel.length) filterParts.push(`What it does: <b>${whatSel.map(a=>esc(a)).join(', ')}</b>`);
+    const whatTerms=v('adv-what');
+    if(whatTerms) filterParts.push(`Activities match: <b>${whatTerms.split('|').map(t=>esc(t.trim())).join(' or ')}</b>`);
     if(whoSel.length) filterParts.push(`Who it helps: <b>${whoSel.map(a=>esc(a)).join(', ')}</b>`);
     if(howSel.length) filterParts.push(`How it helps: <b>${howSel.map(a=>esc(a)).join(', ')}</b>`);
     if(filterParts.length){
@@ -9265,7 +9348,7 @@ function renderSR(data,pg){
 }
 function sortS(col){const s=srt.s;s.d=(s.c===col)?-s.d:1;s.c=col;renderSR(sAll,1);}
 function clearSearch(){document.getElementById('search-q').value='';document.getElementById('s-results').style.display='none';document.getElementById('s-empty').style.display='block';sAll=[];}
-function clearAdv(){['adv-name','adv-reg','adv-postcode','adv-location','adv-inc-min','adv-inc-max','adv-exp-min','adv-exp-max','adv-date-from','adv-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('adv-status').value='registered';document.getElementById('adv-type').value='';areaPickerClear('advsearch');areaPickerClear('advsearch_what');areaPickerClear('advsearch_who');areaPickerClear('advsearch_how');}
+function clearAdv(){['adv-name','adv-reg','adv-postcode','adv-location','adv-what','adv-inc-min','adv-inc-max','adv-exp-min','adv-exp-max','adv-date-from','adv-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('adv-status').value='registered';document.getElementById('adv-type').value='';areaPickerClear('advsearch');areaPickerClear('advsearch_what');areaPickerClear('advsearch_who');areaPickerClear('advsearch_how');}
 function dlSearch(btn){
   if(!sAll.length)return;
   const regs=sAll.map(c=>c.reg_number);
@@ -9305,7 +9388,7 @@ function openSaveModal(){document.getElementById('save-modal').classList.add('op
 function closeSave(){document.getElementById('save-modal').classList.remove('open');}
 function confirmSave(){
   const name=document.getElementById('save-name').value.trim();if(!name)return;
-  const criteria={name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),location:v('adv-location'),area_of_operation:areaPickerGetValues('advsearch'),what_class:areaPickerGetValues('advsearch_what'),who_class:areaPickerGetValues('advsearch_who'),how_class:areaPickerGetValues('advsearch_how'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),exp_min:v('adv-exp-min'),exp_max:v('adv-exp-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to')};
+  const criteria={name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),location:v('adv-location'),area_of_operation:areaPickerGetValues('advsearch'),what_class:areaPickerGetValues('advsearch_what'),who_class:areaPickerGetValues('advsearch_who'),how_class:areaPickerGetValues('advsearch_how'),what:v('adv-what'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),exp_min:v('adv-exp-min'),exp_max:v('adv-exp-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to')};
   ss[name]=criteria;
   fetch('/api/saved_searches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,criteria})});
   closeSave();document.getElementById('save-name').value='';loadSavedList();
@@ -9321,7 +9404,7 @@ function loadSaved(){
   const name=document.getElementById('saved-sel').value;if(!name)return;
   fetch('/api/saved_searches/'+encodeURIComponent(name)).then(r=>r.json()).then(c=>{
     setMode('advanced');
-    const fm={'adv-name':'name','adv-reg':'reg_number','adv-postcode':'postcode','adv-location':'location','adv-status':'reg_status','adv-type':'charity_type','adv-inc-min':'inc_min','adv-inc-max':'inc_max','adv-exp-min':'exp_min','adv-exp-max':'exp_max','adv-date-from':'reg_date_from','adv-date-to':'reg_date_to'};
+    const fm={'adv-name':'name','adv-reg':'reg_number','adv-postcode':'postcode','adv-location':'location','adv-what':'what','adv-status':'reg_status','adv-type':'charity_type','adv-inc-min':'inc_min','adv-inc-max':'inc_max','adv-exp-min':'exp_min','adv-exp-max':'exp_max','adv-date-from':'reg_date_from','adv-date-to':'reg_date_to'};
     Object.entries(fm).forEach(([id,key])=>{const el=document.getElementById(id);if(el&&c[key])el.value=c[key];});
     areaPickerInit('advsearch', Array.isArray(c.area_of_operation)?c.area_of_operation:[]);
     areaPickerInit('advsearch_what', Array.isArray(c.what_class)?c.what_class:[]);

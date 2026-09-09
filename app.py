@@ -4231,7 +4231,11 @@ def _run_advanced_search(criteria, limit=50000):
     how_names=criteria.get("how_class") or []
     if isinstance(how_names, str): how_names=[a.strip() for a in how_names.split(",") if a.strip()]
     how_class_regs = _get_regs_for_classification("how", how_names) if how_names else None
-    wq=str(criteria.get("what","")).upper().strip()
+    # A single term ("cancer") stays exactly as before. Several terms
+    # separated by "|" (as the AI-assisted search sends, e.g.
+    # "cancer|oncology|tumour|chemotherapy") match on ANY of them — built for
+    # the AI term-expansion feature, but usable directly too.
+    wq_terms=[t.strip() for t in str(criteria.get("what","")).upper().split("|") if t.strip()]
     lq=str(criteria.get("location","")).upper().strip()
     sq=str(criteria.get("reg_status","registered")).strip()
     imin=flt(criteria.get("inc_min","")); imax=flt(criteria.get("inc_max","")) or float("inf")
@@ -4267,7 +4271,7 @@ def _run_advanced_search(criteria, limit=50000):
         county=row.get("charity_contact_address4","").upper()
         if cq and cq not in county: continue
         what=row.get("charity_activities","").upper()
-        if wq and wq not in what: continue
+        if wq_terms and not any(t in what for t in wq_terms): continue
         if lq:
             addr_blob = " ".join([row.get("charity_contact_address1",""), row.get("charity_contact_address2",""),
                                    row.get("charity_contact_address3",""), row.get("charity_contact_address4",""),
@@ -4302,6 +4306,66 @@ def _run_advanced_search(criteria, limit=50000):
             truncated=True
             break
     return results, truncated
+
+@app.route("/api/ai/expand_search_terms", methods=["POST"])
+def api_ai_expand_search_terms():
+    """Turns a plain-language need ("cancer charities", "supports young
+    carers") into several specific terms likely to appear in a charity's own
+    activities description — the field Advanced Search's "What" filter
+    already matches against.
+
+    Deliberately ONE OpenAI call, not one per charity: with 200,000+
+    charities in the bulk file, scoring each individually would be far too
+    slow and expensive. The AI's only job is expanding the request into
+    better search terms; the existing, fast, memory-bounded search then does
+    the actual filtering, exactly as it already does for a manually-typed
+    term."""
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False,
+            "error": "AI is not configured. Add the OPENAI_API_KEY environment variable in Render."}), 400
+    data = request.json or {}
+    need = str(data.get("need", "")).strip()[:300]
+    if not need:
+        return jsonify({"ok": False, "error": "Describe what you're looking for first."}), 400
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={"model": OPENAI_MODEL, "messages": [
+                {"role": "system", "content":
+                 "A user is searching UK charities by matching short terms against each charity's own "
+                 "plain-text description of its activities (typically one or two sentences, written by the "
+                 "charity itself for the Charity Commission). Given what the user is looking for, reply with "
+                 "4-7 short, specific terms or phrases likely to appear literally in such a description — "
+                 "include the obvious term, close synonyms, and standard medical/technical variants where "
+                 "relevant (e.g. both 'tumour' and 'tumor', both a disease name and its common short form). "
+                 "Avoid vague or overly broad terms that would match unrelated charities. Reply with ONLY a "
+                 "JSON array of strings, nothing else — no explanation, no markdown, no code fences."},
+                {"role": "user", "content": need},
+            ], "temperature": 0.3, "max_tokens": 150},
+            timeout=20)
+        if resp.status_code != 200:
+            return jsonify({"ok": False, "error": f"OpenAI error {resp.status_code}: {resp.text[:200]}"}), 502
+        out = resp.json()
+        content = (out.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
+        try:
+            terms = json.loads(content)
+        except Exception:
+            return jsonify({"ok": False, "error": "AI returned something that wasn't a clean list — try rephrasing."}), 502
+        if not isinstance(terms, list):
+            return jsonify({"ok": False, "error": "Unexpected response shape from AI."}), 502
+        # Capped and cleaned defensively — this text ends up in a URL query
+        # string next, so it shouldn't contain anything untrusted-looking.
+        terms = [str(t).strip() for t in terms if str(t).strip()][:8]
+        terms = [t for t in terms if len(t) <= 60]
+        if not terms:
+            return jsonify({"ok": False, "error": "AI didn't return any usable terms — try rephrasing."}), 502
+        return jsonify({"ok": True, "terms": terms})
+    except requests.exceptions.Timeout:
+        return jsonify({"ok": False, "error": "AI took too long to respond. Try again."}), 504
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"AI request failed: {str(e)[:200]}"}), 500
 
 @app.route("/api/advanced_search")
 def advanced_search():
