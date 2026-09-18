@@ -60,6 +60,10 @@ SALES_GEN_USERNAME = os.environ.get("SALES_GENERATOR_USERNAME", "9m")
 # Centre, Marketing Hub and more; re-implementing that natively would mean
 # redoing someone else's finished work for no real gain.
 CONTROL_PANEL_URL = os.environ.get("CONTROL_PANEL_URL", "").rstrip("/")
+# Server-side only — never sent to the browser. The platform, not Control
+# Panel's own login, decides who may use its admin actions; this is what
+# lets the platform make that one authenticated call on an admin's behalf.
+CONTROL_PANEL_ADMIN_CODE = os.environ.get("CONTROL_PANEL_ADMIN_CODE", "")
 
 # ─── OpenAI (AI pre-call insights) ────────────────────────────────────────────
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -2101,7 +2105,39 @@ def _sg_normalize_live_result(run_id, results, diagnostics, matches):
 def api_control_panel_status():
     if not current_user():
         return jsonify({"ok": False, "error": "Not signed in"}), 401
-    return jsonify({"ok": True, "configured": bool(CONTROL_PANEL_URL), "url": CONTROL_PANEL_URL or None})
+    return jsonify({"ok": True, "configured": bool(CONTROL_PANEL_URL), "url": CONTROL_PANEL_URL or None,
+                    "is_admin": current_user_is_admin()})
+
+@app.route("/api/control_panel/set_quarterly_target", methods=["POST"])
+def api_control_panel_set_quarterly_target():
+    """Broker for Control Panel's admin-only quarterly-target write. Control
+    Panel never sees CONTROL_PANEL_ADMIN_CODE — this checks the platform's
+    own session-based admin status and, only if that's genuinely true, makes
+    the authenticated call to Control Panel itself using a secret this
+    endpoint alone holds. The result is that "admin in the platform" is what
+    actually grants the ability to change this, not a code typed into
+    Control Panel's own, now-bypassed login."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    if not current_user_is_admin():
+        return jsonify({"ok": False, "error": "Administrators only."}), 403
+    if not CONTROL_PANEL_URL or not CONTROL_PANEL_ADMIN_CODE:
+        return jsonify({"ok": False, "error":
+                        "CONTROL_PANEL_ADMIN_CODE isn't set on this platform's Render service."}), 400
+    try:
+        value = float((request.json or {}).get("value"))
+    except Exception:
+        return jsonify({"ok": False, "error": "Enter a number."}), 400
+    try:
+        r = requests.post(f"{CONTROL_PANEL_URL}/admin/set_quarterly_target",
+                          json={"value": value, "admin_code": CONTROL_PANEL_ADMIN_CODE}, timeout=20)
+        if r.status_code != 200:
+            try: detail = r.json().get("detail", r.text[:200])
+            except Exception: detail = r.text[:200]
+            return jsonify({"ok": False, "error": f"Control Panel returned {r.status_code}: {detail}"}), 502
+        return jsonify(r.json())
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Could not reach Control Panel: {str(e)[:150]}"}), 502
 
 @app.route("/api/intel/live_status", methods=["GET"])
 def api_sg_live_status():

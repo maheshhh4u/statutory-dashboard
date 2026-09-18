@@ -7751,6 +7751,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.77", date:"2026-09", title:"Control Panel's admin actions now follow platform admin status, not a separate code",
+    changes:[
+      "Editing the quarterly target asked for a Control Panel-specific admin code \u2014 a second credential, disconnected from who's actually signed into the platform. An admin on the platform can now save it directly with no code at all; someone who isn't is told plainly to ask one, rather than being shown a password box for a password they were never going to have.",
+      "Done properly rather than just hidden: Control Panel asks its parent window to make the change on its behalf, the platform checks the signed-in user's real, session-based admin status, and only then makes the actual authenticated call using a secret Control Panel itself never receives. A URL flag alone was deliberately not trusted for this \u2014 anyone could add ?is_admin=1 to the address by hand, so the real permission check happens server-side, at the moment of the write, not by taking the iframe's word for it.",
+      "Verified the origin-checking logic directly \u2014 a genuine message from Control Panel is accepted, a spoofed one from elsewhere is rejected, and a similar-looking but different domain (a classic trick) is correctly rejected too \u2014 before this went anywhere near the deployed files.",
+      "Control Panel opened directly, outside the platform, still works exactly as it did \u2014 the original code-based path is untouched for that case.",
+    ]},
   { v:"2.76", date:"2026-09", title:"AI-assisted search for charities by cause \u2014 \u201ccancer\u201d and beyond",
     changes:[
       "New \u201cWhat / Cause area\u201d field in Advanced Search, matching against a charity's own description of its activities \u2014 the Charity Commission has no structured \u201ccause\u201d filter, so this is the closest a search can get to \u201ccancer charities\u201d or \u201csupports young carers\u201d.",
@@ -10757,7 +10764,7 @@ let _sgKnown=[];
 // iframe left pointed at a stale session never lingers — and set only once
 // per visit, so switching away and back doesn't reload the whole app inside
 // it unnecessarily.
-let _cpLoaded=false;
+let _cpLoaded=false, _cpOrigin='';
 function cpLoad(){
   if(_cpLoaded) return;
   const status=document.getElementById('cp-status');
@@ -10768,16 +10775,47 @@ function cpLoad(){
       status.innerHTML='\u26a0 CONTROL_PANEL_URL isn\u2019t set on this platform\u2019s Render service. Add it in Environment, pointing at the Control Panel\u2019s own address, then redeploy.';
       return;
     }
-    // Passed as a query param so Control Panel can greet the person actually
+    // Passed as query params so Control Panel can greet the person actually
     // signed into the platform, rather than a name hardcoded when its own
-    // login screen was bypassed.
+    // login screen was bypassed. is_admin is shown-in-the-UI-only — it
+    // decides whether Control Panel offers the Save button at all, but
+    // carries no real authority: the actual write still has to pass through
+    // cpHandleMessage below, which checks admin status on the platform's own
+    // session, not on anything passed through this URL.
     const person = currentCaller || '';
-    frame.src = d.url + (person ? '?person=' + encodeURIComponent(person) : '');
+    _cpOrigin = new URL(d.url).origin;
+    const params = new URLSearchParams();
+    if(person) params.set('person', person);
+    if(d.is_admin) params.set('is_admin', '1');
+    frame.src = d.url + (params.toString() ? '?' + params.toString() : '');
     frame.style.display='block';
     status.style.display='none';
     _cpLoaded=true;
   }).catch(e=>{ status.textContent='\u26a0 '+e.message; });
 }
+// Control Panel asks its parent (this page) to make privileged calls on its
+// behalf, rather than needing its own separately-typed admin code. The
+// origin check is the actual security boundary here — without it, any page
+// anywhere could send a message claiming to be Control Panel.
+window.addEventListener('message', function(ev){
+  if(!_cpOrigin || ev.origin !== _cpOrigin) return;
+  const msg=ev.data || {};
+  if(msg.type !== 'cp_set_quarterly_target') return;
+  fetch('/api/control_panel/set_quarterly_target',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({value:msg.value})}).then(r=>r.json()).then(d=>{
+      const frame=document.getElementById('cp-iframe');
+      if(frame && frame.contentWindow){
+        frame.contentWindow.postMessage({type:'cp_set_quarterly_target_result', reqId:msg.reqId,
+          ok:d.ok, error:d.error, quarterly_target:d.quarterly_target}, _cpOrigin);
+      }
+    }).catch(e=>{
+      const frame=document.getElementById('cp-iframe');
+      if(frame && frame.contentWindow){
+        frame.contentWindow.postMessage({type:'cp_set_quarterly_target_result', reqId:msg.reqId,
+          ok:false, error:e.message}, _cpOrigin);
+      }
+    });
+});
 function sgLoadList(){
   const body=document.getElementById('sg-body');
   const launch=document.getElementById('sg-launch');
