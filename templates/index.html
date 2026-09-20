@@ -7751,6 +7751,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.78", date:"2026-09", title:"Home page becomes a live dashboard, not a menu with descriptions",
+    changes:[
+      "Per Judi's brief for an \u201cimmediate view of the key health and performance indicators of the business\u201d: each application card on the home page now shows real, live numbers instead of static description text \u2014 calls made today, organisations and pipeline value in the CRM, meetings and outstanding invoices, charities analysed, and quarterly target progress with a bar.",
+      "Every figure is read from what already exists \u2014 nothing new was computed specially for this. The Control Panel figure alone reaches out to that separate service (it's the one place the number doesn't already live in this platform's own database), and if that one call is slow or fails, only that card shows unavailable rather than the fix holding up the rest of the page.",
+      "Cards render immediately; the numbers fill in a beat later once fetched, so opening the home page never waits on the slowest figure to show anything at all.",
+      "Verified the quarterly-target percentage directly before shipping: a normal in-progress case, a target already exceeded (clamped at 100%, not shown as some odd number over), and a zero target (shows unavailable rather than a divide-by-zero) all come out correctly.",
+    ]},
   { v:"2.77", date:"2026-09", title:"Control Panel's admin actions now follow platform admin status, not a separate code",
     changes:[
       "Editing the quarterly target asked for a Control Panel-specific admin code \u2014 a second credential, disconnected from who's actually signed into the platform. An admin on the platform can now save it directly with no code at all; someone who isn't is told plainly to ask one, rather than being shown a password box for a password they were never going to have.",
@@ -9815,11 +9822,66 @@ function renderLauncher(){
         <span style="font-size:15.5px;font-weight:700;color:var(--navy)">${esc(m.label)}</span>
         ${live?'':'<span style="margin-left:auto;font-size:10px;font-weight:700;color:var(--t3);background:var(--s2);border-radius:10px;padding:2px 8px;text-transform:uppercase">Planned</span>'}
       </div>
-      <div style="font-size:12.5px;color:var(--t2);line-height:1.45;margin-bottom:8px">${esc(m.description||'')}</div>
-      <div style="font-size:11px;color:var(--t3);line-height:1.45">${esc(m.detail||'')}</div>
+      ${live?`<div id="lstat-${m.id}" class="lstat-box">${lstatSkeleton()}</div>`
+            :`<div style="font-size:12.5px;color:var(--t2);line-height:1.45;margin-bottom:8px">${esc(m.description||'')}</div>
+              <div style="font-size:11px;color:var(--t3);line-height:1.45">${esc(m.detail||'')}</div>`}
       ${live?'<div style="margin-top:11px;font-size:12px;font-weight:700;color:var(--navy)">Open \u2192</div>':''}
     </div>`;
   }).join('');
+  loadLauncherStats();
+}
+// A one-line skeleton while the real figures load, so cards don't visibly
+// jump between "nothing" and "numbers" a beat later.
+function lstatSkeleton(){
+  return '<div style="height:38px;display:flex;align-items:center;color:var(--t3);font-size:11.5px">Loading\u2026</div>';
+}
+// The headline figures per launcher card — Judi's ask was for the home page
+// to read as an org-wide dashboard, not a menu with descriptions underneath.
+// Kept separate from the card markup itself: the cards render instantly,
+// then this fills in once the (slightly slower — one of these calls reaches
+// out to Control Panel's own service) summary arrives, rather than the whole
+// launcher waiting on it.
+function loadLauncherStats(){
+  fetch('/api/launcher/summary').then(r=>r.json()).then(d=>{
+    if(!d.ok) return;
+    const money=v=>v==null?'\u2014':'\u00a3'+Number(v).toLocaleString(undefined,{maximumFractionDigits:0});
+    const num=v=>v==null?'\u2014':Number(v).toLocaleString();
+    const row=(items)=>'<div style="display:flex;gap:14px;flex-wrap:wrap">'+
+      items.map(([val,label])=>`<div><div style="font-size:19px;font-weight:800;color:var(--navy)">${val}</div>
+        <div style="font-size:10.5px;color:var(--t3);text-transform:uppercase;letter-spacing:.02em">${label}</div></div>`).join('')+
+      '</div>';
+    const set=(id,html)=>{ const el=document.getElementById(id); if(el) el.innerHTML=html; };
+
+    const p=d.prospecting;
+    set('lstat-prospects', p ? row([[num(p.calls_today),'Calls today'],[num(p.callers_today),'Callers today']])
+                             : lstatUnavailable());
+    const c=d.crm;
+    set('lstat-crm', c ? row([[num(c.organisations),'Organisations'],[num(c.open_opportunities),'Open opps'],[money(c.pipeline_value),'Pipeline']])
+                       : lstatUnavailable());
+    const a=d.admin;
+    set('lstat-admin', a ? row([[num(a.calls_today),'Calls today'],[num(a.active_callers_today),'Active callers']])
+                         : lstatUnavailable());
+    const f=d.finance;
+    set('lstat-finance', f ? row([[num(f.meetings_this_month),'Meetings this month'],[money(f.outstanding),'Outstanding']])
+                           : lstatUnavailable());
+    const s=d.sales_generator;
+    set('lstat-sales', s ? row([[num(s.charities_analysed),'Charities analysed']])
+                         : lstatUnavailable());
+    const cp=d.control_panel;
+    set('lstat-controlpanel', cp && cp.pct!=null
+      ? `<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:5px">
+           <div style="font-size:19px;font-weight:800;color:var(--navy)">${money(cp.secured)}</div>
+           <div style="font-size:11px;color:var(--t3)">of ${money(cp.quarterly_target)} target</div></div>
+         <div style="height:6px;background:var(--s2);border-radius:3px;overflow:hidden">
+           <div style="width:${cp.pct}%;height:100%;background:var(--gold)"></div></div>`
+      : lstatUnavailable());
+  }).catch(()=>{
+    // A failed fetch leaves every card on its loading skeleton rather than
+    // an error — the launcher itself still works either way.
+  });
+}
+function lstatUnavailable(){
+  return '<div style="height:38px;display:flex;align-items:center;color:var(--t3);font-size:11.5px">No data yet</div>';
 }
 // Header identity: "Prospecting Dashboard" used to be hardcoded, so it said
 // the same thing on every module including the CRM and Sales Generator, which

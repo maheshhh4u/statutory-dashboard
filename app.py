@@ -3181,6 +3181,75 @@ def api_set_landing_module():
     return jsonify({"ok": True})
 
 # ── Admin briefing ─────────────────────────────────────────────────────────
+@app.route("/api/launcher/summary", methods=["GET"])
+def api_launcher_summary():
+    """Headline numbers for the home page launcher cards — deliberately cheap,
+    today-focused figures for a glance, not the fuller historical windows the
+    dedicated briefings compute. Every module degrades independently: one
+    query failing (or Control Panel being unreachable) shows that one card as
+    unavailable rather than breaking the whole dashboard."""
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    out = {"ok": True}
+
+    try:
+        r = db_query("SELECT COUNT(*), COUNT(DISTINCT caller) FROM call_log WHERE timestamp >= ?",
+                     (today + " 00:00:00",))
+        out["prospecting"] = {"calls_today": (r[0][0] if r else 0), "callers_today": (r[0][1] if r else 0)}
+    except Exception:
+        out["prospecting"] = None
+
+    try:
+        r1 = db_query("SELECT COUNT(*) FROM crm_orgs")
+        r2 = db_query(f"SELECT COUNT(*), COALESCE(SUM(value),0) FROM crm_opportunities WHERE {CRM_OPEN_STATUS_SQL}")
+        out["crm"] = {"organisations": (r1[0][0] if r1 else 0),
+                      "open_opportunities": (r2[0][0] if r2 else 0),
+                      "pipeline_value": round(r2[0][1], 2) if r2 else 0}
+    except Exception:
+        out["crm"] = None
+
+    try:
+        r = db_query("SELECT COUNT(*), COUNT(DISTINCT caller) FROM call_log WHERE timestamp >= ?",
+                     (today + " 00:00:00",))
+        out["admin"] = {"calls_today": (r[0][0] if r else 0), "active_callers_today": (r[0][1] if r else 0)}
+    except Exception:
+        out["admin"] = None
+
+    try:
+        month_start = datetime.utcnow().strftime("%Y-%m-01")
+        r = db_query("SELECT COUNT(*) FROM call_log WHERE timestamp >= ? AND (outcome LIKE '%Meeting%' OR stage LIKE '%Meeting%')",
+                    (month_start + " 00:00:00",))
+        inv = db_query("SELECT COALESCE(SUM(amount),0) FROM finance_invoices WHERE status='Outstanding'")
+        out["finance"] = {"meetings_this_month": (r[0][0] if r else 0),
+                          "outstanding": round(inv[0][0], 2) if inv else 0}
+    except Exception:
+        out["finance"] = None
+
+    try:
+        r = intel_query("SELECT COUNT(DISTINCT charity_id) FROM analysis_runs") if intel_available() else None
+        out["sales_generator"] = {"charities_analysed": (r[0][0] if r else 0)} if r is not None else None
+    except Exception:
+        out["sales_generator"] = None
+
+    out["control_panel"] = None
+    if CONTROL_PANEL_URL:
+        try:
+            r = requests.get(f"{CONTROL_PANEL_URL}/api/dashboard", timeout=8)
+            if r.status_code == 200:
+                d = r.json()
+                target = (d.get("target") or {})
+                qt = target.get("quarterly")
+                gap = target.get("gap")
+                if qt:
+                    secured = qt - gap if gap is not None else None
+                    out["control_panel"] = {"quarterly_target": qt, "secured": secured,
+                                            "pct": round(max(0, min(100, (secured / qt) * 100)), 1) if secured is not None and qt else None}
+        except Exception:
+            pass
+
+    return jsonify(out)
+
 @app.route("/api/brief/admin", methods=["GET"])
 def api_brief_admin():
     """Operational picture: who called, how much, what came of it, and whether
