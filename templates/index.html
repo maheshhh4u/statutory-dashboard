@@ -58,6 +58,8 @@
   .platform-hero-ridge{position:absolute;left:0;right:0;bottom:0;height:26px;background:var(--bg);
     clip-path:polygon(0 100%,7% 38%,14% 68%,22% 22%,31% 60%,40% 30%,50% 66%,
       60% 24%,69% 58%,78% 20%,87% 62%,94% 34%,100% 100%)}
+  .lstat-pulse{background:var(--lblue-d);opacity:.5;animation:lstatPulse 1.3s ease-in-out infinite}
+  @keyframes lstatPulse{0%,100%{opacity:.35}50%{opacity:.65}}
   /* ── CRM grid ──────────────────────────────────────────────────────────
      Dense, aligned, and quiet: a CRM list is read all day, so row height,
      consistent alignment and a calm header matter more than decoration. */
@@ -1212,6 +1214,10 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="platform-hero-ridge"></div>
   </div>
   <div style="max-width:1080px;margin:0 auto;padding:0 0 30px">
+    <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;font-size:11.5px;color:var(--t3)">
+      <span id="launcher-freshness-dot" style="width:7px;height:7px;border-radius:50%;background:#2e7d4f;display:inline-block"></span>
+      <span id="launcher-freshness">Live figures</span>
+    </div>
     <div id="launcher-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px">
       <div class="loading-txt" style="padding:20px">Loading&hellip;</div>
     </div>
@@ -7755,6 +7761,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.81", date:"2026-09", title:"Launcher cards: the polish pass",
+    changes:[
+      "\u201cOpen \u2192\u201d used to sit at a different height on every card depending on whether that card's chart was a tall bar list or a short ring \u2014 a row of cards with staggered footers is probably the single most common thing that makes a dashboard grid read as unfinished. Cards are now a proper flex column with the footer pinned to the bottom, and a shared minimum height, so a row lines up regardless of which chart type sits inside each card.",
+      "Loading state changed from a line of grey text to a softly pulsing placeholder shaped like the eventual chart \u2014 the card doesn't visibly \u201cpop\u201d the moment real data arrives.",
+      "Added a small live-figures indicator above the grid with an actual updated-at time, and it's honest when the fetch fails \u2014 the dot and text both say so rather than quietly leaving the last successful moment implied.",
+      "Tightened colour meaning platform-wide: gold now means \u201ctarget/goal\u201d exclusively (the progress ring). The donut's Outstanding segment, which was reusing that same gold, now uses amber instead \u2014 money owed sharing a colour with \u201ctarget achieved\u201d was reading backwards.",
+      "Removed the SVG hover tooltips on the bar and donut charts \u2014 now that every value is printed directly on the chart, a native tooltip popping up mid hover-lift was redundant and a little janky rather than useful.",
+    ]},
   { v:"2.80", date:"2026-09", title:"Launcher charts: data labels and captions on every card",
     changes:[
       "The bar charts (Prospect Generator, Sales Generator) had no visible number on them at all \u2014 only a hover tooltip, which is no use for a glance dashboard. Every bar now shows its value directly above it.",
@@ -9831,21 +9845,27 @@ function renderLauncher(){
     const live=m.status==='live';
     // Planned apps are shown but not clickable — visible roadmap without
     // implying they work.
+    // Flex column with the footer pushed down by margin-top:auto — without
+    // this, "Open →" sits at a different height on every card depending on
+    // whether that card's chart is a tall bar list or a short ring, and a
+    // row of cards with staggered footers is the single most common thing
+    // that makes a dashboard grid look unfinished rather than designed.
     return `<div ${live?`onclick="crSwitchModule('${m.id}')"`:''}
-      style="border:1px solid ${live?'var(--lblue-d)':'var(--border)'};border-top:3px solid ${live?'var(--navy-l)':'var(--border)'};
+      style="display:flex;flex-direction:column;min-height:190px;
+             border:1px solid ${live?'var(--lblue-d)':'var(--border)'};border-top:3px solid ${live?'var(--navy-l)':'var(--border)'};
              border-radius:10px;padding:18px 18px 16px;background:${live?'var(--lblue)':'var(--surface)'};
              ${live?'cursor:pointer':'opacity:.62'};transition:box-shadow .15s,transform .15s"
       ${live?`onmouseover="this.style.boxShadow='0 6px 20px rgba(48,54,84,.14)';this.style.transform='translateY(-2px)'"
               onmouseout="this.style.boxShadow='none';this.style.transform='none'"`:''}>
-      <div style="display:flex;align-items:center;gap:9px;margin-bottom:7px">
+      <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px">
         <span style="font-size:21px">${m.icon}</span>
         <span style="font-size:15.5px;font-weight:700;color:var(--navy)">${esc(m.label)}</span>
         ${live?'':'<span style="margin-left:auto;font-size:10px;font-weight:700;color:var(--t3);background:var(--s2);border-radius:10px;padding:2px 8px;text-transform:uppercase">Planned</span>'}
       </div>
-      ${live?`<div id="lstat-${m.id}" class="lstat-box">${lstatSkeleton()}</div>`
+      ${live?`<div id="lstat-${m.id}" class="lstat-box" style="min-height:64px">${lstatSkeleton()}</div>`
             :`<div style="font-size:12.5px;color:var(--t2);line-height:1.45;margin-bottom:8px">${esc(m.description||'')}</div>
               <div style="font-size:11px;color:var(--t3);line-height:1.45">${esc(m.detail||'')}</div>`}
-      ${live?'<div style="margin-top:11px;font-size:12px;font-weight:700;color:var(--navy)">Open \u2192</div>':''}
+      ${live?'<div style="margin-top:auto;padding-top:11px;font-size:12px;font-weight:700;color:var(--navy)">Open \u2192</div>':''}
     </div>`;
   }).join('');
   loadLauncherStats();
@@ -9853,7 +9873,12 @@ function renderLauncher(){
 // A one-line skeleton while the real figures load, so cards don't visibly
 // jump between "nothing" and "numbers" a beat later.
 function lstatSkeleton(){
-  return '<div style="height:38px;display:flex;align-items:center;color:var(--t3);font-size:11.5px">Loading\u2026</div>';
+  // A soft pulsing placeholder shaped like the eventual chart, rather than
+  // a line of grey text — the card doesn't visibly "pop" when real data
+  // replaces it a moment later.
+  return `<div style="display:flex;align-items:flex-end;gap:5px;height:46px;margin-top:4px">
+    ${[60,80,45,70,55,40,65].map(h=>`<div class="lstat-pulse" style="width:12%;height:${h}%;border-radius:2px"></div>`).join('')}
+  </div>`;
 }
 // The headline figures per launcher card — Judi's ask was for the home page
 // to read as an org-wide dashboard, not a menu with descriptions underneath.
@@ -9882,7 +9907,7 @@ function lBarChart(series, opts){
     const x=i*(barW+gap);
     const barTop=h-14-bh;
     return `<text x="${(x+barW/2).toFixed(1)}" y="${Math.max(7,barTop-2).toFixed(1)}" font-size="8" font-weight="700" text-anchor="middle" fill="var(--navy)">${s.value}</text>
-      <rect x="${x.toFixed(1)}" y="${barTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="var(--navy-l)"><title>${esc(s.label)}: ${s.value}</title></rect>
+      <rect x="${x.toFixed(1)}" y="${barTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="var(--navy-l)"/>
       <text x="${(x+barW/2).toFixed(1)}" y="${h-3}" font-size="7" text-anchor="middle" fill="var(--t3)">${esc(s.label)}</text>`;
   }).join('');
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block">${bars}</svg>`;
@@ -9909,14 +9934,17 @@ function lDonut(series, opts){
   opts=opts||{};
   const total=(series||[]).reduce((sum,s)=>sum+Math.max(0,s.value),0);
   const r=20,cx=24,cy=24,circumference=2*Math.PI*r;
-  const colours=['var(--navy-l)','var(--gold)','var(--t3)'];
+  // Gold means "target/goal" everywhere else on this page (the progress
+  // ring) — reused here for money owed, it would read backwards. Amber for
+  // outstanding, navy for settled, keeps colour meaning consistent platform-wide.
+  const colours=['var(--navy-l)','var(--orange)','var(--t3)'];
   let offset=0;
   const segs=(series||[]).map((s,i)=>{
     const frac=total>0?Math.max(0,s.value)/total:0;
     const len=circumference*frac;
     const dash=`${len.toFixed(1)} ${(circumference-len).toFixed(1)}`;
     const el=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${colours[i%colours.length]}"
-      stroke-width="8" stroke-dasharray="${dash}" stroke-dashoffset="${(-offset).toFixed(1)}"><title>${esc(s.label)}: ${lChartMoney(s.value)}</title></circle>`;
+      stroke-width="8" stroke-dasharray="${dash}" stroke-dashoffset="${(-offset).toFixed(1)}"/>`;
     offset+=len;
     return el;
   }).join('');
@@ -9948,6 +9976,9 @@ function loadLauncherStats(){
   fetch('/api/launcher/summary').then(r=>r.json()).then(d=>{
     if(!d.ok) return;
     const set=(id,html)=>{ const el=document.getElementById(id); if(el) el.innerHTML=html; };
+    const fresh=document.getElementById('launcher-freshness');
+    if(fresh) fresh.textContent='Live figures \u00b7 updated '+
+      new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
 
     // Every chart gets the same treatment: a short line of context above
     // it, since a shape with no caption is exactly what made these hard to
@@ -9980,11 +10011,18 @@ function loadLauncherStats(){
       : lstatUnavailable());
   }).catch(()=>{
     // A failed fetch leaves every card on its loading skeleton rather than
-    // an error — the launcher itself still works either way.
+    // an error — the launcher itself still works either way. The freshness
+    // line says so honestly rather than quietly implying the figures below
+    // it are current when nothing actually arrived.
+    const fresh=document.getElementById('launcher-freshness');
+    if(fresh) fresh.textContent='Figures unavailable right now';
+    const dot=document.getElementById('launcher-freshness-dot');
+    if(dot) dot.style.background='var(--t3)';
   });
 }
 function lstatUnavailable(){
-  return '<div style="height:38px;display:flex;align-items:center;color:var(--t3);font-size:11.5px">No data yet</div>';
+  return '<div style="height:46px;display:flex;align-items:center;gap:7px;color:var(--t3);font-size:11.5px">'+
+    '<span style="width:7px;height:7px;border-radius:50%;background:var(--border);display:inline-block"></span>No data yet</div>';
 }
 // Header identity: "Prospecting Dashboard" used to be hardcoded, so it said
 // the same thing on every module including the CRM and Sales Generator, which
