@@ -7755,6 +7755,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.80", date:"2026-09", title:"Launcher charts: data labels and captions on every card",
+    changes:[
+      "The bar charts (Prospect Generator, Sales Generator) had no visible number on them at all \u2014 only a hover tooltip, which is no use for a glance dashboard. Every bar now shows its value directly above it.",
+      "Day labels were a bare day-of-month digit (\u201317\u201d, \u201818\u201d) with nothing saying what they meant. Now weekday names (Mon, Tue\u2026) for the 7-day trend, and the actual date each week starts for the 6-week trend.",
+      "Every chart now has a one-line caption above it stating plainly what it's showing \u2014 previously only three of the six cards had one.",
+      "The paid-vs-outstanding donut now shows a percentage alongside each figure, not just the raw amount.",
+      "Verified the label positions directly across the tallest bar, the shortest, and an all-zero case \u2014 every number stays inside the chart rather than being clipped or overlapping.",
+    ]},
   { v:"2.79", date:"2026-09", title:"Launcher cards: light blue instead of gold, and real charts instead of numbers",
     changes:[
       "Card background switched from the gold/cream pairing to a light blue \u2014 less contrast, same idea.",
@@ -9864,13 +9872,17 @@ function lChartNum(v){ return v==null?'\u2014':Number(v).toLocaleString(); }
 // Vertical bar chart — for a trend over several points (days/weeks).
 function lBarChart(series, opts){
   opts=opts||{};
-  const w=200,h=46,gap=3,n=(series||[]).length||1;
+  // Extra headroom (20 rather than 14) for a value printed above each bar —
+  // a hover-only tooltip isn't something a glance dashboard can rely on.
+  const w=200,h=52,gap=3,n=(series||[]).length||1;
   const barW=(w-gap*(n-1))/n;
   const max=Math.max(1,...series.map(s=>s.value));
   const bars=series.map((s,i)=>{
-    const bh=Math.max(1, (s.value/max)*(h-14));
+    const bh=Math.max(1, (s.value/max)*(h-20));
     const x=i*(barW+gap);
-    return `<rect x="${x.toFixed(1)}" y="${(h-14-bh).toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="var(--navy-l)"><title>${esc(s.label)}: ${s.value}</title></rect>
+    const barTop=h-14-bh;
+    return `<text x="${(x+barW/2).toFixed(1)}" y="${Math.max(7,barTop-2).toFixed(1)}" font-size="8" font-weight="700" text-anchor="middle" fill="var(--navy)">${s.value}</text>
+      <rect x="${x.toFixed(1)}" y="${barTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="var(--navy-l)"><title>${esc(s.label)}: ${s.value}</title></rect>
       <text x="${(x+barW/2).toFixed(1)}" y="${h-3}" font-size="7" text-anchor="middle" fill="var(--t3)">${esc(s.label)}</text>`;
   }).join('');
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block">${bars}</svg>`;
@@ -9908,9 +9920,12 @@ function lDonut(series, opts){
     offset+=len;
     return el;
   }).join('');
-  const legend=(series||[]).map((s,i)=>`<div style="display:flex;align-items:center;gap:5px;font-size:9.5px;color:var(--t2)">
+  const legend=(series||[]).map((s,i)=>{
+    const pct=total>0?Math.round((Math.max(0,s.value)/total)*100):0;
+    return `<div style="display:flex;align-items:center;gap:5px;font-size:9.5px;color:var(--t2)">
     <span style="width:8px;height:8px;border-radius:2px;background:${colours[i%colours.length]};display:inline-block"></span>
-    ${esc(s.label)} <span style="color:var(--t3)">${lChartMoney(s.value)}</span></div>`).join('');
+    ${esc(s.label)} <span style="color:var(--t3)">${lChartMoney(s.value)} (${pct}%)</span></div>`;
+  }).join('');
   return `<div style="display:flex;align-items:center;gap:10px">
     <svg viewBox="0 0 48 48" style="width:48px;height:48px;flex-shrink:0;transform:rotate(-90deg)">${segs}</svg>
     <div style="display:flex;flex-direction:column;gap:2px">${legend}</div></div>`;
@@ -9934,25 +9949,34 @@ function loadLauncherStats(){
     if(!d.ok) return;
     const set=(id,html)=>{ const el=document.getElementById(id); if(el) el.innerHTML=html; };
 
+    // Every chart gets the same treatment: a short line of context above
+    // it, since a shape with no caption is exactly what made these hard to
+    // read at a glance in the first place.
+    const title=(text)=>`<div style="font-size:10.5px;color:var(--t3);margin-bottom:4px">${text}</div>`;
+
     const p=d.prospecting;
-    set('lstat-prospects', p && p.series ? lBarChart(p.series) : lstatUnavailable());
+    set('lstat-prospects', p && p.series
+      ? title('Calls per day, last 7 days')+lBarChart(p.series)
+      : lstatUnavailable());
     const c=d.crm;
     set('lstat-crm', c && c.series && c.series.length
-      ? `<div style="font-size:10.5px;color:var(--t3);margin-bottom:4px">${lChartNum(c.organisations)} organisations \u00b7 pipeline by stage</div>${lHBarChart(c.series,{money:true})}`
+      ? title(`${lChartNum(c.organisations)} organisations \u00b7 open pipeline by stage (\u00a3)`)+lHBarChart(c.series,{money:true})
       : lstatUnavailable());
     const a=d.admin;
     set('lstat-admin', a && a.series && a.series.length
-      ? `<div style="font-size:10.5px;color:var(--t3);margin-bottom:4px">Calls today by caller</div>${lHBarChart(a.series)}`
+      ? title('Calls today by caller')+lHBarChart(a.series)
       : lstatUnavailable());
     const f=d.finance;
-    set('lstat-finance', f && f.series ? lDonut(f.series) : lstatUnavailable());
+    set('lstat-finance', f && f.series
+      ? title('All invoices \u2014 paid vs outstanding')+lDonut(f.series)
+      : lstatUnavailable());
     const s=d.sales_generator;
     set('lstat-sales', s && s.series
-      ? `<div style="font-size:10.5px;color:var(--t3);margin-bottom:2px">Analyses per week</div>${lBarChart(s.series)}`
+      ? title('Analyses completed per week')+lBarChart(s.series)
       : lstatUnavailable());
     const cp=d.control_panel;
     set('lstat-controlpanel', cp && cp.pct!=null
-      ? lRing(cp.pct, cp.pct+'%', lChartMoney(cp.secured)+' of '+lChartMoney(cp.quarterly_target))
+      ? title('This quarter\u2019s target')+lRing(cp.pct, cp.pct+'%', lChartMoney(cp.secured)+' of '+lChartMoney(cp.quarterly_target))
       : lstatUnavailable());
   }).catch(()=>{
     // A failed fetch leaves every card on its loading skeleton rather than

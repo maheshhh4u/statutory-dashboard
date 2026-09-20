@@ -3206,7 +3206,10 @@ def api_launcher_summary():
                         "WHERE timestamp >= ? GROUP BY 1", (since,)) or []
         by_day = {r[0]: r[1] for r in rows}
         days = [(now - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
-        out["prospecting"] = {"series": [{"label": d[-2:], "value": by_day.get(d, 0)} for d in days]}
+        # Weekday abbreviation, not a bare day-of-month digit — "17" on its
+        # own tells you nothing about what's being counted or when.
+        day_label = lambda d: datetime.strptime(d, "%Y-%m-%d").strftime("%a")
+        out["prospecting"] = {"series": [{"label": day_label(d), "value": by_day.get(d, 0)} for d in days]}
     except Exception:
         out["prospecting"] = None
 
@@ -3261,7 +3264,9 @@ def api_launcher_summary():
                 except Exception:
                     continue
             weeks = [week_start(now - timedelta(weeks=i)) for i in range(5, -1, -1)]
-            out["sales_generator"] = {"series": [{"label": w[-2:], "value": counts.get(w, 0)} for w in weeks]}
+            # The date each week starts, not a bare day-of-month digit.
+            week_label = lambda w: datetime.strptime(w, "%Y-%m-%d").strftime("%-d %b") if os.name != "nt" else datetime.strptime(w, "%Y-%m-%d").strftime("%d %b").lstrip("0")
+            out["sales_generator"] = {"series": [{"label": week_label(w), "value": counts.get(w, 0)} for w in weeks]}
         else:
             out["sales_generator"] = None
     except Exception:
