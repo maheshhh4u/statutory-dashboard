@@ -3183,55 +3183,92 @@ def api_set_landing_module():
 # ── Admin briefing ─────────────────────────────────────────────────────────
 @app.route("/api/launcher/summary", methods=["GET"])
 def api_launcher_summary():
-    """Headline numbers for the home page launcher cards — deliberately cheap,
-    today-focused figures for a glance, not the fuller historical windows the
-    dedicated briefings compute. Every module degrades independently: one
-    query failing (or Control Panel being unreachable) shows that one card as
-    unavailable rather than breaking the whole dashboard."""
+    """Data for the home page launcher cards, shaped for small charts rather
+    than a single restated number — a trend, a breakdown, or a progress
+    figure, whichever suits what each module actually holds. Deliberately
+    cheap, short-window queries for a glance, not the fuller historical
+    windows the dedicated briefings compute. Every module degrades
+    independently: one query failing (or Control Panel being unreachable)
+    shows that one card as unavailable rather than breaking the whole
+    dashboard."""
     if not current_user():
         return jsonify({"ok": False, "error": "Not signed in"}), 401
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    now = datetime.utcnow()
+    today = now.strftime("%Y-%m-%d")
     out = {"ok": True}
 
+    # Prospect Generator: calls per day, last 7 days — a trend, since "is
+    # calling activity picking up or dropping" is the thing worth seeing at
+    # a glance, more than any single day's count on its own.
     try:
-        r = db_query("SELECT COUNT(*), COUNT(DISTINCT caller) FROM call_log WHERE timestamp >= ?",
-                     (today + " 00:00:00",))
-        out["prospecting"] = {"calls_today": (r[0][0] if r else 0), "callers_today": (r[0][1] if r else 0)}
+        since = (now - timedelta(days=6)).strftime("%Y-%m-%d 00:00:00")
+        rows = db_query("SELECT substr(timestamp,1,10), COUNT(*) FROM call_log "
+                        "WHERE timestamp >= ? GROUP BY 1", (since,)) or []
+        by_day = {r[0]: r[1] for r in rows}
+        days = [(now - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
+        out["prospecting"] = {"series": [{"label": d[-2:], "value": by_day.get(d, 0)} for d in days]}
     except Exception:
         out["prospecting"] = None
 
+    # CRM: open opportunities by stage — a breakdown, since "where does the
+    # pipeline actually sit" is more useful at a glance than a bare count.
     try:
         r1 = db_query("SELECT COUNT(*) FROM crm_orgs")
-        r2 = db_query(f"SELECT COUNT(*), COALESCE(SUM(value),0) FROM crm_opportunities WHERE {CRM_OPEN_STATUS_SQL}")
+        rows = db_query(f"SELECT COALESCE(NULLIF(stage,''),'Unspecified'), COUNT(*), COALESCE(SUM(value),0) "
+                        f"FROM crm_opportunities WHERE {CRM_OPEN_STATUS_SQL} GROUP BY 1 ORDER BY 3 DESC LIMIT 5") or []
         out["crm"] = {"organisations": (r1[0][0] if r1 else 0),
-                      "open_opportunities": (r2[0][0] if r2 else 0),
-                      "pipeline_value": round(r2[0][1], 2) if r2 else 0}
+                      "series": [{"label": r[0], "value": r[2], "count": r[1]} for r in rows]}
     except Exception:
         out["crm"] = None
 
+    # Admin Briefing: today's calls by caller — a breakdown of who's active
+    # right now, distinct from Prospect Generator's day-over-day trend above.
     try:
-        r = db_query("SELECT COUNT(*), COUNT(DISTINCT caller) FROM call_log WHERE timestamp >= ?",
-                     (today + " 00:00:00",))
-        out["admin"] = {"calls_today": (r[0][0] if r else 0), "active_callers_today": (r[0][1] if r else 0)}
+        rows = db_query("SELECT COALESCE(NULLIF(caller,''),'Unassigned'), COUNT(*) FROM call_log "
+                        "WHERE timestamp >= ? GROUP BY 1 ORDER BY 2 DESC LIMIT 5",
+                        (today + " 00:00:00",)) or []
+        out["admin"] = {"series": [{"label": r[0], "value": r[1]} for r in rows]}
     except Exception:
         out["admin"] = None
 
+    # Finance Briefing: paid vs outstanding. "Outstanding" is billed minus
+    # paid, not a stored status value — status only ever holds "paid" or
+    # not — so this has to be computed the same way the full Finance
+    # Briefing does, not read back as if it were a status to filter on.
     try:
-        month_start = datetime.utcnow().strftime("%Y-%m-01")
-        r = db_query("SELECT COUNT(*) FROM call_log WHERE timestamp >= ? AND (outcome LIKE '%Meeting%' OR stage LIKE '%Meeting%')",
-                    (month_start + " 00:00:00",))
-        inv = db_query("SELECT COALESCE(SUM(amount),0) FROM finance_invoices WHERE status='Outstanding'")
-        out["finance"] = {"meetings_this_month": (r[0][0] if r else 0),
-                          "outstanding": round(inv[0][0], 2) if inv else 0}
+        rows = db_query("SELECT amount, status FROM finance_invoices") or []
+        billed = sum((r[0] or 0) for r in rows)
+        paid = sum((r[0] or 0) for r in rows if r[1] == "paid")
+        outstanding = round(billed - paid, 2)
+        out["finance"] = {"series": [{"label": "Paid", "value": round(paid, 2)},
+                                     {"label": "Outstanding", "value": outstanding}]}
     except Exception:
         out["finance"] = None
 
+    # Sales Generator: analyses completed per week, last 6 weeks — a trend
+    # of activity rather than a single ever-growing total.
     try:
-        r = intel_query("SELECT COUNT(DISTINCT charity_id) FROM analysis_runs") if intel_available() else None
-        out["sales_generator"] = {"charities_analysed": (r[0][0] if r else 0)} if r is not None else None
+        if intel_available():
+            since = (now - timedelta(weeks=6)).strftime("%Y-%m-%d")
+            rows = intel_query("SELECT completed_at FROM analysis_runs WHERE completed_at >= ?", (since,)) or []
+            week_start = lambda dt: (dt - timedelta(days=dt.weekday())).strftime("%Y-%m-%d")
+            counts = {}
+            for (ts,) in rows:
+                try:
+                    dt = datetime.strptime(str(ts)[:10], "%Y-%m-%d")
+                    wk = week_start(dt)
+                    counts[wk] = counts.get(wk, 0) + 1
+                except Exception:
+                    continue
+            weeks = [week_start(now - timedelta(weeks=i)) for i in range(5, -1, -1)]
+            out["sales_generator"] = {"series": [{"label": w[-2:], "value": counts.get(w, 0)} for w in weeks]}
+        else:
+            out["sales_generator"] = None
     except Exception:
         out["sales_generator"] = None
 
+    # Control Panel: secured vs target is already the right shape for a
+    # progress figure — no breakdown needed, just the number and the goal.
     out["control_panel"] = None
     if CONTROL_PANEL_URL:
         try:

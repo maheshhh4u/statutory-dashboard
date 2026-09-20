@@ -242,6 +242,8 @@
   --gold-text:#7a5d10;   /* readable gold text */
   --cream:#ede8d6;       /* the site's warm section background */
   --cream-d:#d0c5a2;     /* the site's cream/border accent */
+  --lblue:#e3edf7;       /* light blue card background — less contrast than the gold/cream pairing */
+  --lblue-d:#b9d0e8;     /* light blue border accent */
 
   --bg:#f7f8fa;--surface:#fff;--s2:#eef1f5;--border:#dbe1e8;
   --text:#22263a;--t2:#565c76;--t3:#8992a6;
@@ -273,6 +275,8 @@ html[data-theme="dark"]{
   --gold-d:#c89829;
   --gold-l:#3a2f14;
   --gold-text:#e8b339;
+  --lblue:#1c2c3f;
+  --lblue-d:#2f4b66;
 
   --bg:#14171c;--surface:#1c2028;--s2:#242932;--border:#333a45;
   --text:#e6e9ef;--t2:#a8b0bd;--t3:#7a8291;
@@ -7751,6 +7755,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.79", date:"2026-09", title:"Launcher cards: light blue instead of gold, and real charts instead of numbers",
+    changes:[
+      "Card background switched from the gold/cream pairing to a light blue \u2014 less contrast, same idea.",
+      "At Nick's request, each card now shows an actual chart rather than a number restated in a box: Prospect Generator and Sales Generator show a bar-chart trend (calls per day, analyses per week); CRM and Admin Briefing show a breakdown by category (pipeline by stage, today's calls by caller); Finance Briefing shows a paid-vs-outstanding donut; Control Panel shows a progress ring against the quarterly target. Each chart type was chosen for what actually suits that data \u2014 a trend, a breakdown, or a progress figure \u2014 not the same shape repeated six times.",
+      "Found and fixed a real bug while building this: the outstanding-invoices figure from the last release was silently always zero. \"Outstanding\" isn't a status ever stored on an invoice \u2014 it's billed minus paid \u2014 and the query was filtering for a status value that never exists. Now computed the same way the full Finance Briefing already correctly does it.",
+      "The chart math \u2014 the ring and donut proportions specifically \u2014 was tested directly before shipping: exact values at 0%, 50% and 100%, a genuine two-way split, and a zero-total case (no invoices at all) all render correctly rather than a broken or empty shape.",
+      "No new charting library added \u2014 these are small, hand-built SVG shapes sized for a glance inside a launcher card, matching how every other visual on this platform has been built rather than pulling in a dependency for six small shapes.",
+    ]},
   { v:"2.78", date:"2026-09", title:"Home page becomes a live dashboard, not a menu with descriptions",
     changes:[
       "Per Judi's brief for an \u201cimmediate view of the key health and performance indicators of the business\u201d: each application card on the home page now shows real, live numbers instead of static description text \u2014 calls made today, organisations and pipeline value in the CRM, meetings and outstanding invoices, charities analysed, and quarterly target progress with a bar.",
@@ -9812,8 +9824,8 @@ function renderLauncher(){
     // Planned apps are shown but not clickable — visible roadmap without
     // implying they work.
     return `<div ${live?`onclick="crSwitchModule('${m.id}')"`:''}
-      style="border:1px solid ${live?'var(--cream-d)':'var(--border)'};border-top:3px solid ${live?'var(--gold)':'var(--border)'};
-             border-radius:10px;padding:18px 18px 16px;background:${live?'var(--cream)':'var(--surface)'};
+      style="border:1px solid ${live?'var(--lblue-d)':'var(--border)'};border-top:3px solid ${live?'var(--navy-l)':'var(--border)'};
+             border-radius:10px;padding:18px 18px 16px;background:${live?'var(--lblue)':'var(--surface)'};
              ${live?'cursor:pointer':'opacity:.62'};transition:box-shadow .15s,transform .15s"
       ${live?`onmouseover="this.style.boxShadow='0 6px 20px rgba(48,54,84,.14)';this.style.transform='translateY(-2px)'"
               onmouseout="this.style.boxShadow='none';this.style.transform='none'"`:''}>
@@ -9841,39 +9853,106 @@ function lstatSkeleton(){
 // then this fills in once the (slightly slower — one of these calls reaches
 // out to Control Panel's own service) summary arrives, rather than the whole
 // launcher waiting on it.
+// ── Small, dependency-free chart renderers ─────────────────────────────────
+// Plain inline SVG rather than a charting library: these sit inside ~230px
+// cards showing a glance, not a detailed report, and the platform doesn't
+// pull in a charting library anywhere else — adding one for six small shapes
+// wasn't worth it.
+function lChartMoney(v){ return v==null?'\u2014':'\u00a3'+Number(v).toLocaleString(undefined,{maximumFractionDigits:0}); }
+function lChartNum(v){ return v==null?'\u2014':Number(v).toLocaleString(); }
+
+// Vertical bar chart — for a trend over several points (days/weeks).
+function lBarChart(series, opts){
+  opts=opts||{};
+  const w=200,h=46,gap=3,n=(series||[]).length||1;
+  const barW=(w-gap*(n-1))/n;
+  const max=Math.max(1,...series.map(s=>s.value));
+  const bars=series.map((s,i)=>{
+    const bh=Math.max(1, (s.value/max)*(h-14));
+    const x=i*(barW+gap);
+    return `<rect x="${x.toFixed(1)}" y="${(h-14-bh).toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="var(--navy-l)"><title>${esc(s.label)}: ${s.value}</title></rect>
+      <text x="${(x+barW/2).toFixed(1)}" y="${h-3}" font-size="7" text-anchor="middle" fill="var(--t3)">${esc(s.label)}</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block">${bars}</svg>`;
+}
+// Horizontal bar chart — for a breakdown by category (stage, caller).
+function lHBarChart(series, opts){
+  opts=opts||{};
+  const rows=(series||[]).slice(0,4);
+  if(!rows.length) return lstatUnavailable();
+  const max=Math.max(1,...rows.map(s=>s.value));
+  const fmt=opts.money?lChartMoney:lChartNum;
+  return '<div style="display:flex;flex-direction:column;gap:3px">'+rows.map(s=>{
+    const pct=Math.max(3,(s.value/max)*100);
+    return `<div style="display:flex;align-items:center;gap:6px">
+      <div style="width:56px;font-size:9.5px;color:var(--t2);text-overflow:ellipsis;overflow:hidden;white-space:nowrap" title="${esc(s.label)}">${esc(s.label)}</div>
+      <div style="flex:1;background:var(--s2);border-radius:3px;height:10px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:var(--navy-l)"></div></div>
+      <div style="width:44px;font-size:9.5px;color:var(--t3);text-align:right">${fmt(s.value)}</div>
+    </div>`;
+  }).join('')+'</div>';
+}
+// Donut — for a two-(or-few-)way split of one total (paid vs outstanding).
+function lDonut(series, opts){
+  opts=opts||{};
+  const total=(series||[]).reduce((sum,s)=>sum+Math.max(0,s.value),0);
+  const r=20,cx=24,cy=24,circumference=2*Math.PI*r;
+  const colours=['var(--navy-l)','var(--gold)','var(--t3)'];
+  let offset=0;
+  const segs=(series||[]).map((s,i)=>{
+    const frac=total>0?Math.max(0,s.value)/total:0;
+    const len=circumference*frac;
+    const dash=`${len.toFixed(1)} ${(circumference-len).toFixed(1)}`;
+    const el=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${colours[i%colours.length]}"
+      stroke-width="8" stroke-dasharray="${dash}" stroke-dashoffset="${(-offset).toFixed(1)}"><title>${esc(s.label)}: ${lChartMoney(s.value)}</title></circle>`;
+    offset+=len;
+    return el;
+  }).join('');
+  const legend=(series||[]).map((s,i)=>`<div style="display:flex;align-items:center;gap:5px;font-size:9.5px;color:var(--t2)">
+    <span style="width:8px;height:8px;border-radius:2px;background:${colours[i%colours.length]};display:inline-block"></span>
+    ${esc(s.label)} <span style="color:var(--t3)">${lChartMoney(s.value)}</span></div>`).join('');
+  return `<div style="display:flex;align-items:center;gap:10px">
+    <svg viewBox="0 0 48 48" style="width:48px;height:48px;flex-shrink:0;transform:rotate(-90deg)">${segs}</svg>
+    <div style="display:flex;flex-direction:column;gap:2px">${legend}</div></div>`;
+}
+// Progress ring — for one figure against one goal (quarterly target).
+function lRing(pct, centreText, subText){
+  const r=20,cx=24,cy=24,circumference=2*Math.PI*r;
+  const filled=circumference*(Math.max(0,Math.min(100,pct))/100);
+  return `<div style="display:flex;align-items:center;gap:10px">
+    <svg viewBox="0 0 48 48" style="width:48px;height:48px;flex-shrink:0;transform:rotate(-90deg)">
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--s2)" stroke-width="6"></circle>
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--gold)" stroke-width="6"
+        stroke-linecap="round" stroke-dasharray="${filled.toFixed(1)} ${circumference.toFixed(1)}"></circle>
+    </svg>
+    <div><div style="font-size:16px;font-weight:800;color:var(--navy)">${esc(centreText)}</div>
+      <div style="font-size:10px;color:var(--t3)">${esc(subText)}</div></div></div>`;
+}
+
 function loadLauncherStats(){
   fetch('/api/launcher/summary').then(r=>r.json()).then(d=>{
     if(!d.ok) return;
-    const money=v=>v==null?'\u2014':'\u00a3'+Number(v).toLocaleString(undefined,{maximumFractionDigits:0});
-    const num=v=>v==null?'\u2014':Number(v).toLocaleString();
-    const row=(items)=>'<div style="display:flex;gap:14px;flex-wrap:wrap">'+
-      items.map(([val,label])=>`<div><div style="font-size:19px;font-weight:800;color:var(--navy)">${val}</div>
-        <div style="font-size:10.5px;color:var(--t3);text-transform:uppercase;letter-spacing:.02em">${label}</div></div>`).join('')+
-      '</div>';
     const set=(id,html)=>{ const el=document.getElementById(id); if(el) el.innerHTML=html; };
 
     const p=d.prospecting;
-    set('lstat-prospects', p ? row([[num(p.calls_today),'Calls today'],[num(p.callers_today),'Callers today']])
-                             : lstatUnavailable());
+    set('lstat-prospects', p && p.series ? lBarChart(p.series) : lstatUnavailable());
     const c=d.crm;
-    set('lstat-crm', c ? row([[num(c.organisations),'Organisations'],[num(c.open_opportunities),'Open opps'],[money(c.pipeline_value),'Pipeline']])
-                       : lstatUnavailable());
+    set('lstat-crm', c && c.series && c.series.length
+      ? `<div style="font-size:10.5px;color:var(--t3);margin-bottom:4px">${lChartNum(c.organisations)} organisations \u00b7 pipeline by stage</div>${lHBarChart(c.series,{money:true})}`
+      : lstatUnavailable());
     const a=d.admin;
-    set('lstat-admin', a ? row([[num(a.calls_today),'Calls today'],[num(a.active_callers_today),'Active callers']])
-                         : lstatUnavailable());
+    set('lstat-admin', a && a.series && a.series.length
+      ? `<div style="font-size:10.5px;color:var(--t3);margin-bottom:4px">Calls today by caller</div>${lHBarChart(a.series)}`
+      : lstatUnavailable());
     const f=d.finance;
-    set('lstat-finance', f ? row([[num(f.meetings_this_month),'Meetings this month'],[money(f.outstanding),'Outstanding']])
-                           : lstatUnavailable());
+    set('lstat-finance', f && f.series ? lDonut(f.series) : lstatUnavailable());
     const s=d.sales_generator;
-    set('lstat-sales', s ? row([[num(s.charities_analysed),'Charities analysed']])
-                         : lstatUnavailable());
+    set('lstat-sales', s && s.series
+      ? `<div style="font-size:10.5px;color:var(--t3);margin-bottom:2px">Analyses per week</div>${lBarChart(s.series)}`
+      : lstatUnavailable());
     const cp=d.control_panel;
     set('lstat-controlpanel', cp && cp.pct!=null
-      ? `<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:5px">
-           <div style="font-size:19px;font-weight:800;color:var(--navy)">${money(cp.secured)}</div>
-           <div style="font-size:11px;color:var(--t3)">of ${money(cp.quarterly_target)} target</div></div>
-         <div style="height:6px;background:var(--s2);border-radius:3px;overflow:hidden">
-           <div style="width:${cp.pct}%;height:100%;background:var(--gold)"></div></div>`
+      ? lRing(cp.pct, cp.pct+'%', lChartMoney(cp.secured)+' of '+lChartMoney(cp.quarterly_target))
       : lstatUnavailable());
   }).catch(()=>{
     // A failed fetch leaves every card on its loading skeleton rather than
