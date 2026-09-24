@@ -3274,7 +3274,11 @@ def api_launcher_summary():
 
     # Control Panel: secured vs target is already the right shape for a
     # progress figure — no breakdown needed, just the number and the goal.
+    # One fetch of Control Panel's dashboard serves both this small launcher-
+    # card figure AND the larger home-page boxes below, rather than calling
+    # out to that service twice for the same data.
     out["control_panel"] = None
+    out["home_boxes"] = None
     if CONTROL_PANEL_URL:
         try:
             r = requests.get(f"{CONTROL_PANEL_URL}/api/dashboard", timeout=8)
@@ -3287,6 +3291,20 @@ def api_launcher_summary():
                     secured = qt - gap if gap is not None else None
                     out["control_panel"] = {"quarterly_target": qt, "secured": secured,
                                             "pct": round(max(0, min(100, (secured / qt) * 100)), 1) if secured is not None and qt else None}
+                # The three boxes Judi asked for on the home page — Target,
+                # Sales Engine, Marketing Engine — using exactly the numbers
+                # Control Panel's own Overview page already computes and
+                # shows for those same three things, not a separate,
+                # possibly-diverging calculation built fresh here.
+                out["home_boxes"] = {
+                    "target": {"won": (d.get("won") or {}).get("value"), "quarterly": qt, "gap": gap},
+                    "sales": {"weighted": (d.get("proposal") or {}).get("weighted"),
+                             "live_out": (d.get("proposal") or {}).get("live_out"),
+                             "stage_breakdown": d.get("sales_stage_breakdown") or []},
+                    "marketing": {"missing": (d.get("marketing") or {}).get("total_missing_stock"),
+                                 "target_stock": (d.get("marketing") or {}).get("total_target_stock"),
+                                 "active_commissions": (d.get("marketing") or {}).get("active_commissions")},
+                }
         except Exception:
             pass
 

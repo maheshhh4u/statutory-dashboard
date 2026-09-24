@@ -1214,6 +1214,11 @@ select:focus{outline:none;border-color:var(--green)}
     <div class="platform-hero-ridge"></div>
   </div>
   <div style="max-width:1080px;margin:0 auto;padding:0 0 30px">
+    <!-- The three headline boxes Judi asked for — Target, Sales Engine,
+         Marketing Engine — sourced from Control Panel's own Overview page,
+         not recalculated here. Same numbers either place, always. -->
+    <div id="home-boxes" style="margin-bottom:26px"></div>
+
     <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;font-size:11.5px;color:var(--t3)">
       <span id="launcher-freshness-dot" style="width:7px;height:7px;border-radius:50%;background:#2e7d4f;display:inline-block"></span>
       <span id="launcher-freshness">Live figures</span>
@@ -7761,6 +7766,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.82", date:"2026-09", title:"Home page: Target, Sales Engine and Marketing Engine, from Control Panel",
+    changes:[
+      "Per Judi's landing-page brief: three prominent boxes now sit at the top of the home page, above the application cards \u2014 Quarterly target, Sales Engine, Marketing Engine.",
+      "The figures come from Control Panel's own Overview page, not a separate calculation built fresh here \u2014 the same server-to-server call the launcher's small Control Panel card already used is reused for this, so one fetch now serves both rather than asking that service twice for the same numbers.",
+      "The target bar is the identical design already used on Control Panel's own Overview \u2014 same two-tone fill, same marker line \u2014 so the same figure looks the same wherever someone encounters it, rather than two different-looking bars claiming to show the same thing.",
+      "Judi's document also described a much larger per-person dashboard-customisation feature (choose your name, design your own view). That's a genuinely separate, sizeable piece of work with real open questions about how it should behave \u2014 not something to build silently as a side effect of this request. Flagging it here rather than building it unasked.",
+    ]},
   { v:"2.81", date:"2026-09", title:"Launcher cards: the polish pass",
     changes:[
       "\u201cOpen \u2192\u201d used to sit at a different height on every card depending on whether that card's chart was a tall bar list or a short ring \u2014 a row of cards with staggered footers is probably the single most common thing that makes a dashboard grid read as unfinished. Cards are now a proper flex column with the footer pinned to the bottom, and a shared minimum height, so a row lines up regardless of which chart type sits inside each card.",
@@ -9972,6 +9984,80 @@ function lRing(pct, centreText, subText){
       <div style="font-size:10px;color:var(--t3)">${esc(subText)}</div></div></div>`;
 }
 
+// Same two-tone bar with a target marker used on Control Panel's own
+// Overview page — reused here rather than invented fresh, so the same
+// figure looks the same wherever someone sees it.
+function homeTargetBar(won, target){
+  const barMax = Math.max(won||0, target||0) * 1.05 || 1;
+  const targetPos = Math.min(100, ((target||0)/barMax)*100);
+  const wonPos = Math.min(100, ((won||0)/barMax)*100);
+  const solid = Math.min(wonPos, targetPos);
+  const light = wonPos > targetPos ? wonPos - targetPos : 0;
+  return `<div style="position:relative;background:var(--s2);border-radius:6px;height:11px;overflow:hidden;margin:10px 0 5px">
+    <div style="position:absolute;left:0;top:0;height:100%;width:${solid}%;background:#1e8a4c"></div>
+    ${light>0?`<div style="position:absolute;left:${targetPos}%;top:0;height:100%;width:${light}%;background:#7ec89a"></div>`:''}
+    <div style="position:absolute;left:${targetPos}%;top:-2px;height:15px;width:2px;background:var(--navy)"></div>
+  </div>`;
+}
+function renderHomeBoxes(hb){
+  const el=document.getElementById('home-boxes');
+  if(!el) return;
+  if(!hb){
+    el.innerHTML=`<div style="text-align:center;padding:20px;color:var(--t3);font-size:12.5px;
+      border:1px dashed var(--border);border-radius:10px">Control Panel figures aren\u2019t available right now.</div>`;
+    return;
+  }
+  const money=v=>v==null?'\u2014':'\u00a3'+Number(v).toLocaleString(undefined,{maximumFractionDigits:0});
+  const boxStyle='border:1px solid var(--lblue-d);border-top:3px solid var(--navy-l);border-radius:10px;'+
+    'padding:18px;background:var(--lblue)';
+
+  const tg=hb.target||{}, won=tg.won||0, target=tg.quarterly||0;
+  const aboveTarget = won - target;
+
+  const sl=hb.sales||{}, stages=sl.stage_breakdown||[];
+  const stageTotal=Math.max(1, stages.reduce((s,x)=>s+(x.count||0),0));
+  const stageColours=['var(--navy)','var(--navy-l)','#B7C3CE','var(--s2)'];
+
+  const mk=hb.marketing||{};
+  const missingPct = mk.target_stock ? Math.max(2,Math.min(100,((mk.missing||0)/mk.target_stock)*100)) : 0;
+
+  el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">
+    <div style="${boxStyle}">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:8px">Quarterly target</div>
+      <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+        <div style="font-size:24px;font-weight:800;color:${won>=target?'#1e8a4c':'var(--navy)'}">${money(won)}</div>
+        <span style="font-size:11.5px;color:var(--t3)">won</span>
+        ${target?`<span style="margin-left:auto;font-weight:700;font-size:12.5px;color:${aboveTarget>=0?'#1e8a4c':'#b3541e'}">${money(Math.abs(aboveTarget))} ${aboveTarget>=0?'above':'below'} target</span>`:''}
+      </div>
+      ${homeTargetBar(won,target)}
+      <div style="text-align:right;font-size:11px;color:var(--t3)">${money(target)} target</div>
+    </div>
+
+    <div style="${boxStyle}">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:8px">Sales Engine</div>
+      <div style="font-size:24px;font-weight:800;color:var(--navy)">${money(sl.weighted)}</div>
+      <div style="font-size:11.5px;color:var(--t3);margin-bottom:9px">weighted forecast</div>
+      ${stages.length?`<div style="display:flex;border-radius:5px;overflow:hidden;height:9px;margin-bottom:7px">
+        ${stages.map((s,i)=>`<div style="width:${((s.count||0)/stageTotal)*100}%;background:${stageColours[i%stageColours.length]}" title="${esc(s.label)}: ${s.count}"></div>`).join('')}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:9px;font-size:11px;color:var(--t2)">
+        ${stages.map(s=>`<span><strong>${s.count}</strong> ${esc(s.label)}</span>`).join('')}
+      </div>`:''}
+      <div style="margin-top:9px;font-size:12.5px"><strong>${sl.live_out||0}</strong> <span style="color:var(--t3)">live proposals</span></div>
+    </div>
+
+    <div style="${boxStyle}">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:8px">Marketing Engine</div>
+      <div style="font-size:24px;font-weight:800;color:${(mk.missing||0)>0?'#c0392b':'#1e8a4c'}">${mk.missing??'\u2014'}</div>
+      <div style="font-size:11.5px;color:var(--t3);margin-bottom:6px">missing content items</div>
+      <div style="background:var(--s2);border-radius:5px;height:9px;overflow:hidden;margin-bottom:4px">
+        <div style="width:${missingPct}%;height:100%;background:#d9604f"></div></div>
+      ${mk.target_stock?`<div style="text-align:right;font-size:11px;color:var(--t3);margin-bottom:9px">of ${mk.target_stock} target items</div>`:''}
+      <div style="font-size:13px"><strong>${mk.active_commissions??'\u2014'}</strong> <span style="color:var(--t3)">active commissions</span></div>
+    </div>
+  </div>`;
+}
+
 function loadLauncherStats(){
   fetch('/api/launcher/summary').then(r=>r.json()).then(d=>{
     if(!d.ok) return;
@@ -9979,6 +10065,7 @@ function loadLauncherStats(){
     const fresh=document.getElementById('launcher-freshness');
     if(fresh) fresh.textContent='Live figures \u00b7 updated '+
       new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+    renderHomeBoxes(d.home_boxes);
 
     // Every chart gets the same treatment: a short line of context above
     // it, since a shape with no caption is exactly what made these hard to
