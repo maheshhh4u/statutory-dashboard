@@ -566,6 +566,7 @@ select:focus{outline:none;border-color:var(--green)}
       <span style="font-size:11px;color:rgba(255,255,255,.5)">Calling as:</span>
       <span id="caller-display" title="Taken from your login — change it on the Account page" style="font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.1);color:#fff;min-width:100px;text-align:center">…</span>
     </div>
+    <button onclick="crGoHome()" title="Back to the platform home" style="font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);cursor:pointer">🏠 Home</button>
     <button onclick="openAdmin()" style="font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);cursor:pointer">⚙ Settings</button>
     <div style="font-size:11px;color:rgba(255,255,255,.4)" id="hdrDate"></div>
   </div>
@@ -3571,7 +3572,14 @@ function initReportDates(){
 function initReportCallers(){
   const list=document.getElementById('caller-cb-list'); if(!list) return;
   list.innerHTML='';
-  (userList||[]).forEach(u=>{
+  // Array.isArray guard, not just ||[] — userList gets reassigned from a
+  // couple of different fetch responses elsewhere, and if any of them ever
+  // returns something that isn't an array, ||[] doesn't catch that (only
+  // null/undefined). One unguarded .forEach here was enough to throw an
+  // uncaught exception that silently halted ALL subsequent script
+  // execution on the page — including the code that builds the home page's
+  // application cards, which is why they were missing entirely.
+  (Array.isArray(userList)?userList:[]).forEach(u=>{
     const lbl=document.createElement('label');
     lbl.style.cssText='display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;font-size:12px';
     const cb=document.createElement('input'); cb.type='checkbox'; cb.value=u; cb.className='caller-item-cb';
@@ -7766,6 +7774,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.83", date:"2026-09", title:"Fixed the missing application cards, added a Home button, made the home boxes clickable",
+    changes:[
+      "The application cards had disappeared from the home page entirely \u2014 no way to navigate anywhere from it. Root cause: an unrelated part of the page (a caller-list feature in Admin Briefing) could, under one specific failure condition, be handed something that wasn't a list, then crash trying to loop over it. In a single-script page, one uncaught error anywhere halts every later script statement, including the code that builds the home page's own cards \u2014 which is exactly why they vanished, despite having nothing to do with them directly.",
+      "Reproduced the exact failure condition directly \u2014 a broken response from the one endpoint involved \u2014 and confirmed the fix holds under it, rather than assuming a plausible-looking patch was enough.",
+      "Added an explicit Home button to the header, next to Settings, always visible from inside any application \u2014 the logo already did this but apparently wasn't obvious enough on its own.",
+      "The three home-page boxes are now clickable: Quarterly target opens Control Panel's Overview, Sales Engine opens its Sales Engine page, Marketing Engine opens its Marketing Engine page \u2014 landing on the specific page that computed the figure being shown, not just Control Panel generically. Works whether Control Panel is already open (switches tab in place, no reload) or not yet loaded (opens directly on the right page).",
+    ]},
   { v:"2.82", date:"2026-09", title:"Home page: Target, Sales Engine and Marketing Engine, from Control Panel",
     changes:[
       "Per Judi's landing-page brief: three prominent boxes now sit at the top of the home page, above the application cards \u2014 Quarterly target, Sales Engine, Marketing Engine.",
@@ -10009,7 +10024,16 @@ function renderHomeBoxes(hb){
   }
   const money=v=>v==null?'\u2014':'\u00a3'+Number(v).toLocaleString(undefined,{maximumFractionDigits:0});
   const boxStyle='border:1px solid var(--lblue-d);border-top:3px solid var(--navy-l);border-radius:10px;'+
-    'padding:18px;background:var(--lblue)';
+    'padding:18px;background:var(--lblue);cursor:pointer;transition:box-shadow .15s,transform .15s';
+  // Clickable through to the matching page in Control Panel — the data
+  // shown here comes from there already, so landing on the same page that
+  // computed it is the natural destination for a click. Each box gets its
+  // own onclick/hover attributes rather than folding them into boxStyle,
+  // since mixing event-handler attributes into a CSS string is fragile —
+  // and each of the three needs a different target tab anyway.
+  const boxAttrs=tab=>`onclick="cpNavigate('${tab}')" `+
+    `onmouseover="this.style.boxShadow='0 6px 20px rgba(48,54,84,.14)';this.style.transform='translateY(-2px)'" `+
+    `onmouseout="this.style.boxShadow='none';this.style.transform='none'"`;
 
   const tg=hb.target||{}, won=tg.won||0, target=tg.quarterly||0;
   const aboveTarget = won - target;
@@ -10022,7 +10046,7 @@ function renderHomeBoxes(hb){
   const missingPct = mk.target_stock ? Math.max(2,Math.min(100,((mk.missing||0)/mk.target_stock)*100)) : 0;
 
   el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">
-    <div style="${boxStyle}">
+    <div style="${boxStyle}" ${boxAttrs('overview')} title="Open in Control Panel">
       <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:8px">Quarterly target</div>
       <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
         <div style="font-size:24px;font-weight:800;color:${won>=target?'#1e8a4c':'var(--navy)'}">${money(won)}</div>
@@ -10033,7 +10057,7 @@ function renderHomeBoxes(hb){
       <div style="text-align:right;font-size:11px;color:var(--t3)">${money(target)} target</div>
     </div>
 
-    <div style="${boxStyle}">
+    <div style="${boxStyle}" ${boxAttrs('sales')} title="Open in Control Panel">
       <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:8px">Sales Engine</div>
       <div style="font-size:24px;font-weight:800;color:var(--navy)">${money(sl.weighted)}</div>
       <div style="font-size:11.5px;color:var(--t3);margin-bottom:9px">weighted forecast</div>
@@ -10046,7 +10070,7 @@ function renderHomeBoxes(hb){
       <div style="margin-top:9px;font-size:12.5px"><strong>${sl.live_out||0}</strong> <span style="color:var(--t3)">live proposals</span></div>
     </div>
 
-    <div style="${boxStyle}">
+    <div style="${boxStyle}" ${boxAttrs('marketing')} title="Open in Control Panel">
       <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:8px">Marketing Engine</div>
       <div style="font-size:24px;font-weight:800;color:${(mk.missing||0)>0?'#c0392b':'#1e8a4c'}">${mk.missing??'\u2014'}</div>
       <div style="font-size:11.5px;color:var(--t3);margin-bottom:6px">missing content items</div>
@@ -11055,7 +11079,7 @@ let _sgKnown=[];
 // per visit, so switching away and back doesn't reload the whole app inside
 // it unnecessarily.
 let _cpLoaded=false, _cpOrigin='';
-function cpLoad(){
+function cpLoad(initialTab){
   if(_cpLoaded) return;
   const status=document.getElementById('cp-status');
   const frame=document.getElementById('cp-iframe');
@@ -11077,11 +11101,29 @@ function cpLoad(){
     const params = new URLSearchParams();
     if(person) params.set('person', person);
     if(d.is_admin) params.set('is_admin', '1');
+    if(initialTab) params.set('tab', initialTab);
     frame.src = d.url + (params.toString() ? '?' + params.toString() : '');
     frame.style.display='block';
     status.style.display='none';
     _cpLoaded=true;
   }).catch(e=>{ status.textContent='\u26a0 '+e.message; });
+}
+// Switches to the Control Panel module and lands on a specific tab — used
+// by the home page's Target/Sales Engine/Marketing Engine boxes. Two cases:
+// the iframe hasn't loaded yet (pass the tab as a URL param, so it opens
+// there directly), or it's already loaded (posting a message to the running
+// page in place is far better than reloading the whole iframe just to
+// change tab).
+function cpNavigate(tab){
+  crSwitchModule('controlpanel');
+  if(!_cpLoaded){
+    cpLoad(tab);
+  } else {
+    const frame=document.getElementById('cp-iframe');
+    if(frame && frame.contentWindow && _cpOrigin){
+      frame.contentWindow.postMessage({type:'cp_navigate_tab', tab}, _cpOrigin);
+    }
+  }
 }
 // Control Panel asks its parent (this page) to make privileged calls on its
 // behalf, rather than needing its own separately-typed admin code. The
@@ -12685,7 +12727,16 @@ function saveThemeSetting(){
 }
 function loadUsers(){
   fetch('/api/users').then(r=>r.json()).then(users=>{
-    userList=users;
+    // This endpoint normally returns a plain array, but if that call fails
+    // server-side (e.g. a momentary database hiccup), the platform's own
+    // error handler correctly returns {ok:false, error:...} instead — an
+    // object, not an array. Assigning that straight into userList (as this
+    // line used to) poisons it silently: the very next unrelated call to
+    // initReportCallers() then throws on an unguarded .forEach, and one
+    // uncaught exception anywhere in a single-script page halts every
+    // later script statement — which is what was actually breaking the
+    // home page's application cards, nothing to do with them directly.
+    if(Array.isArray(users)) userList=users;
     renderAdminUserList();
     // Re-render caller popup list if open
     if(document.getElementById('caller-modal').classList.contains('open')){
