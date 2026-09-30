@@ -55,9 +55,6 @@
   .platform-hero-mark{height:58px;margin-bottom:14px;filter:brightness(0) invert(1)}
   .platform-hero h1{margin:0 0 8px;font-size:28px;font-weight:800;letter-spacing:.02em;color:#fff}
   .platform-hero p{margin:0;font-size:13.5px;color:var(--gold);font-weight:600;letter-spacing:.03em}
-  .platform-hero-ridge{position:absolute;left:0;right:0;bottom:0;height:26px;background:var(--bg);
-    clip-path:polygon(0 100%,7% 38%,14% 68%,22% 22%,31% 60%,40% 30%,50% 66%,
-      60% 24%,69% 58%,78% 20%,87% 62%,94% 34%,100% 100%)}
   .lstat-pulse{background:var(--lblue-d);opacity:.5;animation:lstatPulse 1.3s ease-in-out infinite}
   @keyframes lstatPulse{0%,100%{opacity:.35}50%{opacity:.65}}
   /* ── Compact launcher hero ────────────────────────────────────────────
@@ -65,27 +62,38 @@
      strip at the top, with the dashboard boxes below — which only fits one
      screen with no scroll (Nadira's original ask for this page) if the hero
      gives back most of the room it used to take. */
-  .platform-hero-compact{padding:14px 20px 20px;margin:-8px -8px 14px}
+  .platform-hero-compact{padding:14px 20px 0;margin:-8px -8px 0}
   .platform-hero-compact .platform-hero-mark{height:36px;margin-bottom:7px}
   .platform-hero-compact h1{font-size:19px;margin-bottom:3px}
-  .platform-hero-compact .platform-hero-ridge{height:14px}
-  /* ── Application strip ─────────────────────────────────────────────────
-     One row, six buttons — Prospect Generator / CRM / Sales Generator /
-     Control Panel / Admin / Finance — replacing the taller card grid
-     (icon + label only; each app's at-a-glance figures now live in the
-     three dashboard boxes below instead of duplicated per-card). */
-  .app-strip{display:flex;gap:10px;align-items:stretch;flex:0 0 auto}
-  .app-strip-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
-    border:1.5px solid var(--border);border-top:3px solid var(--border);border-radius:10px;
-    background:var(--surface);color:var(--navy);cursor:pointer;padding:13px 8px;text-align:center;
-    font-family:'Montserrat',sans-serif;font-weight:700;font-size:12px;letter-spacing:.02em;
-    transition:box-shadow .15s,transform .15s,background .15s}
-  .app-strip-btn .icon{font-size:20px;line-height:1}
-  .app-strip-btn.live{border-top-color:var(--navy-l);background:var(--lblue)}
-  .app-strip-btn.live:hover{box-shadow:0 6px 16px rgba(48,54,84,.14);transform:translateY(-2px)}
-  .app-strip-btn.planned{opacity:.55;cursor:default}
-  .app-strip-btn .planned-tag{font-size:8.5px;font-weight:700;color:var(--t3);text-transform:uppercase;
-    background:var(--s2);border-radius:8px;padding:1px 6px}
+  /* ── Application strip, merged into the hero's own mountain ridge ───────
+     The hero used to end in a flat decorative ridge, then a separate row
+     of rectangular buttons sat below it. Per the idea of making the ridge
+     itself the navigation: each button IS one peak now — the ridge and the
+     strip are the same element. The hero's navy runs straight down into
+     the peaks with no seam, so the six app buttons read as the range of
+     "9 Mountains" itself, not a UI bar bolted under a banner. */
+  .app-strip{display:flex;align-items:flex-end;gap:0;flex:0 0 auto}
+  .app-strip-btn{flex:1;position:relative;height:50px;display:flex;flex-direction:column;
+    align-items:center;justify-content:flex-end;gap:1px;padding:0 4px 5px;
+    cursor:pointer;text-align:center;color:#fff;
+    font-family:'Montserrat',sans-serif;font-weight:700;font-size:9.5px;letter-spacing:.01em;
+    clip-path:polygon(0% 100%,0% 32%,50% 0%,100% 32%,100% 100%);
+    transition:transform .15s,filter .15s}
+  .app-strip-btn .icon{font-size:12px;line-height:1}
+  .app-strip-btn:nth-child(3n+1){background:var(--navy)}
+  .app-strip-btn:nth-child(3n+2){background:var(--navy-l)}
+  .app-strip-btn:nth-child(3n){background:var(--navy-d)}
+  .app-strip-btn.live:hover{transform:translateY(-4px);filter:brightness(1.08)}
+  .app-strip-btn.planned{opacity:.5;cursor:default}
+  .app-strip-btn.planned:hover{transform:none;filter:none}
+  /* Scoped to #tab-launcher.active (not just .section.active) so this only
+     ever applies to the launcher, and — critically — an inline style here
+     is NOT what turns it on: an inline display would beat .section{display:
+     none} even while inactive, which is exactly what put the launcher's
+     content on every other tab, above or below the real content, until this
+     was caught. The class toggle in switchTab()/crSwitchModule() is what
+     must control visibility, this rule only shapes it once active. */
+  #tab-launcher.active{height:calc(100vh - 140px);overflow:hidden;display:flex;flex-direction:column}
   #home-boxes{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center}
   /* ── CRM grid ──────────────────────────────────────────────────────────
      Dense, aligned, and quiet: a CRM list is read all day, so row height,
@@ -1232,7 +1240,7 @@ select:focus{outline:none;border-color:var(--green)}
 <!-- App launcher: the front door to the whole suite. Shown before any single
      application, so the platform reads as a set of tools rather than one
      dashboard with extras bolted on. -->
-<section id="tab-launcher" class="section" style="height:calc(100vh - 140px);overflow:hidden;display:flex;flex-direction:column">
+<section id="tab-launcher" class="section">
   <!-- Hero styled after the 9mountains.co.uk homepage: navy panel, gold
        accent, a mountain-ridge silhouette along the bottom edge. Compact so
        the strip and the dashboard below still fit one screen. -->
@@ -1240,7 +1248,6 @@ select:focus{outline:none;border-color:var(--green)}
     <img src="/static/9m-mark.png" alt="9 Mountains" class="platform-hero-mark">
     <h1>9 Mountains Platform</h1>
     <p id="launcher-greeting">Choose an application to get started</p>
-    <div class="platform-hero-ridge"></div>
   </div>
   <div style="max-width:1080px;width:100%;margin:0 auto;padding:0;flex:1;display:flex;flex-direction:column;min-height:0">
 
