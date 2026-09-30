@@ -72,12 +72,15 @@
      strip are the same element. The hero's navy runs straight down into
      the peaks with no seam, so the six app buttons read as the range of
      "9 Mountains" itself, not a UI bar bolted under a banner. */
-  .app-strip{display:flex;align-items:flex-end;gap:0;flex:0 0 auto}
-  .app-strip-btn{flex:1;position:relative;height:50px;display:flex;flex-direction:column;
-    align-items:center;justify-content:flex-end;gap:1px;padding:0 4px 5px;
+  .app-strip{display:flex;align-items:flex-start;gap:0;flex:0 0 auto}
+  .app-strip-btn{flex:1;position:relative;height:54px;display:flex;flex-direction:column;
+    align-items:center;justify-content:flex-start;gap:1px;padding:6px 4px 16px;
     cursor:pointer;text-align:center;color:#fff;
     font-family:'Montserrat',sans-serif;font-weight:700;font-size:9.5px;letter-spacing:.01em;
-    clip-path:polygon(0% 100%,0% 32%,50% 0%,100% 32%,100% 100%);
+    /* Flat top flush against the header, single downward point at the base —
+       each button now reads as one of the "downside mountains" hanging off
+       the blue band, per the reference mockup, rather than an upward peak. */
+    clip-path:polygon(0% 0%,100% 0%,100% 70%,50% 100%,0% 70%);
     transition:transform .15s,filter .15s}
   .app-strip-btn .icon{font-size:12px;line-height:1}
   .app-strip-btn:nth-child(3n+1){background:var(--navy)}
