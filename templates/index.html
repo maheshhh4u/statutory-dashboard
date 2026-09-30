@@ -72,23 +72,25 @@
      strip are the same element. The hero's navy runs straight down into
      the peaks with no seam, so the six app buttons read as the range of
      "9 Mountains" itself, not a UI bar bolted under a banner. */
-  .app-strip{display:flex;align-items:flex-start;gap:0;flex:0 0 auto}
-  .app-strip-btn{flex:1;position:relative;height:54px;display:flex;flex-direction:column;
-    align-items:center;justify-content:flex-start;gap:1px;padding:6px 4px 16px;
-    cursor:pointer;text-align:center;color:#fff;
-    font-family:'Montserrat',sans-serif;font-weight:700;font-size:9.5px;letter-spacing:.01em;
-    /* Flat top flush against the header, single downward point at the base —
-       each button now reads as one of the "downside mountains" hanging off
-       the blue band, per the reference mockup, rather than an upward peak. */
-    clip-path:polygon(0% 0%,100% 0%,100% 70%,50% 100%,0% 70%);
-    transition:transform .15s,filter .15s}
-  .app-strip-btn .icon{font-size:12px;line-height:1}
-  .app-strip-btn:nth-child(3n+1){background:var(--navy)}
-  .app-strip-btn:nth-child(3n+2){background:var(--navy-l)}
-  .app-strip-btn:nth-child(3n){background:var(--navy-d)}
-  .app-strip-btn.live:hover{transform:translateY(-4px);filter:brightness(1.08)}
-  .app-strip-btn.planned{opacity:.5;cursor:default}
-  .app-strip-btn.planned:hover{transform:none;filter:none}
+  /* Each button is now a hand-drawn SVG mountain silhouette (base facet +
+     shaded facet + snowcap) hanging off the header, rather than a flat CSS
+     shape — per the reference mockup. Fixed 140px band gives the downward
+     peaks room; drop-shadow gives the whole row depth against the page. */
+  .app-strip{display:flex;gap:0;flex:0 0 auto;height:140px;
+    filter:drop-shadow(0 10px 14px rgba(0,0,0,.35))}
+  .mountain-btn{flex:1;position:relative;background:transparent;border:none;outline:none;
+    padding:0;margin:0;font:inherit;cursor:pointer;transition:transform .2s ease,filter .2s ease}
+  .mountain-btn.live:hover{transform:translateY(4px);filter:brightness(1.15);z-index:10}
+  .mountain-btn.planned{cursor:default}
+  .mountain-svg{position:absolute;top:0;left:0;width:100%;height:100%;display:block;pointer-events:none}
+  .mountain-btn .btn-content{position:relative;z-index:2;height:100%;display:flex;flex-direction:column;
+    align-items:center;justify-content:flex-start;padding:12px 4px 0;text-align:center;user-select:none}
+  .mountain-btn .btn-icon{font-size:15px;margin-bottom:3px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.6))}
+  .mountain-btn .btn-title{font-size:10.5px;font-weight:700;line-height:1.2;color:#fff;
+    font-family:'Montserrat',sans-serif;text-shadow:0 1px 3px rgba(0,0,0,.8)}
+  .mountain-btn .btn-peak-name{font-size:8.5px;color:var(--gold);text-transform:uppercase;
+    letter-spacing:.5px;margin-top:3px;font-weight:600;opacity:.9}
+  .mountain-btn .btn-status{font-size:9.5px;color:#d2dbe5;margin-top:2px;font-style:italic}
   /* Scoped to #tab-launcher.active (not just .section.active) so this only
      ever applies to the launcher, and — critically — an inline style here
      is NOT what turns it on: an inline display would beat .section{display:
@@ -9907,24 +9909,75 @@ function crLoadModules(){
     crSwitchModule((q && CR_MODULE_TABS[q]) ? q : (d.landing||'prospects'), true);
   }).catch(()=>{});
 }
+// Eight silhouette + colour variants, each modelled on one of the world's
+// highest peaks. Live modules cycle through the six coloured peaks; planned
+// ones through the two paler, muted peaks — so any number of configured
+// modules still reads as one continuous mountain range.
+const MOUNTAIN_SHAPES=[
+  {name:'Mt. Everest',   base:'#21263e', shadow:'#141829',
+   points:'0,0 100,0 95,28 78,65 52,126 42,92 20,50 0,25',
+   shadowPoints:'52,126 100,0 78,65 95,28',
+   snow:'52,126 45,102 52,98 58,107', snowOp:.95},
+  {name:'K2',            base:'#6c8099', shadow:'#506177',
+   points:'0,0 100,0 90,35 68,78 50,128 32,82 12,40 0,20',
+   shadowPoints:'50,128 100,0 68,78 90,35',
+   snow:'50,128 44,102 50,96 56,105', snowOp:1},
+  {name:'Kangchenjunga', base:'#21263e', shadow:'#141829',
+   points:'0,0 100,0 92,30 75,62 55,124 48,122 30,72 10,35 0,15',
+   shadowPoints:'48,122 0,0 10,35 30,72',
+   snow:'55,124 48,122 42,104 58,104', snowOp:.9},
+  {name:'Matterhorn',    base:'#21263e', shadow:'#141829',
+   points:'0,0 100,0 88,42 66,78 44,128 38,98 24,56 0,26',
+   shadowPoints:'44,128 0,0 24,56 38,98',
+   snow:'44,128 38,106 46,102 50,112', snowOp:1},
+  {name:'Mont Blanc',    base:'#6c8099', shadow:'#506177',
+   points:'0,0 100,0 94,36 70,72 48,122 28,76 10,32 0,10',
+   shadowPoints:'48,122 100,0 70,72',
+   snow:'48,122 38,98 58,98', snowOp:1},
+  {name:'Makalu',        base:'#21263e', shadow:'#141829',
+   points:'0,0 100,0 86,45 64,80 50,126 36,80 14,42 0,20',
+   shadowPoints:'50,126 100,0 86,45 64,80',
+   snow:'50,126 42,102 50,96 58,104', snowOp:.9},
+];
+const MOUNTAIN_SHAPES_PLANNED=[
+  {name:'Annapurna', base:'#8893a3', shadow:'#6c7787',
+   points:'0,0 100,0 90,32 72,65 54,122 36,78 14,36 0,16',
+   shadowPoints:'54,122 0,0 14,36 36,78',
+   snow:'54,122 46,100 54,94 60,104', snowOp:1},
+  {name:'Denali',    base:'#abbacf', shadow:'#8d9eb3',
+   points:'0,0 100,0 92,36 68,74 48,124 26,76 8,36 0,16',
+   shadowPoints:'48,124 100,0 68,74',
+   snow:'48,124 38,98 56,100', snowOp:1},
+];
 function renderLauncher(){
   const grid=document.getElementById('launcher-grid');
   if(!grid) return;
-  // One row, icon + label only — the at-a-glance figures that used to live
-  // inside each card now live in the three dashboard boxes below instead,
-  // per Judi's landing-page layout (buttons on top, dashboard underneath).
-  // Planned apps are shown but not clickable — a visible roadmap without
-  // implying they work — with their description folded into the tooltip
-  // rather than printed space a single-row strip no longer has.
+  // Each button is its own SVG mountain — base facet, shaded facet, snowcap
+  // on the downward peak — with the icon/label/peak-name laid over the top
+  // in the wide base, per the reference design. The at-a-glance figures
+  // that used to live inside each card now live in the three dashboard
+  // boxes below instead, per Judi's landing-page layout. Planned apps are
+  // shown but not clickable — a visible roadmap without implying they work.
+  let liveIdx=0, plannedIdx=0;
   grid.innerHTML=(_crAllModules||[]).map(m=>{
     const live=m.status==='live';
+    const shape=live
+      ? MOUNTAIN_SHAPES[liveIdx++%MOUNTAIN_SHAPES.length]
+      : MOUNTAIN_SHAPES_PLANNED[plannedIdx++%MOUNTAIN_SHAPES_PLANNED.length];
     const tip=esc([m.label,m.description].filter(Boolean).join(' \u2014 '));
-    return `<div class="app-strip-btn ${live?'live':'planned'}" title="${tip}"
+    return `<button class="mountain-btn ${live?'live':'planned'}" title="${tip}"
       ${live?`onclick="crSwitchModule('${m.id}')"`:''}>
-      <span class="icon">${m.icon}</span>
-      <span>${esc(m.label)}</span>
-      ${live?'':'<span class="planned-tag">Planned</span>'}
-    </div>`;
+      <svg class="mountain-svg" viewBox="0 0 100 130" preserveAspectRatio="none">
+        <polygon points="${shape.points}" fill="${shape.base}" />
+        <polygon points="${shape.shadowPoints}" fill="${shape.shadow}" />
+        <polygon points="${shape.snow}" fill="#ffffff" opacity="${shape.snowOp}" />
+      </svg>
+      <div class="btn-content">
+        <span class="btn-icon">${m.icon}</span>
+        <span class="btn-title">${esc(m.label)}</span>
+        ${live?`<span class="btn-peak-name">${shape.name}</span>`:'<span class="btn-status">Planned</span>'}
+      </div>
+    </button>`;
   }).join('');
   loadLauncherStats();
 }
