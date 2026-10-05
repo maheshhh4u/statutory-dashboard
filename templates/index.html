@@ -608,6 +608,11 @@ select:focus{outline:none;border-color:var(--green)}
     </div>
     <button onclick="crGoHome()" title="Back to the platform home" style="font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);cursor:pointer">🏠 Home</button>
     <button onclick="openAdmin()" style="font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);cursor:pointer">⚙ Settings</button>
+    <select id="module-switcher" onchange="crSwitchModule(this.value)" title="Switch between the three views of the same data"
+      style="font-size:11px;font-weight:700;padding:4px 8px;border:1px solid rgba(255,255,255,.25);border-radius:6px;background:rgba(255,255,255,.12);color:#fff;cursor:pointer"></select>
+    <button onclick="showAbout()" title="About & version history" style="font-size:11px;font-weight:700;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);cursor:pointer">ℹ️ About</button>
+    <a href="/admin/users" title="Your account, password and two-factor settings" style="font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);text-decoration:none;cursor:pointer">👤 Account</a>
+    <a href="/logout" title="Sign out" style="font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);text-decoration:none;cursor:pointer">⏻ Sign out</a>
     <div style="font-size:11px;color:rgba(255,255,255,.4)" id="hdrDate"></div>
   </div>
 </header>
@@ -621,13 +626,6 @@ select:focus{outline:none;border-color:var(--green)}
   <button class="nav-btn" onclick="switchTab('old',this)">🏛️ 40+ Yrs · Zero Statutory</button>
   <button class="nav-btn" onclick="switchTab('milestones',this)">🎂 Anniversary Watch</button>
   <button class="nav-btn" onclick="switchTab('customreport',this)">🧩 Custom Report</button>
-  <span style="margin-left:auto;display:flex;align-items:center;gap:6px">
-    <select id="module-switcher" onchange="crSwitchModule(this.value)" title="Switch between the three views of the same data"
-      style="padding:4px 8px;border:1px solid rgba(255,255,255,.25);border-radius:6px;background:rgba(255,255,255,.12);color:var(--text);font-size:12px;font-weight:700"></select>
-  </span>
-  <button class="nav-btn" onclick="showAbout()" title="About & version history" style="font-weight:700">ℹ️ About</button>
-  <a class="nav-btn" href="/admin/users" title="Your account, password and two-factor settings" style="text-decoration:none">👤 Account</a>
-  <a class="nav-btn" href="/logout" title="Sign out" style="text-decoration:none">⏻ Sign out</a>
 </nav>
 <main class="main">
 <!-- Caller warning banner -->
@@ -7751,6 +7749,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.87", date:"2026-10", title:"Module switcher, About, Account and Sign out moved to the header — visible from every application",
+    changes:[
+      "These four controls used to live in the white sub-nav, which is per-module and is hidden entirely on the 9 Mountains Platform launcher page — so there was no way to switch applications, check the version, or sign out from the launcher itself. They're now in the navy header bar, which is always on screen, so they work the same from the launcher, Prospect Generator, CRM, Sales Generator, Control Panel, Admin Briefing and Finance Briefing.",
+      "Restyled to match the header's existing Home/Settings pills rather than the light sub-nav's tab style, so they read correctly against the navy background.",
+      "Checked at 1280, 1366, 1440 and 1920px wide — no overlap or overflow with the longest module name."
+    ]},
   { v:"2.86", date:"2026-10", title:"Prospect Generator's Home now opens directly into the Calling Report",
     changes:[
       "Home previously showed a grid of nine cards (Daily Calling, Prospect List, Charity Search, Newly Registered, Late Accounts, 40+ Yrs, Anniversary Watch, Calling Report, Custom Report) that had to be clicked through. It now opens straight into the full Calling Report — filters, Overview/Funnel & Pipeline/Efficiency/Hot Leads views, KPI tiles, AI Performance Coach and charts — with no extra click.",
