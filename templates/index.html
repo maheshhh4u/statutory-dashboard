@@ -7818,6 +7818,17 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.85", date:"2026-10", title:"Custom Report added to the top nav, next to Anniversary Watch",
+    changes:[
+      "Custom Report was previously reachable only from a home-page card; it's now also a direct nav button, in the same row as the other prospecting tabs, right after Anniversary Watch.",
+      "Fixed a latent bug in the nav's active-button highlighting: it matched a clicked home-page card to a nav button by array position, which silently broke (highlighting the wrong tab) whenever a nav button was added or reordered. It now matches directly by the tab being opened, so it can't drift out of sync again."
+    ]},
+  { v:"2.84", date:"2026-09", title:"Launcher: real SVG mountain-silhouette buttons with named peaks",
+    changes:[
+      "The application strip at the top of the 9 Mountains Platform home page is now a true mountain range — each application is a hand-drawn SVG silhouette (base facet, shaded face, snowcap), merged directly into the hero's mountain-ridge graphic so there's no seam between the decorative peaks and the clickable ones.",
+      "Six named peaks (Everest, K2, Kangchenjunga, Matterhorn, Mont Blanc, Makalu) cycle through for live modules; two paler ones (Annapurna, Denali) mark modules still Planned — works correctly regardless of how many modules are configured.",
+      "Verified single-screen, no scroll, nothing clipped at 1366×768, 1440×900 and 1920×1080."
+    ]},
   { v:"2.83", date:"2026-09", title:"Fixed the missing application cards, added a Home button, made the home boxes clickable",
     changes:[
       "The application cards had disappeared from the home page entirely \u2014 no way to navigate anywhere from it. Root cause: an unrelated part of the page (a caller-list feature in Admin Briefing) could, under one specific failure condition, be handed something that wasn't a list, then crash trying to loop over it. In a single-script page, one uncaught error anywhere halts every later script statement, including the code that builds the home page's own cards \u2014 which is exactly why they vanished, despite having nothing to do with them directly.",
