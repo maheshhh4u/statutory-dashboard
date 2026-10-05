@@ -602,7 +602,7 @@ select:focus{outline:none;border-color:var(--green)}
   </div>
 </div>
   <div style="display:flex;align-items:center;gap:10px">
-    <div style="display:flex;align-items:center;gap:7px">
+    <div id="hdr-callingas-wrap" style="display:none;align-items:center;gap:7px">
       <span style="font-size:11px;color:rgba(255,255,255,.5)">Calling as:</span>
       <span id="caller-display" title="Taken from your login — change it on the Account page" style="font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.1);color:#fff;min-width:100px;text-align:center">…</span>
     </div>
@@ -611,7 +611,13 @@ select:focus{outline:none;border-color:var(--green)}
     <select id="module-switcher" onchange="crSwitchModule(this.value)" title="Switch between the three views of the same data"
       style="font-size:11px;font-weight:700;padding:4px 8px;border:1px solid rgba(255,255,255,.25);border-radius:6px;background:rgba(255,255,255,.12);color:#fff;cursor:pointer"></select>
     <button onclick="showAbout()" title="About & version history" style="font-size:11px;font-weight:700;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);cursor:pointer">ℹ️ About</button>
-    <a href="/admin/users" title="Your account, password and two-factor settings" style="font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);text-decoration:none;cursor:pointer">👤 Account</a>
+    <a href="/admin/users" title="Your account, password and two-factor settings" style="font-size:11px;padding:4px 9px 4px 4px;border-radius:16px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.9);text-decoration:none;cursor:pointer;display:flex;align-items:center;gap:6px">
+      <span id="hdr-avatar-wrap" style="width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;font-size:10px;font-weight:700">
+        <span id="hdr-avatar-initial">👤</span>
+        <img id="hdr-avatar-img" style="display:none;width:100%;height:100%;object-fit:cover">
+      </span>
+      <span id="hdr-account-name">Account</span>
+    </a>
     <a href="/logout" title="Sign out" style="font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);text-decoration:none;cursor:pointer">⏻ Sign out</a>
     <div style="font-size:11px;color:rgba(255,255,255,.4)" id="hdrDate"></div>
   </div>
@@ -7749,6 +7755,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.88", date:"2026-10", title:"Profile photos, the Account pill now shows your name, and “Calling as” is Prospect-Generator-only",
+    changes:[
+      "“Calling as” only applies inside Prospect Generator — it's now hidden everywhere else (CRM, Sales Generator, Control Panel, Admin and Finance Briefing, and the launcher), instead of sitting there with nothing to do.",
+      "The header's Account pill now shows your own name instead of the word “Account”, with your photo (or your initial, until you set one) next to it.",
+      "New: upload a profile photo from the account page (click your name in the header → My details). Pick any JPG, PNG or GIF — it's automatically centre-cropped and resized in the browser before upload, so there's no size limit to worry about and no separate cropping step. Requires the matching app.py update (new /api/auth/avatar endpoint and an avatar column, created automatically on first run).",
+      "Administrators also see everyone's photo (or initial) next to their name in the account list."
+    ]},
   { v:"2.87", date:"2026-10", title:"Module switcher, About, Account and Sign out moved to the header — visible from every application",
     changes:[
       "These four controls used to live in the white sub-nav, which is per-module and is hidden entirely on the 9 Mountains Platform launcher page — so there was no way to switch applications, check the version, or sign out from the launcher itself. They're now in the navy header bar, which is always on screen, so they work the same from the launcher, Prospect Generator, CRM, Sales Generator, Control Panel, Admin Briefing and Finance Briefing.",
@@ -9844,6 +9857,26 @@ const CR_MODULE_TABS = {
 };
 let _crAllModules=[];
 let _crModule = 'prospects';
+function crLoadAccount(){
+  // Populates the header's Account pill with the signed-in person's own name
+  // and photo (if they've set one on the account page), instead of the
+  // generic "Account" label — shown in the header so it's the same regardless
+  // of which application is open.
+  fetch('/api/auth/me').then(r=>r.json()).then(d=>{
+    if(!d.ok) return;
+    const name=d.display_name||d.username||'Account';
+    const nameEl=document.getElementById('hdr-account-name');
+    if(nameEl) nameEl.textContent=name;
+    const img=document.getElementById('hdr-avatar-img'), initial=document.getElementById('hdr-avatar-initial');
+    if(d.avatar){
+      if(img){ img.src=d.avatar; img.style.display='block'; }
+      if(initial) initial.style.display='none';
+    } else {
+      if(img) img.style.display='none';
+      if(initial){ initial.style.display='block'; initial.textContent=name.trim().charAt(0).toUpperCase()||'👤'; }
+    }
+  }).catch(()=>{});
+}
 function crLoadModules(){
   fetch('/api/modules').then(r=>r.json()).then(d=>{
     if(!d.ok) return;
@@ -10193,6 +10226,10 @@ function crUpdateHeaderIdentity(mod){
   const t=document.getElementById('hdr-title'), s=document.getElementById('hdr-sub');
   if(t) t.textContent=title;
   if(s) s.textContent=sub;
+  // "Calling as:" only makes sense inside Prospect Generator — every other
+  // module/the launcher doesn't use a caller attribution at all.
+  const caw=document.getElementById('hdr-callingas-wrap');
+  if(caw) caw.style.display = (mod==='prospects') ? 'flex' : 'none';
 }
 function crGoHome(){ crSwitchModule('launcher'); }
 function crSwitchModule(mod, initial){
@@ -15469,6 +15506,7 @@ document.getElementById('mx-modal').addEventListener('click',function(e){
 loadThemeSetting();   // confirm the server's theme, in case an admin changed it
 crmInitFontSize();    // restore the list text size before anything renders
 crLoadModules();      // build the module switcher and land on the chosen module
+crLoadAccount();       // populate the header Account pill with name + photo
 restorePillPosition();
 loadUsers();
 restoreWrap();

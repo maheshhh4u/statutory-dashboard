@@ -298,10 +298,15 @@ def db_init():
             must_change INTEGER DEFAULT 0,
             created_at TEXT,
             last_login TEXT,
-            landing_module TEXT
+            landing_module TEXT,
+            avatar TEXT
         )""")
         try:
             client.execute("ALTER TABLE app_users ADD COLUMN landing_module TEXT")
+        except Exception:
+            pass   # already present on an existing database
+        try:
+            client.execute("ALTER TABLE app_users ADD COLUMN avatar TEXT")
         except Exception:
             pass   # already present on an existing database
         # "Remember me" tokens. Stored hashed, exactly like passwords: the raw
@@ -6215,13 +6220,13 @@ def _auth_caller_name(user):
 
 def _auth_get_user(username):
     r = db_query("SELECT username, display_name, password_hash, is_admin, totp_secret, "
-                 "totp_enabled, disabled, must_change FROM app_users WHERE username=?",
+                 "totp_enabled, disabled, must_change, avatar FROM app_users WHERE username=?",
                  (str(username).strip().lower(),))
     if not r: return None
     u = r[0]
     return {"username": u[0], "display_name": u[1], "password_hash": u[2], "is_admin": bool(u[3]),
             "totp_secret": u[4], "totp_enabled": bool(u[5]), "disabled": bool(u[6]),
-            "must_change": bool(u[7])}
+            "must_change": bool(u[7]), "avatar": u[8]}
 
 def _auth_any_users():
     r = db_query("SELECT COUNT(*) FROM app_users")
@@ -6536,6 +6541,21 @@ ADMIN_USERS_PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <div class="wrap">
   <div class="card">
     <h2>My details</h2>
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+      <div id="avatar-wrap" style="width:64px;height:64px;border-radius:50%;background:#dde2e8;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;font-size:22px;font-weight:700;color:#556">
+        <span id="avatar-initial"></span>
+        <img id="avatar-preview" style="display:none;width:100%;height:100%;object-fit:cover">
+      </div>
+      <div>
+        <div class="row">
+          <input type="file" id="avatar-file" accept="image/*" style="display:none">
+          <button class="btn" onclick="document.getElementById('avatar-file').click()">Change photo</button>
+          <button class="btn danger" id="avatar-remove-btn" onclick="removeAvatar()" style="display:none">Remove photo</button>
+        </div>
+        <div id="avatar-msg" class="msg"></div>
+        <p style="font-size:11.5px;color:#889;margin:6px 0 0">JPG, PNG or GIF. Resized automatically &mdash; no need to crop first.</p>
+      </div>
+    </div>
     <table><tbody id="mydetails"><tr><td style="color:#889">Loading&hellip;</td></tr></tbody></table>
   </div>
 
@@ -6601,6 +6621,7 @@ function load(){
       ['Last sign-in', esc(d.last_login||'\u2014')],
       ['Account created', esc(d.created_at||'\u2014')],
     ].map(r=>`<tr><td style="color:#667;width:170px">${r[0]}</td><td><strong>${r[1]}</strong></td></tr>`).join('');
+    renderAvatar(d.avatar, d.display_name||d.username);
     // Everyone can manage their own password and 2FA; only administrators see
     // the account list and the create-user form. The APIs behind those are
     // protected server-side too, so this is presentation rather than security.
@@ -6613,13 +6634,66 @@ function load(){
     loadAccounts();
   });
 }
+function renderAvatar(avatar, name){
+  const img=document.getElementById('avatar-preview'), initial=document.getElementById('avatar-initial'),
+        rm=document.getElementById('avatar-remove-btn');
+  if(avatar){
+    img.src=avatar; img.style.display='block'; initial.style.display='none'; rm.style.display='inline-block';
+  } else {
+    img.style.display='none'; initial.style.display='block'; rm.style.display='none';
+    initial.textContent=(name||'?').trim().charAt(0).toUpperCase();
+  }
+}
+document.getElementById('avatar-file').addEventListener('change', function(e){
+  const file=e.target.files[0]; if(!file) return;
+  const m=document.getElementById('avatar-msg');
+  if(!file.type.startsWith('image/')){ m.textContent='⚠ Please choose an image file.'; m.style.color='#a02c2c'; return; }
+  const reader=new FileReader();
+  reader.onload=function(ev){
+    const im=new Image();
+    im.onload=function(){
+      // Centre-crop to a square, then downscale to 200x200 — keeps every
+      // uploaded photo small and consistent regardless of the source size,
+      // without needing a cropping UI or a server-side image library.
+      const size=200, canvas=document.createElement('canvas');
+      canvas.width=size; canvas.height=size;
+      const ctx=canvas.getContext('2d');
+      const side=Math.min(im.width, im.height);
+      const sx=(im.width-side)/2, sy=(im.height-side)/2;
+      ctx.drawImage(im, sx, sy, side, side, 0, 0, size, size);
+      const dataUrl=canvas.toDataURL('image/jpeg', 0.85);
+      m.textContent='Uploading…'; m.style.color='#667';
+      fetch('/api/auth/avatar',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({data:dataUrl})}).then(r=>r.json()).then(d=>{
+          if(!d.ok){ m.textContent='⚠ '+(d.error||'Failed'); m.style.color='#a02c2c'; return; }
+          m.textContent='✓ Photo updated.'; m.style.color='#1d7a3a';
+          renderAvatar(d.avatar, (ME&&(ME.display_name||ME.username))||'');
+        });
+    };
+    im.onerror=function(){ m.textContent='⚠ Could not read that image.'; m.style.color='#a02c2c'; };
+    im.src=ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+function removeAvatar(){
+  const m=document.getElementById('avatar-msg');
+  fetch('/api/auth/avatar',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({data:null})}).then(r=>r.json()).then(d=>{
+      if(!d.ok){ m.textContent='⚠ '+(d.error||'Failed'); m.style.color='#a02c2c'; return; }
+      m.textContent='✓ Photo removed.'; m.style.color='#1d7a3a';
+      renderAvatar('', (ME&&(ME.display_name||ME.username))||'');
+    });
+}
 function loadAccounts(){
   fetch('/api/auth/users').then(r=>r.json()).then(d=>{
     const tb=document.getElementById('rows');
     if(!d.ok){ tb.innerHTML='<tr><td colspan="5" style="color:#a02c2c">'+esc(d.error)+'</td></tr>'; return; }
     if(!Array.isArray(d.users)){ tb.innerHTML='<tr><td colspan="5" style="color:#a02c2c">Unexpected response from the server.</td></tr>'; return; }
     tb.innerHTML=d.users.map(u=>`<tr>
-      <td><strong>${esc(u.display_name||u.username)}</strong><br><span style="color:#889;font-size:11.5px">${esc(u.username)}</span></td>
+      <td><div style="display:flex;align-items:center;gap:9px">
+        <div style="width:28px;height:28px;border-radius:50%;background:#dde2e8;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;font-size:12px;font-weight:700;color:#556">${u.avatar?`<img src="${u.avatar}" style="width:100%;height:100%;object-fit:cover">`:esc((u.display_name||u.username||'?').trim().charAt(0).toUpperCase())}</div>
+        <div><strong>${esc(u.display_name||u.username)}</strong><br><span style="color:#889;font-size:11.5px">${esc(u.username)}</span></div>
+      </div></td>
       <td>${u.is_admin?'<span class="tag">admin</span>':''}${u.totp_enabled?'<span class="tag">2FA</span>':''}${u.disabled?'<span class="tag off">disabled</span>':''}</td>
       <td>${u.devices}</td>
       <td style="color:#889;font-size:12px">${esc(u.last_login||'never')}</td>
@@ -6717,14 +6791,14 @@ def admin_users_page():
 def api_auth_users():
     err = _require_admin()
     if err: return err
-    rows = db_query("SELECT username, display_name, is_admin, totp_enabled, disabled, created_at, last_login "
+    rows = db_query("SELECT username, display_name, is_admin, totp_enabled, disabled, created_at, last_login, avatar "
                     "FROM app_users ORDER BY username") or []
     out = []
     for r in rows:
         tok = db_query("SELECT COUNT(*) FROM auth_tokens WHERE username=?", (r[0],))
         out.append({"username": r[0], "display_name": r[1], "is_admin": bool(r[2]),
                     "totp_enabled": bool(r[3]), "disabled": bool(r[4]),
-                    "created_at": r[5], "last_login": r[6],
+                    "created_at": r[5], "last_login": r[6], "avatar": r[7] or "",
                     "devices": (tok[0][0] if tok else 0)})
     return jsonify({"ok": True, "users": out, "me": current_user()})
 
@@ -6823,11 +6897,33 @@ def api_auth_me():
     devices = db_query("SELECT COUNT(*) FROM auth_tokens WHERE username=?", (u["username"],))
     return jsonify({"ok": True, "username": u["username"], "display_name": u["display_name"],
                     "is_admin": u["is_admin"], "totp_enabled": u["totp_enabled"],
-                    "must_change": u["must_change"],
+                    "must_change": u["must_change"], "avatar": u.get("avatar") or "",
                     "caller_name": _auth_caller_name(u),
                     "last_login": (extra[0][0] if extra else ""),
                     "created_at": (extra[0][1] if extra else ""),
                     "devices": (devices[0][0] if devices else 0)})
+
+@app.route("/api/auth/avatar", methods=["POST"])
+def api_auth_avatar():
+    # Profile photo, stored as a data URI directly in app_users.avatar. The
+    # browser resizes/compresses the image to a small square before this ever
+    # gets POSTed (see the upload control on the account page), so a few KB of
+    # base64 text is the normal case — the length cap below is just a backstop
+    # against someone bypassing the client-side resize.
+    if not current_user():
+        return jsonify({"ok": False, "error": "Not signed in"}), 401
+    d = request.json or {}
+    data = d.get("data")
+    if not data:
+        db_exec("UPDATE app_users SET avatar=NULL WHERE username=?", (current_user(),))
+        return jsonify({"ok": True, "avatar": ""})
+    data = str(data)
+    if not data.startswith("data:image/"):
+        return jsonify({"ok": False, "error": "That doesn't look like an image."}), 400
+    if len(data) > 300_000:
+        return jsonify({"ok": False, "error": "Image is still too large after compression — try a smaller photo."}), 400
+    db_exec("UPDATE app_users SET avatar=? WHERE username=?", (data, current_user()))
+    return jsonify({"ok": True, "avatar": data})
 
 @app.route("/api/auth/change_password", methods=["POST"])
 def api_auth_change_password():
