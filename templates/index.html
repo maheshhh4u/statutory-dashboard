@@ -961,6 +961,40 @@ select:focus{outline:none;border-color:var(--green)}
       </select>
       <div style="margin-left:auto;font-size:12px;color:var(--t3)" id="ch2-count"></div>
     </div>
+    <div class="filter-bar" id="ch2-more-filters" style="flex-wrap:wrap;gap:10px;align-items:flex-end;margin-top:-4px">
+      <div><label style="font-size:11px;color:var(--t3);display:block">Newsletter</label>
+        <select id="ch2-newsletter" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">Any</option><option value="yes">Yes</option><option value="no">No</option></select></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Source</label>
+        <select id="ch2-source" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">All</option></select></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Stage</label>
+        <select id="ch2-stage" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">All</option><option value="__none__">— No stage —</option></select></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Last caller</label>
+        <select id="ch2-caller" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">All</option></select></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Retry status</label>
+        <select id="ch2-retry" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">Any</option><option value="due">Retry due now</option><option value="waiting">Waiting to retry</option><option value="exhausted">Retries exhausted</option></select></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Has phone</label>
+        <select id="ch2-has-phone" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">Any</option><option value="yes">Yes</option><option value="no">No</option></select></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Has email</label>
+        <select id="ch2-has-email" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">Any</option><option value="yes">Yes</option><option value="no">No</option></select></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Has contact person</label>
+        <select id="ch2-has-contact" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">Any</option><option value="yes">Yes</option><option value="no">No</option></select></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Has follow-up</label>
+        <select id="ch2-has-followup" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">Any</option><option value="yes">Yes</option><option value="no">No</option></select></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Has comment</label>
+        <select id="ch2-has-comment" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">Any</option><option value="yes">Yes</option><option value="no">No</option></select></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Called today</label>
+        <select id="ch2-called-today" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">Any</option><option value="yes">Yes</option><option value="no">No</option></select></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Excluded</label>
+        <select id="ch2-excluded" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px"><option value="">Any</option><option value="yes">Yes</option><option value="no">No</option></select></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Min. calls</label>
+        <input type="number" id="ch2-min-calls" min="0" placeholder="e.g. 2" onchange="loadCallHistoryList(0)" style="width:70px;padding:6px;border:1px solid var(--bd);border-radius:4px"></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Income from (£)</label>
+        <input type="number" id="ch2-income-min" min="0" placeholder="min" onchange="loadCallHistoryList(0)" style="width:90px;padding:6px;border:1px solid var(--bd);border-radius:4px"></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Income to (£)</label>
+        <input type="number" id="ch2-income-max" min="0" placeholder="max" onchange="loadCallHistoryList(0)" style="width:90px;padding:6px;border:1px solid var(--bd);border-radius:4px"></div>
+      <div><label style="font-size:11px;color:var(--t3);display:block">Statutory from (£)</label>
+        <input type="number" id="ch2-stat-min" min="0" placeholder="min" onchange="loadCallHistoryList(0)" style="width:90px;padding:6px;border:1px solid var(--bd);border-radius:4px"></div>
+    </div>
     <div class="tbl-wrap tbl-scroll" id="historyScroll" style="max-height:74vh;overflow:auto">
       <table id="historyTable">
         <thead>
@@ -7755,6 +7789,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.89", date:"2026-10", title:"Call History: Newsletter filter and a full set of filters",
+    changes:[
+      "Added a \u201CNewsletter\u201D filter (Any / Yes / No) to Call History in Daily Calling, and a \u201CNewsletter\u201D column (TRUE / FALSE) to the Call History Excel export.",
+      "Added a second filter row to Call History: Source, Stage, Last caller, Retry status (due / waiting / exhausted), Has phone, Has email, Has contact person, Has follow-up, Has comment, Called today, Excluded, Minimum number of calls, Total income range and Minimum statutory income.",
+      "All filters are applied across the whole history (not just the visible page), combine with each other, are reset by Clear, and carry through to \u201CExport to Excel \u2192 All items\u201D."
+    ]},
   { v:"2.88", date:"2026-10", title:"Profile photos, the Account pill now shows your name, and “Calling as” is Prospect-Generator-only",
     changes:[
       "“Calling as” only applies inside Prospect Generator — it's now hidden everywhere else (CRM, Sales Generator, Control Panel, Admin and Finance Briefing, and the launcher), instead of sitting there with nothing to do.",
@@ -14518,6 +14558,7 @@ function debouncedHistorySearch(){
   clearTimeout(_historySearchTimer);
   _historySearchTimer=setTimeout(()=>loadCallHistoryList(0), 400);
 }
+const HISTORY_EXTRA_FILTERS={"newsletter": "ch2-newsletter", "source": "ch2-source", "stage": "ch2-stage", "caller": "ch2-caller", "retry": "ch2-retry", "has_phone": "ch2-has-phone", "has_email": "ch2-has-email", "has_contact": "ch2-has-contact", "has_followup": "ch2-has-followup", "has_comment": "ch2-has-comment", "called_today": "ch2-called-today", "excluded": "ch2-excluded", "min_calls": "ch2-min-calls", "income_min": "ch2-income-min", "income_max": "ch2-income-max", "stat_min": "ch2-stat-min"};
 function getHistoryFilters(){
   return {
     called_from:(document.getElementById('ch2-called-from')||{}).value||'',
@@ -14525,7 +14566,8 @@ function getHistoryFilters(){
     fu_from:(document.getElementById('ch2-fu-from')||{}).value||'',
     fu_to:(document.getElementById('ch2-fu-to')||{}).value||'',
     q:(document.getElementById('ch2-search')||{}).value||'',
-    outcome:(document.getElementById('ch2-outcome')||{}).value||''
+    outcome:(document.getElementById('ch2-outcome')||{}).value||'',
+    ...Object.fromEntries(Object.entries(HISTORY_EXTRA_FILTERS).map(([k,id])=>[k,(document.getElementById(id)||{}).value||'']))
   };
 }
 function getHistoryPageSize(){ return parseInt((document.getElementById('ch2-limit')||{}).value||'100')||100; }
@@ -14546,7 +14588,7 @@ function switchCallingSub(which){
   }
 }
 function clearCallHistoryFilters(){
-  ['ch2-called-from','ch2-called-to','ch2-fu-from','ch2-fu-to','ch2-search','ch2-outcome'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  ['ch2-called-from','ch2-called-to','ch2-fu-from','ch2-fu-to','ch2-search','ch2-outcome',...Object.values(HISTORY_EXTRA_FILTERS)].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   loadCallHistoryList(0);
 }
 function loadCallHistoryList(page){
@@ -14562,10 +14604,21 @@ function loadCallHistoryList(page){
       if(d.error){ body.innerHTML='<tr><td colspan="26" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(d.error)+'</div></td></tr>'; return; }
       historyData=d.charities||[];
       historyTotal=d.total_filtered||d.total_called||0;
+      fillHistoryFacets(d.facets||{});
       mergeHistoryIntoCalling(historyData);
       renderHistoryList(d);
     })
     .catch(e=>{ body.innerHTML='<tr><td colspan="26" style="text-align:center;padding:30px"><div class="err-box">⚠ '+esc(e.message)+'</div></td></tr>'; });
+}
+function fillHistoryFacets(fc){
+  // Source / Stage / Last-caller dropdowns are filled from the data itself; keep the current pick.
+  [['ch2-source',fc.sources],['ch2-stage',fc.stages],['ch2-caller',fc.callers]].forEach(([id,list])=>{
+    const el=document.getElementById(id); if(!el||!list) return;
+    const cur=el.value;
+    const fixed=[...el.options].filter(o=>o.value===''||o.value==='__none__').map(o=>o.outerHTML).join('');
+    el.innerHTML=fixed+list.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');
+    el.value=[...el.options].some(o=>o.value===cur)?cur:'';
+  });
 }
 function historyGoto(page){
   const size=getHistoryPageSize();

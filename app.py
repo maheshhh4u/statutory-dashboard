@@ -9847,7 +9847,8 @@ def api_call_history_list_export():
             fu_from=str(flt.get("fu_from","")).strip(),
             fu_to=str(flt.get("fu_to","")).strip(),
             q=str(flt.get("q","")).strip(),
-            outcome_filter=str(flt.get("outcome","")).strip())
+            outcome_filter=str(flt.get("outcome","")).strip(),
+            xf=_hist_filters_from(flt))
         regs = [r["reg_number"] for r in full]
     if not regs:
         return jsonify({"error": "No charities to export"}), 400
@@ -9882,7 +9883,7 @@ def api_call_history_list_export():
     headers = ["Charity Name","Reg Number","Source","Source Detail",f"Last Called ({get_display_tz_name()})","Latest Outcome",f"Follow-up Due ({get_display_tz_name()})",
                "Stage","Main Phone","Main Email","Website",
                "Contact Person","Job Role","Contact Phone","Contact Email",
-               "Total Income","Statutory"]
+               "Total Income","Statutory","Newsletter"]
     for ci,h in enumerate(headers,1):
         c=ws.cell(row=1,column=ci,value=h)
         c.font=Font(name="Arial",bold=True,color="FFFFFF",size=11)
@@ -9920,12 +9921,13 @@ def api_call_history_list_export():
               ov.get("phone") or base.get("phone",""), ov.get("email") or base.get("email",""),
               ov.get("website") or base.get("website",""),
               con_name, con_role, con_phone, con_email,
-              base.get("total_income",""), base.get("statutory","")]
+              base.get("total_income",""), base.get("statutory",""),
+              bool(_newsletter.get(reg))]
         for ci,v in enumerate(vals,1):
             cell=ws.cell(row=r,column=ci,value=v)
             cell.font=Font(name="Arial",size=10); cell.border=border
         r+=1
-    widths=[30,12,16,22,17,20,17,16,16,24,22,30,18,16,24,14,12]
+    widths=[30,12,16,22,17,20,17,16,16,24,22,30,18,16,24,14,12,12]
     for ci,w in enumerate(widths,1):
         ws.column_dimensions[get_column_letter(ci)].width=w
     ws.freeze_panes="A2"
@@ -9935,7 +9937,15 @@ def api_call_history_list_export():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=call_history_{tstamp}.xlsx"})
 
-def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="", q="", outcome_filter=""):
+HIST_FILTER_KEYS = ("newsletter","source","stage","caller","has_phone","has_email","has_contact",
+                    "has_followup","has_comment","retry","excluded","called_today",
+                    "income_min","income_max","stat_min","min_calls")
+
+def _hist_filters_from(src):
+    """Pull the extra Call History filters out of a request.args / JSON dict."""
+    return {k: str((src or {}).get(k, "") or "").strip() for k in HIST_FILTER_KEYS}
+
+def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="", q="", outcome_filter="", xf=None, facets=None):
     """Return the full filtered + sorted list of previously-called charities (no paging).
     q filters by charity name or reg number (case-insensitive substring), applied
     across the WHOLE history — not just whatever page happens to be loaded — so a
@@ -9970,6 +9980,27 @@ def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="",
         if nm: names[reg] = nm
     outcomes = _latest_outcomes_map()
     retry_states = _retry_states_map()
+    xf = xf or {}
+    # Last caller + number of calls per charity (for the Caller / Min-calls filters)
+    last_caller, call_counts, _lc_ts = {}, {}, {}
+    for reg, ts, who in (db_query("SELECT reg_number, timestamp, caller FROM call_log") or []):
+        if not reg: continue
+        call_counts[reg] = call_counts.get(reg, 0) + 1
+        if who and str(ts) >= _lc_ts.get(reg, ""):
+            _lc_ts[reg] = str(ts); last_caller[reg] = who
+    for v in _called_log.values():
+        reg = str(v.get("reg_number") or "")
+        if reg and reg not in last_caller and v.get("called_by"):
+            last_caller[reg] = v.get("called_by")
+    def _num(x):
+        try: return float(str(x).replace(",", "").replace("£", "").strip())
+        except Exception: return None
+    inc_min, inc_max = _num(xf.get("income_min")), _num(xf.get("income_max"))
+    stat_min, min_calls = _num(xf.get("stat_min")), _num(xf.get("min_calls"))
+    def _yn(key, val):
+        """True/False if the filter is 'yes'/'no', None when unset."""
+        f = str(xf.get(key, "")).lower()
+        return None if f not in ("yes", "no") else ((f == "yes") == bool(val))
     # Convert display-timezone calendar-day filters to proper UTC timestamp
     # boundaries once, up front — comparing a raw UTC date-prefix against a
     # display-timezone date string would misplace anything near midnight.
@@ -10034,6 +10065,48 @@ def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="",
             ql = q.strip().lower()
             if ql not in str(base.get("name","")).lower() and ql not in str(reg).lower():
                 continue
+        # Extra fields exposed on the row (also useful to the UI)
+        stage_v = _statuses.get(f"calling|{reg}", "") or ""
+        caller_v = last_caller.get(reg, "") or ""
+        base["newsletter"] = bool(_newsletter.get(reg))
+        base["stage"] = base.get("stage") or stage_v
+        base["last_caller"] = caller_v
+        base["call_count"] = call_counts.get(reg, 0)
+        if facets is not None:
+            facets.setdefault("sources", set()).add(str(base.get("source") or ""))
+            facets.setdefault("stages", set()).add(stage_v)
+            facets.setdefault("callers", set()).add(caller_v)
+        # ── Extra filters ──
+        ok = True
+        for key, val in (("newsletter", base["newsletter"]),
+                         ("has_phone", base.get("phone")), ("has_email", base.get("email")),
+                         ("has_followup", fu_next), ("has_comment", _comments.get(f"calling|{reg}", "")),
+                         ("excluded", reg in _calling_excl), ("called_today", base["called_today"])):
+            r_ = _yn(key, val)
+            if r_ is False: ok = False; break
+        if not ok: continue
+        if xf.get("has_contact"):
+            ct = ov.get("contacts") or []
+            has_ct = bool(ct or ov.get("name") or ov.get("cphone") or ov.get("cemail"))
+            if _yn("has_contact", has_ct) is False: continue
+        if xf.get("source") and str(base.get("source") or "") != xf["source"]: continue
+        if xf.get("stage"):
+            if xf["stage"] == "__none__":
+                if stage_v: continue
+            elif stage_v != xf["stage"]: continue
+        if xf.get("caller") and caller_v != xf["caller"]: continue
+        if xf.get("retry"):
+            rv = xf["retry"]
+            if rv == "due" and not base["retry_due"]: continue
+            if rv == "waiting" and not (base["retry_at"] and not base["retry_due"] and not base["retry_exhausted"]): continue
+            if rv == "exhausted" and not base["retry_exhausted"]: continue
+        ti_v = _num(base.get("total_income"))
+        if inc_min is not None and (ti_v is None or ti_v < inc_min): continue
+        if inc_max is not None and (ti_v is None or ti_v > inc_max): continue
+        if stat_min is not None:
+            sv = _num(base.get("statutory"))
+            if sv is None or sv < stat_min: continue
+        if min_calls is not None and base["call_count"] < min_calls: continue
         # Outcome filter
         if outcome_filter:
             oc = base.get("outcome","")
@@ -10043,6 +10116,13 @@ def _build_call_history_rows(called_from="", called_to="", fu_from="", fu_to="",
                 continue
         rows.append(base)
     rows.sort(key=lambda x: x.get("last_called",""), reverse=True)
+    if facets is not None:
+        # Dropdown options come from ALL called charities, not just the filtered rows
+        for reg in regs:
+            b = batch_data.get(reg) or {}
+            facets.setdefault("sources", set()).add(str(b.get("source") or ""))
+            facets.setdefault("stages", set()).add(_statuses.get(f"calling|{reg}", "") or "")
+            facets.setdefault("callers", set()).add(last_caller.get(reg, "") or "")
     return rows
 
 @app.route("/api/call_history_list")
@@ -10062,10 +10142,13 @@ def api_call_history_list():
         try: offset = max(0, int(request.args.get("offset", "0")))
         except: offset = 0
 
-        rows = _build_call_history_rows(called_from, called_to, fu_from, fu_to, q, outcome_f)
+        facets = {}
+        rows = _build_call_history_rows(called_from, called_to, fu_from, fu_to, q, outcome_f,
+                                        xf=_hist_filters_from(request.args), facets=facets)
         total = len(rows)
         page_rows = rows[offset:offset+limit]
         return jsonify({"charities": page_rows, "count": len(page_rows),
+                        "facets": {k: sorted(x for x in v if x) for k, v in facets.items()},
                         "total_called": total, "total_filtered": total,
                         "offset": offset, "limit": limit})
     except Exception as e:
