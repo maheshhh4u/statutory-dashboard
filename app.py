@@ -4406,12 +4406,23 @@ def _run_advanced_search(criteria, limit=50000):
     # "cancer|oncology|tumour|chemotherapy") match on ANY of them — built for
     # the AI term-expansion feature, but usable directly too.
     wq_terms=[t.strip() for t in str(criteria.get("what","")).upper().split("|") if t.strip()]
-    # One compiled pattern for ALL terms (fast even with 60+ terms over 200k charities).
-    # A term must START at a word boundary — "SPORT" matches "sports"/"sporting" but
-    # not "transport" — while still matching inside the word, so a stem such as
-    # "AUTIS" finds autism, autistic and autistic-spectrum.
-    wq_re = re.compile("|".join("(?<![A-Z0-9])" + re.escape(t) for t in
-                                sorted(set(wq_terms), key=len, reverse=True))) if wq_terms else None
+    # Terms must START at a word boundary — "SPORT" matches "sports"/"sporting" but not
+    # "transport" — while still matching inside the word, so a stem such as "AUTIS"
+    # finds autism, autistic and autistic-spectrum. Done with plain str.find (C speed)
+    # rather than a big regex alternation, which was ~10x slower over 200k charities.
+    # A term that merely extends a shorter term ("SPORTS CLUB" vs "SPORTS") can never
+    # match anything extra, so it is dropped up front.
+    _kept = []
+    for _t in sorted(set(wq_terms), key=len):
+        if not any(_t.startswith(k) for k in _kept): _kept.append(_t)
+    wq_terms = _kept
+    def _what_hit(text, _terms=wq_terms):
+        for t in _terms:
+            i = text.find(t)
+            while i != -1:
+                if i == 0 or not text[i-1].isalnum(): return True
+                i = text.find(t, i+1)
+        return False
     lq_terms=[t.strip() for t in str(criteria.get("location","")).upper().split("|") if t.strip()]
     lq=lq_terms[0] if len(lq_terms)==1 else ""
     sq=str(criteria.get("reg_status","registered")).strip()
@@ -4448,7 +4459,7 @@ def _run_advanced_search(criteria, limit=50000):
         county=row.get("charity_contact_address4","").upper()
         if cq and cq not in county: continue
         what=row.get("charity_activities","").upper()
-        if wq_re and not wq_re.search(what): continue
+        if wq_terms and not _what_hit(what): continue
         if lq_terms:
             addr_blob = " ".join([row.get("charity_contact_address1",""), row.get("charity_contact_address2",""),
                                    row.get("charity_contact_address3",""), row.get("charity_contact_address4",""),
