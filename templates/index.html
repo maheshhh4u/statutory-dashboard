@@ -1144,7 +1144,7 @@ select:focus{outline:none;border-color:var(--green)}
       <div class="adv-field"><label>Max Income £</label><input type="number" id="adv-inc-max" placeholder="e.g. 5000000"></div>
       <div class="adv-field"><label>Min Expenditure £</label><input type="number" id="adv-exp-min" placeholder="e.g. 100000"></div>
       <div class="adv-field"><label>Max Expenditure £</label><input type="number" id="adv-exp-max" placeholder="e.g. 5000000"></div>
-      <div class="adv-field"><label>Location</label><input id="adv-location" placeholder="e.g. London, Manchester, SW1A"></div>
+      <div class="adv-field"><label>Location</label><input id="adv-location" placeholder="e.g. London, Manchester, SW1A — use | for several: London|Leeds"></div>
       <div class="adv-field" style="grid-column:1/-1">
         <label>What / Cause area <span style="font-weight:400;color:var(--t3)">(matches the charity's own activities description)</span></label>
         <div style="display:flex;gap:7px">
@@ -1554,19 +1554,22 @@ select:focus{outline:none;border-color:var(--green)}
      closest a keyword search can get without scoring every charity
      individually (which would mean 200,000+ AI calls per search). -->
 <div class="modal-bg" id="ai-terms-modal">
-  <div class="modal" style="max-width:520px;width:94vw">
+  <div class="modal" style="max-width:640px;width:94vw;max-height:90vh;overflow:auto">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
       <h3 style="margin:0">&#10024; Ask AI for search terms</h3>
       <span style="flex:1"></span>
       <span onclick="closeAiTermsModal()" title="Close" style="cursor:pointer;font-size:20px;line-height:1;color:var(--t3);padding:0 4px">&times;</span>
     </div>
     <p style="font-size:12.5px;color:var(--t2);margin:0 0 12px">
-      Describe what you're looking for in your own words. AI suggests specific terms likely to appear in a
-      charity's own description of its activities — you'll see them before anything is searched.
+      Describe what you're looking for in your own words — you can paste several groups at once, and mention
+      a location, income range or expenditure range. AI suggests many terms (including synonyms, acronyms and
+      spelling variants) likely to appear in a charity's own description of its activities, and fills the other
+      filters it finds. You'll see everything before it is applied.
     </p>
-    <textarea id="ai-terms-need" rows="2" placeholder="e.g. charities that support people affected by cancer" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--border);border-radius:6px;font-size:13px"></textarea>
+    <textarea id="ai-terms-need" rows="6" placeholder="e.g. charities that support people affected by cancer" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--border);border-radius:6px;font-size:13px"></textarea>
     <button class="btn btn-outline btn-sm" style="margin-top:9px" onclick="suggestAiTerms()">Suggest terms</button>
     <div id="ai-terms-status" style="font-size:12px;margin-top:8px"></div>
+    <div id="ai-terms-filters" style="margin-top:10px"></div>
     <div id="ai-terms-list" style="margin-top:10px"></div>
     <div class="modal-btns">
       <button class="btn btn-outline btn-sm" onclick="closeAiTermsModal()">Cancel</button>
@@ -7789,6 +7792,14 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.90", date:"2026-10", title:"Ask AI search wizard: far wider matching + fills the other filters",
+    changes:[
+      "Ask AI now returns 30\u201360 search terms instead of 4\u20137: the wording from your brief, synonyms, related activities, acronyms (ADHD, ASD, SEND\u2026), UK/US and hyphen/space spelling variants, and short stems (e.g. \u201Cautis\u201D catches autism and autistic).",
+      "You can now paste several groups at once (e.g. sports, community and neurodivergence organisations) \u2014 every group is covered. The brief box was previously cut off after 300 characters and the AI reply limited to 8 terms, which is why so few charities came back.",
+      "If your brief mentions a location, income range, expenditure range or charity type, Ask AI now shows them as tick-boxes and fills the matching Advanced Search fields (Location, Min/Max Income, Min/Max Expenditure, Charity Type).",
+      "Location now accepts several places separated by | (e.g. London|Leeds).",
+      "Terms are matched from the start of a word, so \u201Csport\u201D finds sports and sporting but no longer \u201Ctransport\u201D. Matching is also faster with long term lists."
+    ]},
   { v:"2.89", date:"2026-10", title:"Call History: Newsletter filter and a full set of filters",
     changes:[
       "Added a \u201CNewsletter\u201D filter (Any / Yes / No) to Call History in Daily Calling, and a \u201CNewsletter\u201D column (TRUE / FALSE) to the Call History Excel export.",
@@ -9357,42 +9368,83 @@ function doSimple(){
   fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(data=>{sAll=data;renderSR(data,1);}).catch(e=>showSE(e.message));
 }
 // ── AI search-term expansion ───────────────────────────────────────────────
-let _aiTerms=[];
+let _aiTerms=[], _aiFilters={};
 function openAiTermsModal(){
   document.getElementById('ai-terms-need').value='';
   document.getElementById('ai-terms-status').textContent='';
   document.getElementById('ai-terms-list').innerHTML='';
+  const fl=document.getElementById('ai-terms-filters'); if(fl) fl.innerHTML='';
   document.getElementById('ai-terms-insert-btn').style.display='none';
-  _aiTerms=[];
+  _aiTerms=[]; _aiFilters={};
   document.getElementById('ai-terms-modal').classList.add('open');
 }
 function closeAiTermsModal(){ document.getElementById('ai-terms-modal').classList.remove('open'); }
+function aiTermsToggleAll(on){ document.querySelectorAll('.ai-term-chk').forEach(c=>{c.checked=on;}); }
+function _aiMoney(n){ return '£'+Number(n).toLocaleString('en-GB'); }
 function suggestAiTerms(){
   const need=(document.getElementById('ai-terms-need').value||'').trim();
   const status=document.getElementById('ai-terms-status');
-  if(!need){ status.textContent='\u26a0 Describe what you\u2019re looking for first.'; status.style.color='var(--red)'; return; }
-  status.textContent='Thinking\u2026'; status.style.color='var(--t3)';
+  if(!need){ status.textContent='⚠ Describe what you’re looking for first.'; status.style.color='var(--red)'; return; }
+  status.textContent='Thinking… this can take up to 30 seconds for a long brief.'; status.style.color='var(--t3)';
   document.getElementById('ai-terms-list').innerHTML='';
+  const fbox=document.getElementById('ai-terms-filters'); if(fbox) fbox.innerHTML='';
   document.getElementById('ai-terms-insert-btn').style.display='none';
   fetch('/api/ai/expand_search_terms',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({need})}).then(r=>r.json()).then(d=>{
-      if(!d.ok){ status.textContent='\u26a0 '+esc(d.error||'Could not get suggestions'); status.style.color='var(--red)'; return; }
-      _aiTerms=d.terms||[];
-      status.textContent='Untick anything that doesn\u2019t look right, then use the selected terms.';
+      if(!d.ok){ status.textContent='⚠ '+(d.error||'Could not get suggestions'); status.style.color='var(--red)'; return; }
+      _aiTerms=d.terms||[]; _aiFilters=d.filters||{};
+      status.textContent=_aiTerms.length+' terms suggested. Untick anything that doesn’t look right, then apply.';
       status.style.color='var(--t2)';
-      document.getElementById('ai-terms-list').innerHTML=_aiTerms.map((t,i)=>
-        `<label style="display:flex;align-items:center;gap:7px;padding:4px 0;font-size:13px">
-          <input type="checkbox" class="ai-term-chk" data-i="${i}" checked> ${esc(t)}</label>`).join('');
+      // Other filters the AI found in the brief (location / income / expenditure / type)
+      const f=_aiFilters, rows=[];
+      if((f.locations||[]).length) rows.push(['location','Location',f.locations.join(' | ')]);
+      if(f.inc_min) rows.push(['inc_min','Min income',_aiMoney(f.inc_min)]);
+      if(f.inc_max) rows.push(['inc_max','Max income',_aiMoney(f.inc_max)]);
+      if(f.exp_min) rows.push(['exp_min','Min expenditure',_aiMoney(f.exp_min)]);
+      if(f.exp_max) rows.push(['exp_max','Max expenditure',_aiMoney(f.exp_max)]);
+      if(f.charity_type) rows.push(['charity_type','Charity type',f.charity_type]);
+      if(fbox && rows.length){
+        fbox.innerHTML='<div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:4px">Also fill these filters</div>'+
+          rows.map(r=>`<label style="display:flex;align-items:center;gap:7px;padding:3px 0;font-size:13px">
+            <input type="checkbox" class="ai-filter-chk" data-k="${r[0]}" checked> <span style="min-width:120px;color:var(--t3)">${r[1]}</span> <b>${esc(r[2])}</b></label>`).join('');
+      }
+      document.getElementById('ai-terms-list').innerHTML=
+        '<div style="font-size:12px;margin-bottom:4px"><b style="color:var(--t2)">Search terms</b> &nbsp;<a href="#" onclick="aiTermsToggleAll(true);return false">select all</a> · <a href="#" onclick="aiTermsToggleAll(false);return false">select none</a></div>'+
+        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:2px 12px;max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:8px">'+
+        _aiTerms.map((t,i)=>
+        `<label style="display:flex;align-items:center;gap:7px;padding:2px 0;font-size:13px">
+          <input type="checkbox" class="ai-term-chk" data-i="${i}" checked> ${esc(t)}</label>`).join('')+'</div>';
       document.getElementById('ai-terms-insert-btn').style.display='';
-    }).catch(e=>{ status.textContent='\u26a0 '+esc(e.message); status.style.color='var(--red)'; });
+    }).catch(e=>{ status.textContent='⚠ '+e.message; status.style.color='var(--red)'; });
+}
+function _aiVariants(t){
+  // Spelling / spacing variants so a term isn't missed: hyphen<->space, -ise<->-ize, -our<->-or.
+  const out=new Set([t]), l=t.toLowerCase();
+  if(l.includes('-')) out.add(l.replace(/-/g,' ')), out.add(l.replace(/-/g,''));
+  if(l.includes(' ')) out.add(l.replace(/ /g,'-'));
+  [...out].forEach(x=>{
+    if(/is(e|ed|es|ing|ation)/.test(x)) out.add(x.replace(/is(e|ed|es|ing|ation)/g,'iz$1'));
+    else if(/iz(e|ed|es|ing|ation)/.test(x)) out.add(x.replace(/iz(e|ed|es|ing|ation)/g,'is$1'));
+    if(/our/.test(x)) out.add(x.replace(/our/g,'or'));
+  });
+  return [...out];
 }
 function insertAiTerms(){
   const chosen=Array.from(document.querySelectorAll('.ai-term-chk:checked')).map(c=>_aiTerms[parseInt(c.dataset.i,10)]);
-  if(!chosen.length){ document.getElementById('ai-terms-status').textContent='\u26a0 Select at least one term.'; return; }
-  // Pipe-separated: the backend matches a charity if its activities
-  // description contains ANY of these, in one pass over the bulk file
-  // rather than one search per term.
-  document.getElementById('adv-what').value=chosen.join('|');
+  if(!chosen.length){ document.getElementById('ai-terms-status').textContent='⚠ Select at least one term.'; return; }
+  // Pipe-separated: the backend matches a charity if its activities description
+  // contains ANY of these, in one pass over the bulk file.
+  const all=[]; chosen.forEach(t=>_aiVariants(t).forEach(x=>{ if(!all.includes(x)) all.push(x); }));
+  document.getElementById('adv-what').value=all.join('|');
+  // Other filters the user left ticked
+  const on=new Set(Array.from(document.querySelectorAll('.ai-filter-chk:checked')).map(c=>c.dataset.k));
+  const f=_aiFilters||{}, set=(id,val)=>{ const el=document.getElementById(id); if(el) el.value=val; };
+  if(on.has('location')) set('adv-location',(f.locations||[]).join('|'));
+  if(on.has('inc_min')) set('adv-inc-min',f.inc_min);
+  if(on.has('inc_max')) set('adv-inc-max',f.inc_max);
+  if(on.has('exp_min')) set('adv-exp-min',f.exp_min);
+  if(on.has('exp_max')) set('adv-exp-max',f.exp_max);
+  if(on.has('charity_type')) set('adv-type',f.charity_type);
   closeAiTermsModal();
 }
 function doAdv(){

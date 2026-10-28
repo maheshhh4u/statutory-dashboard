@@ -4406,7 +4406,14 @@ def _run_advanced_search(criteria, limit=50000):
     # "cancer|oncology|tumour|chemotherapy") match on ANY of them — built for
     # the AI term-expansion feature, but usable directly too.
     wq_terms=[t.strip() for t in str(criteria.get("what","")).upper().split("|") if t.strip()]
-    lq=str(criteria.get("location","")).upper().strip()
+    # One compiled pattern for ALL terms (fast even with 60+ terms over 200k charities).
+    # A term must START at a word boundary — "SPORT" matches "sports"/"sporting" but
+    # not "transport" — while still matching inside the word, so a stem such as
+    # "AUTIS" finds autism, autistic and autistic-spectrum.
+    wq_re = re.compile("|".join("(?<![A-Z0-9])" + re.escape(t) for t in
+                                sorted(set(wq_terms), key=len, reverse=True))) if wq_terms else None
+    lq_terms=[t.strip() for t in str(criteria.get("location","")).upper().split("|") if t.strip()]
+    lq=lq_terms[0] if len(lq_terms)==1 else ""
     sq=str(criteria.get("reg_status","registered")).strip()
     imin=flt(criteria.get("inc_min","")); imax=flt(criteria.get("inc_max","")) or float("inf")
     emin=flt(criteria.get("exp_min","")); emax=flt(criteria.get("exp_max","")) or float("inf")
@@ -4441,12 +4448,12 @@ def _run_advanced_search(criteria, limit=50000):
         county=row.get("charity_contact_address4","").upper()
         if cq and cq not in county: continue
         what=row.get("charity_activities","").upper()
-        if wq_terms and not any(t in what for t in wq_terms): continue
-        if lq:
+        if wq_re and not wq_re.search(what): continue
+        if lq_terms:
             addr_blob = " ".join([row.get("charity_contact_address1",""), row.get("charity_contact_address2",""),
                                    row.get("charity_contact_address3",""), row.get("charity_contact_address4",""),
                                    row.get("charity_contact_address5",""), row.get("charity_contact_postcode","")]).upper()
-            if lq not in addr_blob: continue
+            if not any(t in addr_blob for t in lq_terms): continue
         ctype=row.get("charity_type","").upper()
         if tq and tq not in ctype: continue
         inc=flt(row.get("latest_income",""))
@@ -4479,59 +4486,103 @@ def _run_advanced_search(criteria, limit=50000):
 
 @app.route("/api/ai/expand_search_terms", methods=["POST"])
 def api_ai_expand_search_terms():
-    """Turns a plain-language need ("cancer charities", "supports young
-    carers") into several specific terms likely to appear in a charity's own
-    activities description — the field Advanced Search's "What" filter
-    already matches against.
+    """Turns a plain-language brief (one line, or several pasted groups such as
+    "Sports and grassroots organisations - ...; Community organisations - ...")
+    into (a) a broad list of terms likely to appear in a charity's own activities
+    description and (b) any other Advanced Search filters the brief states —
+    location(s), income range, expenditure range, charity type.
 
-    Deliberately ONE OpenAI call, not one per charity: with 200,000+
-    charities in the bulk file, scoring each individually would be far too
-    slow and expensive. The AI's only job is expanding the request into
-    better search terms; the existing, fast, memory-bounded search then does
-    the actual filtering, exactly as it already does for a manually-typed
-    term."""
+    Still ONE OpenAI call, not one per charity: the fast, memory-bounded search
+    does the actual filtering. The AI's only job is to expand the brief so that
+    nothing is missed, then the user reviews the result before it is applied."""
     if not OPENAI_API_KEY:
         return jsonify({"ok": False,
-            "error": "AI is not configured. Add the OPENAI_API_KEY environment variable in Render."}), 400
+            "error": "AI is not configured. Add the OPENAI_API_KEY environment variable."}), 400
     data = request.json or {}
-    need = str(data.get("need", "")).strip()[:300]
+    need = str(data.get("need", "")).strip()[:3000]
     if not need:
         return jsonify({"ok": False, "error": "Describe what you're looking for first."}), 400
+    system = (
+        "You help a UK charity-sector sales team search the Charity Commission register. Each charity has a "
+        "short plain-text description of its activities, written by the charity. A search matches if ANY of "
+        "your terms appears in that description, with each term matched from the START of a word onward "
+        "(so the stem 'autis' matches autism, autistic and autistic-spectrum, but 'sport' will not match "
+        "'transport').\n\n"
+        "The user's brief may contain several groups or bullet points. Cover EVERY group — never drop one.\n\n"
+        "Goal: HIGH RECALL. Return 30-60 terms in total, mixing:\n"
+        "- the obvious wording from the brief, in each way a charity might phrase it (e.g. 'autism', 'autistic', "
+        "'autistic spectrum', 'asd');\n"
+        "- close synonyms, related activities, typical beneficiaries and typical charity types (e.g. 'sports club', "
+        "'football', 'cricket', 'rugby', 'swimming', 'youth sport', 'physical activity', 'grassroots');\n"
+        "- abbreviations and acronyms people really use (ADHD, ASD, SEN, SEND), and UK/US spelling and "
+        "hyphen/space variants (e.g. 'neurodiversity' and 'neuro-diversity', 'neurodivergent');\n"
+        "- short word STEMS that safely catch several forms ('autis', 'neurodiver', 'dyslex', 'learning disab').\n"
+        "Each term is 1-4 words, lower case, under 40 characters. Avoid single generic words that would match "
+        "unrelated charities (e.g. 'community', 'support', 'local', 'group', 'service', 'people') unless combined "
+        "into a specific phrase such as 'community centre' or 'community development'.\n\n"
+        "ALSO extract any other filters the brief explicitly states; leave them empty/null when not stated — "
+        "never guess:\n"
+        "- locations: UK towns, cities, counties, regions or postcode areas (e.g. ['London','Manchester','SW1']);\n"
+        "- inc_min / inc_max: annual income range in GBP as whole numbers ('over £1m' -> inc_min 1000000; "
+        "'between 100k and 5m' -> 100000 and 5000000);\n"
+        "- exp_min / exp_max: annual expenditure range in GBP, same rules;\n"
+        "- charity_type: one of 'CIO', 'Charitable Company', 'Trust' only if stated.\n\n"
+        "Reply with ONLY a JSON object, no markdown, in exactly this shape: "
+        '{"terms":["..."],"locations":[],"inc_min":null,"inc_max":null,"exp_min":null,"exp_max":null,"charity_type":""}')
     try:
         resp = requests.post(
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
             json={"model": OPENAI_MODEL, "messages": [
-                {"role": "system", "content":
-                 "A user is searching UK charities by matching short terms against each charity's own "
-                 "plain-text description of its activities (typically one or two sentences, written by the "
-                 "charity itself for the Charity Commission). Given what the user is looking for, reply with "
-                 "4-7 short, specific terms or phrases likely to appear literally in such a description — "
-                 "include the obvious term, close synonyms, and standard medical/technical variants where "
-                 "relevant (e.g. both 'tumour' and 'tumor', both a disease name and its common short form). "
-                 "Avoid vague or overly broad terms that would match unrelated charities. Reply with ONLY a "
-                 "JSON array of strings, nothing else — no explanation, no markdown, no code fences."},
+                {"role": "system", "content": system},
                 {"role": "user", "content": need},
-            ], "temperature": 0.3, "max_tokens": 150},
-            timeout=20)
+            ], "temperature": 0.3, "max_tokens": 1500},
+            timeout=45)
         if resp.status_code != 200:
             return jsonify({"ok": False, "error": f"OpenAI error {resp.status_code}: {resp.text[:200]}"}), 502
         out = resp.json()
         content = (out.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
+        parsed = None
         try:
-            terms = json.loads(content)
+            parsed = json.loads(content)
         except Exception:
-            return jsonify({"ok": False, "error": "AI returned something that wasn't a clean list — try rephrasing."}), 502
-        if not isinstance(terms, list):
+            m = re.search(r"\{.*\}", content, re.S) or re.search(r"\[.*\]", content, re.S)
+            if m:
+                try: parsed = json.loads(m.group(0))
+                except Exception: parsed = None
+        if parsed is None:
+            return jsonify({"ok": False, "error": "AI returned something that wasn't clean JSON — try rephrasing."}), 502
+        if isinstance(parsed, list):        # tolerate the old array-only shape
+            parsed = {"terms": parsed}
+        if not isinstance(parsed, dict):
             return jsonify({"ok": False, "error": "Unexpected response shape from AI."}), 502
-        # Capped and cleaned defensively — this text ends up in a URL query
-        # string next, so it shouldn't contain anything untrusted-looking.
-        terms = [str(t).strip() for t in terms if str(t).strip()][:8]
-        terms = [t for t in terms if len(t) <= 60]
+        # Cleaned defensively — this text ends up in a URL query string next.
+        seen, terms = set(), []
+        for t in (parsed.get("terms") or []):
+            t = re.sub(r"[|]", " ", str(t)).strip()
+            if t and len(t) <= 60 and t.lower() not in seen:
+                seen.add(t.lower()); terms.append(t)
+        terms = terms[:80]
         if not terms:
             return jsonify({"ok": False, "error": "AI didn't return any usable terms — try rephrasing."}), 502
-        return jsonify({"ok": True, "terms": terms})
+        def _money(x):
+            try:
+                v = int(float(str(x).replace(",", "").replace("£", "")))
+                return v if v > 0 else None
+            except Exception:
+                return None
+        locs = []
+        for l in (parsed.get("locations") or (parsed.get("location") if isinstance(parsed.get("location"), list) else [parsed.get("location")] if parsed.get("location") else [])):
+            l = re.sub(r"[|]", " ", str(l or "")).strip()
+            if l and len(l) <= 40 and l not in locs: locs.append(l)
+        ctype = str(parsed.get("charity_type") or "").strip()
+        if ctype not in ("CIO", "Charitable Company", "Trust"): ctype = ""
+        filters = {"locations": locs[:10],
+                   "inc_min": _money(parsed.get("inc_min")), "inc_max": _money(parsed.get("inc_max")),
+                   "exp_min": _money(parsed.get("exp_min")), "exp_max": _money(parsed.get("exp_max")),
+                   "charity_type": ctype}
+        return jsonify({"ok": True, "terms": terms, "filters": filters})
     except requests.exceptions.Timeout:
         return jsonify({"ok": False, "error": "AI took too long to respond. Try again."}), 504
     except Exception as e:
