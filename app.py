@@ -9206,15 +9206,50 @@ def db_export(table):
     except Exception as e:
         return jsonify({"error": str(e), "table": table}), 500
 
+# Saved searches: the DATABASE is the source of truth. The app runs several gunicorn
+# workers, each with its own in-memory copy, so a search saved through one worker was
+# invisible to the others until restart — the list looked random and "missing the last
+# save". Every read below therefore goes to the database (the dict is only a fallback
+# if the database is unreachable).
+def _saved_search_names():
+    """Saved search names, NEWEST FIRST (re-saving a name moves it to the top)."""
+    try:
+        rows = db_query("SELECT name FROM saved_searches ORDER BY created_at DESC, rowid DESC")
+        if rows is not None:
+            return [r[0] for r in rows if r and r[0]]
+    except Exception as e:
+        print(f"  saved_searches list fallback: {e}")
+    return list(reversed(list(_saved_searches.keys())))
+
+def _saved_search_get(name):
+    """Criteria dict for one saved search, or None."""
+    try:
+        rows = db_query("SELECT criteria FROM saved_searches WHERE name=?", (name,))
+        if rows:
+            try: return json.loads(rows[0][0]) if rows[0][0] else {}
+            except Exception: return {}
+        if rows is not None:
+            _saved_searches.pop(name, None)
+            return None
+    except Exception as e:
+        print(f"  saved_search get fallback: {e}")
+    c = _saved_searches.get(name)
+    return c if isinstance(c, dict) else None
+
+def _no_store(resp):
+    resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
+
 @app.route("/api/saved_searches",methods=["GET"])
-def get_saved_searches(): return jsonify(list(_saved_searches.keys()))
+def get_saved_searches(): return _no_store(jsonify(_saved_search_names()))
 
 @app.route("/api/saved_searches",methods=["POST"])
 def save_search():
     data=request.json or {}; name=str(data.get("name","")).strip(); criteria=data.get("criteria",{})
     if not name: return jsonify({"ok":False}),400
     _saved_searches[name]=criteria
-    db_exec("INSERT OR REPLACE INTO saved_searches(name,criteria) VALUES(?,?)", (name, json.dumps(criteria)))
+    db_exec("INSERT OR REPLACE INTO saved_searches(name,criteria,created_at) VALUES(?,?,?)",
+            (name, json.dumps(criteria), datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
     return jsonify({"ok":True})
 
 # ── Column layout presets (Daily Calling / Call History — shareable) ────────────
@@ -9273,8 +9308,9 @@ def delete_column_preset(pid):
 
 @app.route("/api/saved_searches/<name>",methods=["GET"])
 def get_saved_search(name):
-    if name not in _saved_searches: return jsonify({"error":"Not found"}),404
-    return jsonify(_saved_searches[name])
+    c = _saved_search_get(name)
+    if c is None: return jsonify({"error":"Not found"}),404
+    return _no_store(jsonify(c))
 
 @app.route("/api/saved_searches/<name>",methods=["DELETE"])
 def delete_saved_search(name):
@@ -9396,7 +9432,7 @@ def db_refresh():
                         "statuses": len(_statuses),
                         "comments": len(_comments),
                         "called_log": len(_called_log),
-                        "saved_searches": len(_saved_searches)})
+                        "saved_searches": len(_saved_search_names())})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -9760,13 +9796,13 @@ def _rank_calling_pool(category, filters=None):
     if category == "search":
         saved_name = str(filters.get("saved_search","")).strip()
         if not saved_name:
-            names = list(_saved_searches.keys())
+            names = _saved_search_names()
             return [], jsonify({"charities":[], "count":0, "category":category,
                 "category_label": CALLING_CATEGORIES.get(category,category),
                 "note": ("Pick a saved search from the 'Saved Search' filter above, then Generate."
                          if names else
                          "No saved searches yet. Save one from the Charity Search (Advanced) page first.")})
-        crit = _saved_searches.get(saved_name)
+        crit = _saved_search_get(saved_name)
         if not isinstance(crit, dict):
             return [], jsonify({"charities":[], "count":0, "category":category,
                 "category_label": CALLING_CATEGORIES.get(category,category),

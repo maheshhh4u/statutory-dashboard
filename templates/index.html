@@ -7792,6 +7792,12 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.91", date:"2026-11", title:"Saved searches: newest first, and always up to date",
+    changes:[
+      "The Saved Search list in Daily Calling (Charity Search \u2192 saved) and the saved-search bar in Charity Search now show the most recently saved search at the top.",
+      "Fixed saved searches sometimes not appearing right after saving, even after refreshing: the app runs more than one server process and each kept its own copy of the list. The list is now read from the database every time, so every refresh shows the same, current list.",
+      "Fixed the saved list reloading before the save had finished, and stopped the browser caching the list."
+    ]},
   { v:"2.90", date:"2026-10", title:"Ask AI search wizard: far wider matching + fills the other filters",
     changes:[
       "Ask AI now returns 30\u201360 search terms instead of 4\u20137: the wording from your brief, synonyms, related activities, acronyms (ADHD, ASD, SEND\u2026), UK/US and hyphen/space spelling variants, and short stems (e.g. \u201Cautis\u201D catches autism and autistic).",
@@ -9568,11 +9574,13 @@ function confirmSave(){
   const name=document.getElementById('save-name').value.trim();if(!name)return;
   const criteria={name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),location:v('adv-location'),area_of_operation:areaPickerGetValues('advsearch'),what_class:areaPickerGetValues('advsearch_what'),who_class:areaPickerGetValues('advsearch_who'),how_class:areaPickerGetValues('advsearch_how'),what:v('adv-what'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),exp_min:v('adv-exp-min'),exp_max:v('adv-exp-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to')};
   ss[name]=criteria;
-  fetch('/api/saved_searches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,criteria})});
-  closeSave();document.getElementById('save-name').value='';loadSavedList();
+  closeSave();document.getElementById('save-name').value='';
+  // Reload the list only AFTER the save has completed (it used to race the save and miss it)
+  fetch('/api/saved_searches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,criteria})})
+    .then(()=>loadSavedList()).catch(()=>loadSavedList());
 }
 function loadSavedList(){
-  fetch('/api/saved_searches').then(r=>r.json()).then(names=>{
+  fetch('/api/saved_searches',{cache:'no-store'}).then(r=>r.json()).then(names=>{
     const sel=document.getElementById('saved-sel');
     sel.innerHTML='<option value="">— Select —</option>'+names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
     document.getElementById('saved-bar').style.display=names.length?'flex':'none';
@@ -9594,7 +9602,7 @@ function loadSaved(){
 function deleteSaved(){
   const name=document.getElementById('saved-sel').value;if(!name)return;
   if(!confirm('Delete "'+name+'"?'))return;
-  delete ss[name];fetch('/api/saved_searches/'+encodeURIComponent(name),{method:'DELETE'});loadSavedList();
+  delete ss[name];fetch('/api/saved_searches/'+encodeURIComponent(name),{method:'DELETE'}).then(()=>loadSavedList()).catch(()=>loadSavedList());
 }
 
 // ── Newly Registered ───────────────────────────────────────────────────────────
@@ -14016,7 +14024,7 @@ function renderSourceFilters(){
     const sel=document.getElementById('sf-saved_search');
     if(sel){
       sel.innerHTML='<option value="">Loading saved searches…</option>';
-      fetch('/api/saved_searches').then(r=>r.json()).then(names=>{
+      fetch('/api/saved_searches',{cache:'no-store'}).then(r=>r.json()).then(names=>{
         if(!names || !names.length){
           sel.innerHTML='<option value="">No saved searches yet — save one from Charity Search first</option>';
           return;
