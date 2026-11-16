@@ -173,6 +173,18 @@ def db_init():
             name TEXT PRIMARY KEY, criteria TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )""")
+        # Manage Saved Searches: who/when, hide-from-Daily-Calling, pin, notes, soft delete
+        for _col, _ddl in (("updated_at","TEXT"),("created_by","TEXT"),("updated_by","TEXT"),
+                           ("hidden","INTEGER DEFAULT 0"),("pinned","INTEGER DEFAULT 0"),
+                           ("notes","TEXT"),("deleted_at","TEXT")):
+            try: client.execute(f"ALTER TABLE saved_searches ADD COLUMN {_col} {_ddl}")
+            except Exception: pass
+        # Every saved version of a saved search, so any earlier version can be restored
+        client.execute("""CREATE TABLE IF NOT EXISTS saved_search_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT, criteria TEXT, saved_at TEXT, saved_by TEXT, action TEXT
+        )""")
+        client.execute("CREATE INDEX IF NOT EXISTS idx_ssh_name ON saved_search_history(name)")
         # Custom Report tiles — user-built pivot/chart configurations, saved by name
         client.execute("""CREATE TABLE IF NOT EXISTS custom_report_tiles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -9209,28 +9221,75 @@ def db_export(table):
 # Saved searches: the DATABASE is the source of truth. The app runs several gunicorn
 # workers, each with its own in-memory copy, so a search saved through one worker was
 # invisible to the others until restart — the list looked random and "missing the last
-# save". Every read below therefore goes to the database (the dict is only a fallback
-# if the database is unreachable).
-def _saved_search_names():
-    """Saved search names, NEWEST FIRST (re-saving a name moves it to the top)."""
+# save". Every read below therefore goes to the database (the dict is only kept in step).
+SS_KEYS = ("name","reg_number","postcode","location","area_of_operation","what_class","who_class",
+           "how_class","what","reg_status","charity_type","inc_min","inc_max","exp_min","exp_max",
+           "reg_date_from","reg_date_to")
+SS_LIST_KEYS = ("area_of_operation","what_class","who_class","how_class")
+
+def _ss_now(): return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+def _ss_clean_criteria(c):
+    """Only known keys; lists stay lists of strings, everything else a trimmed string."""
+    out = {}
+    c = c if isinstance(c, dict) else {}
+    for k in SS_KEYS:
+        v = c.get(k)
+        if k in SS_LIST_KEYS:
+            if isinstance(v, str): v = [x.strip() for x in v.split(",")]
+            out[k] = [str(x).strip() for x in (v or []) if str(x).strip()][:200]
+        else:
+            out[k] = "" if v is None else str(v).strip()[:4000]
+    return out
+
+def _ss_name_ok(name):
+    name = str(name or "").strip()
+    return name if 0 < len(name) <= 80 else ""
+
+def _ss_history_add(name, criteria, action):
+    """Record a version (skips an identical repeat of the latest one); keeps the newest 40."""
     try:
-        rows = db_query("SELECT name FROM saved_searches ORDER BY created_at DESC, rowid DESC")
-        if rows is not None:
-            return [r[0] for r in rows if r and r[0]]
+        cj = json.dumps(criteria, sort_keys=True)
+        last = db_query("SELECT criteria FROM saved_search_history WHERE name=? ORDER BY id DESC LIMIT 1", (name,))
+        if last and last[0][0] == cj and action in ("saved", "created"): return
+        db_exec("INSERT INTO saved_search_history(name,criteria,saved_at,saved_by,action) VALUES(?,?,?,?,?)",
+                (name, cj, _ss_now(), current_user() or "", action))
+        db_exec("DELETE FROM saved_search_history WHERE name=? AND id NOT IN "
+                "(SELECT id FROM saved_search_history WHERE name=? ORDER BY id DESC LIMIT 40)", (name, name))
+    except Exception as e:
+        print(f"  saved_search history: {e}")
+
+def _ss_history_seed(name, old_criteria):
+    """Searches saved before version history existed have no history: record the
+    existing criteria as the 'original' version before the first edit overwrites it."""
+    try:
+        if not db_query("SELECT 1 FROM saved_search_history WHERE name=? LIMIT 1", (name,)) and isinstance(old_criteria, dict):
+            db_exec("INSERT INTO saved_search_history(name,criteria,saved_at,saved_by,action) VALUES(?,?,?,?,?)",
+                    (name, json.dumps(_ss_clean_criteria(old_criteria), sort_keys=True), _ss_now(), "", "original"))
+    except Exception as e:
+        print(f"  saved_search seed: {e}")
+
+def _saved_search_names(for_calling=False):
+    """Saved search names. Pinned first, then NEWEST saved first. Hidden ones are left
+    out when for_calling (the Daily Calling dropdown); soft-deleted ones are never listed."""
+    try:
+        q = "SELECT name FROM saved_searches WHERE deleted_at IS NULL"
+        if for_calling: q += " AND COALESCE(hidden,0)=0"
+        q += " ORDER BY COALESCE(pinned,0) DESC, COALESCE(updated_at,created_at) DESC, rowid DESC"
+        return [r[0] for r in (db_query(q) or []) if r and r[0]]
     except Exception as e:
         print(f"  saved_searches list fallback: {e}")
     return list(reversed(list(_saved_searches.keys())))
 
 def _saved_search_get(name):
-    """Criteria dict for one saved search, or None."""
+    """Criteria dict for one (non-deleted) saved search, or None."""
     try:
-        rows = db_query("SELECT criteria FROM saved_searches WHERE name=?", (name,))
+        rows = db_query("SELECT criteria FROM saved_searches WHERE name=? AND deleted_at IS NULL", (name,))
         if rows:
             try: return json.loads(rows[0][0]) if rows[0][0] else {}
             except Exception: return {}
-        if rows is not None:
-            _saved_searches.pop(name, None)
-            return None
+        _saved_searches.pop(name, None)
+        return None
     except Exception as e:
         print(f"  saved_search get fallback: {e}")
     c = _saved_searches.get(name)
@@ -9241,16 +9300,177 @@ def _no_store(resp):
     return resp
 
 @app.route("/api/saved_searches",methods=["GET"])
-def get_saved_searches(): return _no_store(jsonify(_saved_search_names()))
+def get_saved_searches():
+    return _no_store(jsonify(_saved_search_names(for_calling=(request.args.get("for","") == "calling"))))
 
 @app.route("/api/saved_searches",methods=["POST"])
 def save_search():
-    data=request.json or {}; name=str(data.get("name","")).strip(); criteria=data.get("criteria",{})
-    if not name: return jsonify({"ok":False}),400
+    """Save (create or overwrite) a search. Overwriting keeps its pin / hidden / notes."""
+    data=request.json or {}; name=_ss_name_ok(data.get("name",""))
+    criteria=_ss_clean_criteria(data.get("criteria",{}))
+    if not name: return jsonify({"ok":False,"error":"Name is required (max 80 characters)."}),400
+    who = current_user() or ""; now = _ss_now(); cj = json.dumps(criteria)
+    ex = db_query("SELECT deleted_at FROM saved_searches WHERE name=?", (name,))
+    if ex:
+        _ss_history_seed(name, _saved_search_get(name))
+        db_exec("UPDATE saved_searches SET criteria=?, updated_at=?, updated_by=?, deleted_at=NULL WHERE name=?",
+                (cj, now, who, name)); act = "saved"
+    else:
+        db_exec("INSERT INTO saved_searches(name,criteria,created_at,updated_at,created_by,updated_by,hidden,pinned) "
+                "VALUES(?,?,?,?,?,?,0,0)", (name, cj, now, now, who, who)); act = "created"
     _saved_searches[name]=criteria
-    db_exec("INSERT OR REPLACE INTO saved_searches(name,criteria,created_at) VALUES(?,?,?)",
-            (name, json.dumps(criteria), datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+    _ss_history_add(name, criteria, act)
     return jsonify({"ok":True})
+
+# ── Manage Saved Searches ────────────────────────────────────────────────────
+def _ss_record(r):
+    (name, crit, created_at, updated_at, created_by, updated_by, hidden, pinned, notes, deleted_at) = r
+    try: c = json.loads(crit) if crit else {}
+    except Exception: c = {}
+    return {"name": name, "criteria": c, "created_at": created_at or "", "updated_at": updated_at or created_at or "",
+            "created_by": created_by or "", "updated_by": updated_by or created_by or "",
+            "hidden": bool(hidden), "pinned": bool(pinned), "notes": notes or "", "deleted_at": deleted_at or ""}
+
+_SS_COLS = "name,criteria,created_at,updated_at,created_by,updated_by,hidden,pinned,notes,deleted_at"
+
+@app.route("/api/saved_search_mgr/list")
+def ss_mgr_list():
+    inc_del = request.args.get("deleted","") == "1"
+    q = f"SELECT {_SS_COLS} FROM saved_searches"
+    if not inc_del: q += " WHERE deleted_at IS NULL"
+    q += " ORDER BY COALESCE(pinned,0) DESC, COALESCE(updated_at,created_at) DESC, rowid DESC"
+    recs = [_ss_record(r) for r in (db_query(q) or [])]
+    counts = {r[0]: r[1] for r in (db_query("SELECT name, COUNT(*) FROM saved_search_history GROUP BY name") or [])}
+    for r in recs: r["versions"] = counts.get(r["name"], 0)
+    return _no_store(jsonify({"ok": True, "searches": recs}))
+
+def _ss_get_record(name):
+    rows = db_query(f"SELECT {_SS_COLS} FROM saved_searches WHERE name=?", (name,))
+    return _ss_record(rows[0]) if rows else None
+
+@app.route("/api/saved_search_mgr/update", methods=["POST"])
+def ss_mgr_update():
+    """Edit one saved search: criteria, rename, hide/show in Daily Calling, pin, notes."""
+    d = request.json or {}
+    name = str(d.get("name","")).strip()
+    rec = _ss_get_record(name)
+    if not rec or rec["deleted_at"]: return jsonify({"ok":False,"error":"Saved search not found."}),404
+    who = current_user() or ""; now = _ss_now(); cur_name = name
+    new_name = _ss_name_ok(d.get("new_name")) if "new_name" in d else name
+    if "new_name" in d and not new_name:
+        return jsonify({"ok":False,"error":"Name is required (max 80 characters)."}),400
+    if new_name != name:
+        clash = _ss_get_record(new_name)
+        if clash and not clash["deleted_at"]:
+            return jsonify({"ok":False,"error":f"A saved search called “{new_name}” already exists."}),409
+        if clash:   # a deleted one with that name is purged to free the name
+            db_exec("DELETE FROM saved_searches WHERE name=?", (new_name,))
+            db_exec("DELETE FROM saved_search_history WHERE name=?", (new_name,))
+        db_exec("UPDATE saved_searches SET name=?, updated_at=?, updated_by=? WHERE name=?", (new_name, now, who, name))
+        db_exec("UPDATE saved_search_history SET name=? WHERE name=?", (new_name, name))
+        if name in _saved_searches: _saved_searches[new_name] = _saved_searches.pop(name)
+        cur_name = new_name
+        _ss_history_add(cur_name, rec["criteria"], "renamed from “%s”" % name)
+    sets, vals = [], []
+    if "criteria" in d:
+        crit = _ss_clean_criteria(d.get("criteria"))
+        _ss_history_seed(cur_name, rec["criteria"])
+        sets += ["criteria=?","updated_at=?","updated_by=?"]; vals += [json.dumps(crit), now, who]
+        _saved_searches[cur_name] = crit
+        _ss_history_add(cur_name, crit, "saved")
+    if "hidden" in d: sets.append("hidden=?"); vals.append(1 if d.get("hidden") else 0)
+    if "pinned" in d: sets.append("pinned=?"); vals.append(1 if d.get("pinned") else 0)
+    if "notes" in d:  sets.append("notes=?");  vals.append(str(d.get("notes") or "")[:2000])
+    if sets:
+        db_exec("UPDATE saved_searches SET " + ", ".join(sets) + " WHERE name=?", tuple(vals) + (cur_name,))
+    out = _ss_get_record(cur_name)
+    return jsonify({"ok": True, "search": out})
+
+@app.route("/api/saved_search_mgr/history", methods=["POST"])
+def ss_mgr_history():
+    name = str((request.json or {}).get("name","")).strip()
+    rows = db_query("SELECT id, criteria, saved_at, saved_by, action FROM saved_search_history "
+                    "WHERE name=? ORDER BY id DESC", (name,)) or []
+    out = []
+    for i, c, t, u, a in rows:
+        try: cc = json.loads(c) if c else {}
+        except Exception: cc = {}
+        out.append({"id": i, "criteria": cc, "saved_at": t or "", "saved_by": u or "", "action": a or ""})
+    return jsonify({"ok": True, "versions": out})
+
+@app.route("/api/saved_search_mgr/restore_version", methods=["POST"])
+def ss_mgr_restore_version():
+    d = request.json or {}; name = str(d.get("name","")).strip()
+    try: vid = int(d.get("version_id"))
+    except Exception: return jsonify({"ok":False,"error":"Bad version."}),400
+    rows = db_query("SELECT criteria FROM saved_search_history WHERE id=? AND name=?", (vid, name))
+    rec = _ss_get_record(name)
+    if not rows or not rec or rec["deleted_at"]: return jsonify({"ok":False,"error":"Version not found."}),404
+    try: crit = _ss_clean_criteria(json.loads(rows[0][0]))
+    except Exception: return jsonify({"ok":False,"error":"That version is unreadable."}),500
+    db_exec("UPDATE saved_searches SET criteria=?, updated_at=?, updated_by=? WHERE name=?",
+            (json.dumps(crit), _ss_now(), current_user() or "", name))
+    _saved_searches[name] = crit
+    _ss_history_add(name, crit, "restored")
+    return jsonify({"ok": True, "search": _ss_get_record(name)})
+
+@app.route("/api/saved_search_mgr/duplicate", methods=["POST"])
+def ss_mgr_duplicate():
+    d = request.json or {}; name = str(d.get("name","")).strip()
+    new_name = _ss_name_ok(d.get("new_name"))
+    rec = _ss_get_record(name)
+    if not rec or rec["deleted_at"]: return jsonify({"ok":False,"error":"Saved search not found."}),404
+    if not new_name: return jsonify({"ok":False,"error":"Name is required (max 80 characters)."}),400
+    clash = _ss_get_record(new_name)
+    if clash and not clash["deleted_at"]:
+        return jsonify({"ok":False,"error":f"A saved search called “{new_name}” already exists."}),409
+    if clash:
+        db_exec("DELETE FROM saved_searches WHERE name=?", (new_name,))
+        db_exec("DELETE FROM saved_search_history WHERE name=?", (new_name,))
+    now = _ss_now(); who = current_user() or ""
+    db_exec("INSERT INTO saved_searches(name,criteria,created_at,updated_at,created_by,updated_by,hidden,pinned,notes) "
+            "VALUES(?,?,?,?,?,?,?,0,?)", (new_name, json.dumps(rec["criteria"]), now, now, who, who,
+                                          1 if rec["hidden"] else 0, rec["notes"]))
+    _saved_searches[new_name] = rec["criteria"]
+    _ss_history_add(new_name, rec["criteria"], "created")
+    return jsonify({"ok": True, "search": _ss_get_record(new_name)})
+
+@app.route("/api/saved_search_mgr/delete", methods=["POST"])
+def ss_mgr_delete():
+    """Delete = move to 'Deleted' (restorable). forever=true removes it for good."""
+    d = request.json or {}; name = str(d.get("name","")).strip()
+    if d.get("forever"):
+        db_exec("DELETE FROM saved_searches WHERE name=?", (name,))
+        db_exec("DELETE FROM saved_search_history WHERE name=?", (name,))
+    else:
+        db_exec("UPDATE saved_searches SET deleted_at=? WHERE name=?", (_ss_now(), name))
+    _saved_searches.pop(name, None)
+    return jsonify({"ok": True})
+
+@app.route("/api/saved_search_mgr/undelete", methods=["POST"])
+def ss_mgr_undelete():
+    name = str((request.json or {}).get("name","")).strip()
+    rec = _ss_get_record(name)
+    if not rec: return jsonify({"ok":False,"error":"Not found."}),404
+    db_exec("UPDATE saved_searches SET deleted_at=NULL WHERE name=?", (name,))
+    _saved_searches[name] = rec["criteria"]
+    return jsonify({"ok": True, "search": _ss_get_record(name)})
+
+@app.route("/api/saved_search_mgr/bulk", methods=["POST"])
+def ss_mgr_bulk():
+    d = request.json or {}
+    names = [str(n).strip() for n in (d.get("names") or []) if str(n).strip()][:500]
+    act = str(d.get("action","")).strip()
+    sql = {"hide": "UPDATE saved_searches SET hidden=1 WHERE name=?",
+           "show": "UPDATE saved_searches SET hidden=0 WHERE name=?",
+           "pin": "UPDATE saved_searches SET pinned=1 WHERE name=?",
+           "unpin": "UPDATE saved_searches SET pinned=0 WHERE name=?",
+           "delete": "UPDATE saved_searches SET deleted_at='%s' WHERE name=?" % _ss_now()}.get(act)
+    if not sql or not names: return jsonify({"ok":False,"error":"Nothing to do."}),400
+    for n in names:
+        db_exec(sql, (n,))
+        if act == "delete": _saved_searches.pop(n, None)
+    return jsonify({"ok": True, "count": len(names)})
 
 # ── Column layout presets (Daily Calling / Call History — shareable) ────────────
 @app.route("/api/column_presets", methods=["GET"])
@@ -9314,8 +9534,9 @@ def get_saved_search(name):
 
 @app.route("/api/saved_searches/<name>",methods=["DELETE"])
 def delete_saved_search(name):
+    # Soft delete: moves it to "Deleted" in Manage Saved Searches, where it can be restored
     _saved_searches.pop(name,None)
-    db_exec("DELETE FROM saved_searches WHERE name=?", (name,))
+    db_exec("UPDATE saved_searches SET deleted_at=? WHERE name=?", (_ss_now(), name))
     return jsonify({"ok":True})
 
 CONTACT_HDRS=["Phone","Email","Address 1","Address 2","Town","County","Postcode",
@@ -9796,7 +10017,7 @@ def _rank_calling_pool(category, filters=None):
     if category == "search":
         saved_name = str(filters.get("saved_search","")).strip()
         if not saved_name:
-            names = _saved_search_names()
+            names = _saved_search_names(for_calling=True)
             return [], jsonify({"charities":[], "count":0, "category":category,
                 "category_label": CALLING_CATEGORIES.get(category,category),
                 "note": ("Pick a saved search from the 'Saved Search' filter above, then Generate."

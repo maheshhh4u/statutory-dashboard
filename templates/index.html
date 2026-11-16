@@ -1165,6 +1165,8 @@ select:focus{outline:none;border-color:var(--green)}
     <span class="filter-label">📁 Saved Searches:</span>
     <select id="saved-sel" style="font-size:12px;padding:4px 8px;min-width:200px"><option value="">— Select a saved search —</option></select>
     <button class="btn btn-gold btn-sm" onclick="loadSaved()">▶ Load &amp; Search</button>
+    <button class="btn btn-outline btn-sm" onclick="updateSaved()" title="Overwrite the selected saved search with what is currently in the form below">💾 Update</button>
+    <button class="btn btn-outline btn-sm" onclick="openSsManager()" title="Edit, rename, hide from Daily Calling, undo/redo, version history, duplicate, delete&hellip;" style="font-weight:700">⚙ Manage</button>
     <button class="btn btn-outline btn-sm" onclick="deleteSaved()" style="color:var(--red);border-color:var(--red)">✕ Delete</button>
   </div>
   <div id="s-msg"></div>
@@ -2336,6 +2338,74 @@ select:focus{outline:none;border-color:var(--green)}
 </div>
 
 <!-- Save search modal -->
+<style>
+.ssm-box{background:var(--surface);border-radius:12px;width:min(1180px,97vw);height:min(86vh,820px);display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.25);overflow:hidden}
+.ssm-head{display:flex;align-items:center;gap:10px;padding:13px 18px;border-bottom:1px solid var(--border)}
+.ssm-head h3{margin:0;font-size:16px}
+.ssm-body{flex:1;display:grid;grid-template-columns:340px 1fr;min-height:0}
+.ssm-left{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:var(--bg,#f7f8fa)}
+.ssm-tools{padding:10px;display:flex;flex-direction:column;gap:7px;border-bottom:1px solid var(--border)}
+.ssm-tools input,.ssm-tools select,.ssm-ed input,.ssm-ed select,.ssm-ed textarea{font-family:inherit;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:100%;box-sizing:border-box}
+.ssm-list{flex:1;overflow:auto;padding:6px}
+.ssm-item{display:flex;gap:8px;padding:8px;border:1px solid transparent;border-radius:8px;cursor:pointer;align-items:flex-start}
+.ssm-item:hover{background:var(--surface)}
+.ssm-item.sel{background:var(--surface);border-color:var(--navy);box-shadow:0 0 0 2px rgba(30,58,95,.10)}
+.ssm-item .nm{font-size:13px;font-weight:700;color:var(--text);word-break:break-word}
+.ssm-item .mt{font-size:11px;color:var(--t3);margin-top:2px}
+.ssm-item .sm{font-size:11px;color:var(--t2);margin-top:2px;max-height:30px;overflow:hidden}
+.ssm-badge{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:9px;margin-left:5px;vertical-align:middle}
+.ssm-ed{padding:14px 18px;overflow:auto;min-height:0}
+.ssm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 12px;margin:8px 0 12px}
+.ssm-grid label,.ssm-ed .lb{font-size:11px;color:var(--t3);display:block;margin-bottom:3px;font-weight:600}
+.ssm-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.ssm-sep{width:1px;height:22px;background:var(--border);margin:0 4px}
+.ssm-hist{border:1px solid var(--border);border-radius:8px;margin-top:8px;max-height:220px;overflow:auto}
+.ssm-hist div.r{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border);font-size:12px}
+.ssm-hist div.r:last-child{border-bottom:0}
+@media (max-width:820px){.ssm-body{grid-template-columns:1fr;grid-template-rows:240px 1fr}.ssm-left{border-right:0;border-bottom:1px solid var(--border)}}
+</style>
+<div class="modal-bg" id="ssm-modal">
+  <div class="ssm-box" role="dialog" aria-label="Manage saved searches">
+    <div class="ssm-head">
+      <h3>⚙ Manage Saved Searches</h3>
+      <span style="font-size:12px;color:var(--t3)" id="ssm-count"></span>
+      <span style="flex:1"></span>
+      <button class="btn btn-outline btn-sm" onclick="ssmExport()" title="Download all saved searches as a JSON backup">⬇ Export all</button>
+      <span onclick="closeSsManager()" title="Close" style="cursor:pointer;font-size:22px;line-height:1;color:var(--t3);padding:0 4px">&times;</span>
+    </div>
+    <div class="ssm-body">
+      <div class="ssm-left">
+        <div class="ssm-tools">
+          <input id="ssm-q" placeholder="Search name, notes or terms…" oninput="ssmRenderList()">
+          <div style="display:flex;gap:7px">
+            <select id="ssm-sort" onchange="ssmRenderList()">
+              <option value="recent">Recently saved first</option><option value="oldest">Oldest first</option>
+              <option value="az">Name A → Z</option><option value="za">Name Z → A</option>
+            </select>
+            <select id="ssm-filter" onchange="ssmRenderList()">
+              <option value="all">All</option><option value="visible">Shown in Daily Calling</option>
+              <option value="hidden">Hidden from Daily Calling</option><option value="pinned">Pinned</option>
+            </select>
+          </div>
+          <label style="font-size:12px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="ssm-showdel" style="width:auto" onchange="ssmLoad()"> Show deleted (restorable)</label>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <label style="font-size:12px;display:flex;gap:5px;align-items:center"><input type="checkbox" id="ssm-all" style="width:auto" onchange="ssmToggleAll(this.checked)"> Select all</label>
+            <span id="ssm-bulk" style="display:none;gap:5px;flex-wrap:wrap">
+              <button class="btn btn-outline btn-sm" onclick="ssmBulk('hide')" title="Hide from Daily Calling">🙈 Hide</button>
+              <button class="btn btn-outline btn-sm" onclick="ssmBulk('show')" title="Show in Daily Calling">👁 Show</button>
+              <button class="btn btn-outline btn-sm" onclick="ssmBulk('pin')">📌 Pin</button>
+              <button class="btn btn-outline btn-sm" onclick="ssmBulk('unpin')">Unpin</button>
+              <button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="ssmBulk('delete')">🗑 Delete</button>
+            </span>
+          </div>
+        </div>
+        <div class="ssm-list" id="ssm-list"></div>
+      </div>
+      <div class="ssm-ed" id="ssm-ed"><div style="color:var(--t3);font-size:13px;padding:30px 10px">Select a saved search on the left to view and edit its criteria.</div></div>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="save-modal">
   <div class="modal">
     <h3>💾 Save This Search</h3>
@@ -7792,6 +7862,17 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.92", date:"2026-11", title:"Manage Saved Searches",
+    changes:[
+      "New \u201C\u2699 Manage\u201D button on the saved-searches (yellow) bar in Charity Search opens a full manager: view every saved search with its criteria, edit any field, rename, and save.",
+      "Undo / Redo while editing, \u201CRevert to saved\u201D, and an unsaved-changes warning. Ctrl+S saves.",
+      "Hide a saved search from Daily Calling (it stays in Charity Search), or show it again \u2014 the Daily Calling \u201CSaved Search\u201D list now only offers the ones you have not hidden.",
+      "Version history: every save is recorded; load any earlier version into the editor, or restore it.",
+      "Also: Run search / open in Advanced Search from the manager, duplicate, pin to top, notes, who saved it and when, search/sort/filter the list, select several to hide/show/pin/delete at once, Export all as a JSON backup.",
+      "Delete is now recoverable: deleted searches go to \u201CShow deleted\u201D, where they can be restored or permanently deleted.",
+      "New \u201C\u{1F4BE} Update\u201D button on the yellow bar overwrites the selected saved search with the current form (previous version kept in history).",
+      "Fixed: loading a saved search no longer leaves fields from the previous search behind."
+    ]},
   { v:"2.91", date:"2026-11", title:"Saved searches: newest first, and always up to date",
     changes:[
       "The Saved Search list in Daily Calling (Charity Search \u2192 saved) and the saved-search bar in Charity Search now show the most recently saved search at the top.",
@@ -9570,35 +9651,324 @@ function buildSearchCsv(enrichMap){
 // ── Saved searches ─────────────────────────────────────────────────────────────
 function openSaveModal(){document.getElementById('save-modal').classList.add('open');document.getElementById('save-name').focus();}
 function closeSave(){document.getElementById('save-modal').classList.remove('open');}
+const SSM_FIELDS=[['name','Charity name','text'],['reg_number','Registration number(s), comma-separated','text'],['postcode','Postcode (prefix)','text'],
+  ['location','Location (use | for several)','text'],['charity_type','Charity type','sel:|Any,CIO,Charitable Company,Trust'],
+  ['reg_status','Registration status','sel:registered|Registered only,removed|Removed only,all|All'],
+  ['inc_min','Min income £','number'],['inc_max','Max income £','number'],['exp_min','Min expenditure £','number'],['exp_max','Max expenditure £','number'],
+  ['reg_date_from','Registered from','date'],['reg_date_to','Registered to','date']];
+const SSM_LISTS=[['area_of_operation','Area of operation (comma-separated)'],['what_class','What it does (comma-separated)'],
+  ['who_class','Who it helps (comma-separated)'],['how_class','How it helps (comma-separated)']];
+let _ssm={list:[],sel:null,checked:new Set(),hist:[],hi:0,base:'',apply:false,timer:null,showHist:false,versions:[]};
+function _ssmFmt(t){
+  if(!t) return '';
+  try{ const d=new Date(String(t).replace(' ','T')+'Z'); if(isNaN(d.getTime())) return esc(t);
+    return d.toLocaleString('en-GB',{timeZone:(typeof DISPLAY_TZ!=='undefined'?DISPLAY_TZ:undefined),day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }
+  catch(e){ return esc(t); }
+}
+function _ssmSummary(c){
+  c=c||{}; const out=[];
+  if(c.what) out.push(String(c.what).split('|').slice(0,4).join(', ')+(String(c.what).split('|').length>4?'…':''));
+  if(c.location) out.push('📍 '+c.location);
+  if(c.inc_min||c.inc_max) out.push('Inc £'+(c.inc_min||'0')+'–'+(c.inc_max||'∞'));
+  if(c.exp_min||c.exp_max) out.push('Exp £'+(c.exp_min||'0')+'–'+(c.exp_max||'∞'));
+  ['area_of_operation','what_class','who_class','how_class'].forEach(k=>{ if((c[k]||[]).length) out.push(c[k].slice(0,2).join(', ')); });
+  return out.join(' · ');
+}
+function loadSavedList(selectName){
+  fetch('/api/saved_search_mgr/list',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+    const items=(d&&d.searches)||[];
+    const sel=document.getElementById('saved-sel'); if(!sel) return;
+    const keep=selectName||sel.value;
+    sel.innerHTML='<option value="">— Select —</option>'+items.map(x=>`<option value="${esc(x.name)}">${x.pinned?'📌 ':''}${esc(x.name)}${x.hidden?' 🙈':''}</option>`).join('');
+    if(keep && items.some(x=>x.name===keep)) sel.value=keep;
+    const bar=document.getElementById('saved-bar'); if(bar) bar.style.display='flex';
+  }).catch(()=>{});
+}
 function confirmSave(){
   const name=document.getElementById('save-name').value.trim();if(!name)return;
-  const criteria={name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),location:v('adv-location'),area_of_operation:areaPickerGetValues('advsearch'),what_class:areaPickerGetValues('advsearch_what'),who_class:areaPickerGetValues('advsearch_who'),how_class:areaPickerGetValues('advsearch_how'),what:v('adv-what'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),exp_min:v('adv-exp-min'),exp_max:v('adv-exp-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to')};
-  ss[name]=criteria;
+  const criteria=advCriteria();
   closeSave();document.getElementById('save-name').value='';
   // Reload the list only AFTER the save has completed (it used to race the save and miss it)
   fetch('/api/saved_searches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,criteria})})
-    .then(()=>loadSavedList()).catch(()=>loadSavedList());
+    .then(r=>r.json()).then(d=>{ if(d&&d.ok===false) alert(d.error||'Could not save.'); loadSavedList(name); cToast('Saved “'+name+'”'); })
+    .catch(()=>loadSavedList());
 }
-function loadSavedList(){
-  fetch('/api/saved_searches',{cache:'no-store'}).then(r=>r.json()).then(names=>{
-    const sel=document.getElementById('saved-sel');
-    sel.innerHTML='<option value="">— Select —</option>'+names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
-    document.getElementById('saved-bar').style.display=names.length?'flex':'none';
-  });
+function advCriteria(){
+  return {name:v('adv-name'),reg_number:v('adv-reg'),postcode:v('adv-postcode'),location:v('adv-location'),area_of_operation:areaPickerGetValues('advsearch'),what_class:areaPickerGetValues('advsearch_what'),who_class:areaPickerGetValues('advsearch_who'),how_class:areaPickerGetValues('advsearch_how'),what:v('adv-what'),reg_status:v('adv-status'),charity_type:v('adv-type'),inc_min:v('adv-inc-min'),inc_max:v('adv-inc-max'),exp_min:v('adv-exp-min'),exp_max:v('adv-exp-max'),reg_date_from:v('adv-date-from'),reg_date_to:v('adv-date-to')};
+}
+function updateSaved(){
+  const name=(document.getElementById('saved-sel')||{}).value;
+  if(!name){ alert('Pick a saved search in the list first, then change the form below and click Update.'); return; }
+  if(!confirm('Overwrite “'+name+'” with the search currently in the form?\n\n(The previous version is kept in its history, so you can restore it from ⚙ Manage.)')) return;
+  fetch('/api/saved_searches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,criteria:advCriteria()})})
+    .then(r=>r.json()).then(d=>{ if(d&&d.ok===false) alert(d.error||'Could not update.'); else cToast('Updated “'+name+'”'); loadSavedList(name); });
+}
+function applyCriteriaToAdvanced(c,run){
+  c=c||{};
+  setMode('advanced');
+  const fm={'adv-name':'name','adv-reg':'reg_number','adv-postcode':'postcode','adv-location':'location','adv-what':'what','adv-status':'reg_status','adv-type':'charity_type','adv-inc-min':'inc_min','adv-inc-max':'inc_max','adv-exp-min':'exp_min','adv-exp-max':'exp_max','adv-date-from':'reg_date_from','adv-date-to':'reg_date_to'};
+  // every field is set (blank when the saved search doesn't use it) so nothing is left over from the previous search
+  Object.entries(fm).forEach(([id,key])=>{const el=document.getElementById(id);if(el)el.value=c[key]||(id==='adv-status'?'registered':'');});
+  areaPickerInit('advsearch', Array.isArray(c.area_of_operation)?c.area_of_operation:[]);
+  areaPickerInit('advsearch_what', Array.isArray(c.what_class)?c.what_class:[]);
+  areaPickerInit('advsearch_who', Array.isArray(c.who_class)?c.who_class:[]);
+  areaPickerInit('advsearch_how', Array.isArray(c.how_class)?c.how_class:[]);
+  if(run) doAdv();
 }
 function loadSaved(){
   const name=document.getElementById('saved-sel').value;if(!name)return;
-  fetch('/api/saved_searches/'+encodeURIComponent(name)).then(r=>r.json()).then(c=>{
-    setMode('advanced');
-    const fm={'adv-name':'name','adv-reg':'reg_number','adv-postcode':'postcode','adv-location':'location','adv-what':'what','adv-status':'reg_status','adv-type':'charity_type','adv-inc-min':'inc_min','adv-inc-max':'inc_max','adv-exp-min':'exp_min','adv-exp-max':'exp_max','adv-date-from':'reg_date_from','adv-date-to':'reg_date_to'};
-    Object.entries(fm).forEach(([id,key])=>{const el=document.getElementById(id);if(el&&c[key])el.value=c[key];});
-    areaPickerInit('advsearch', Array.isArray(c.area_of_operation)?c.area_of_operation:[]);
-    areaPickerInit('advsearch_what', Array.isArray(c.what_class)?c.what_class:[]);
-    areaPickerInit('advsearch_who', Array.isArray(c.who_class)?c.who_class:[]);
-    areaPickerInit('advsearch_how', Array.isArray(c.how_class)?c.how_class:[]);
-    doAdv();
+  fetch('/api/saved_searches/'+encodeURIComponent(name),{cache:'no-store'}).then(r=>r.json()).then(c=>applyCriteriaToAdvanced(c,true));
+}
+
+// ── ⚙ Manage Saved Searches ───────────────────────────────────────────────────
+function openSsManager(){
+  document.getElementById('ssm-modal').classList.add('open');
+  _ssm.checked=new Set(); _ssm.sel=null; _ssm.showHist=false;
+  const pre=(document.getElementById('saved-sel')||{}).value||'';
+  ssmLoad(pre);
+}
+function closeSsManager(){
+  if(ssmDirty() && !confirm('You have unsaved edits. Close without saving?')) return;
+  document.getElementById('ssm-modal').classList.remove('open');
+  loadSavedList();
+}
+function ssmLoad(selectName){
+  const del=document.getElementById('ssm-showdel')&&document.getElementById('ssm-showdel').checked;
+  return fetch('/api/saved_search_mgr/list?deleted='+(del?1:0),{cache:'no-store'}).then(r=>r.json()).then(d=>{
+    _ssm.list=(d&&d.searches)||[];
+    const keep=selectName||_ssm.sel;
+    ssmRenderList();
+    if(keep && _ssm.list.some(x=>x.name===keep)) ssmSelect(keep,true); else { _ssm.sel=null; ssmRenderEditor(); }
+  }).catch(e=>{ const l=document.getElementById('ssm-list'); if(l) l.innerHTML='<div style="padding:14px;color:var(--red);font-size:12px">Could not load: '+esc(e.message)+'</div>'; });
+}
+function ssmVisible(){
+  const q=((document.getElementById('ssm-q')||{}).value||'').toLowerCase().trim();
+  const f=(document.getElementById('ssm-filter')||{}).value||'all';
+  const so=(document.getElementById('ssm-sort')||{}).value||'recent';
+  let rows=_ssm.list.filter(x=>{
+    if(f==='visible'&&x.hidden) return false; if(f==='hidden'&&!x.hidden) return false; if(f==='pinned'&&!x.pinned) return false;
+    if(!q) return true;
+    return (x.name+' '+x.notes+' '+_ssmSummary(x.criteria)+' '+JSON.stringify(x.criteria)).toLowerCase().includes(q);
+  });
+  const cmp={recent:(a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)),oldest:(a,b)=>String(a.updated_at).localeCompare(String(b.updated_at)),
+    az:(a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'}),za:(a,b)=>b.name.localeCompare(a.name,undefined,{sensitivity:'base'})}[so];
+  rows.sort((a,b)=>(!!b.pinned-!!a.pinned)||cmp(a,b));
+  return rows;
+}
+function ssmRenderList(){
+  const box=document.getElementById('ssm-list'); if(!box) return;
+  const rows=ssmVisible();
+  const active=_ssm.list.filter(x=>!x.deleted_at).length;
+  const cnt=document.getElementById('ssm-count'); if(cnt) cnt.textContent=active+' saved search'+(active===1?'':'es')+(_ssm.list.length>active?' · '+(_ssm.list.length-active)+' deleted':'');
+  box.innerHTML=rows.length?rows.map(x=>{
+    const sel=x.name===_ssm.sel?' sel':'';
+    const b=(x.pinned?'<span class="ssm-badge" style="background:#fde7a8;color:#7a5600">📌 Pinned</span>':'')+
+      (x.hidden?'<span class="ssm-badge" style="background:#e5e7eb;color:#444">🙈 Hidden</span>':'')+
+      (x.deleted_at?'<span class="ssm-badge" style="background:#fbd0d0;color:#8a1c1c">Deleted</span>':'');
+    return `<div class="ssm-item${sel}" data-n="${esc(x.name)}" onclick="ssmSelect(this.dataset.n)">
+      <input type="checkbox" style="margin-top:3px" ${_ssm.checked.has(x.name)?'checked':''} onclick="event.stopPropagation();ssmCheck(this.closest('.ssm-item').dataset.n,this.checked)">
+      <div style="min-width:0"><div class="nm">${esc(x.name)}${b}</div>
+      <div class="mt">Saved ${_ssmFmt(x.updated_at)}${x.updated_by?' · '+esc(x.updated_by):''}</div>
+      <div class="sm">${esc(_ssmSummary(x.criteria))||'<i>No filters</i>'}</div></div></div>`;
+  }).join(''):'<div style="padding:18px;color:var(--t3);font-size:12px">No saved searches match.</div>';
+  ssmBulkUi();
+}
+function ssmCheck(n,on){ if(on) _ssm.checked.add(n); else _ssm.checked.delete(n); ssmBulkUi(); }
+function ssmToggleAll(on){ ssmVisible().forEach(x=>{ if(on) _ssm.checked.add(x.name); else _ssm.checked.delete(x.name); }); ssmRenderList(); }
+function ssmBulkUi(){ const b=document.getElementById('ssm-bulk'); if(b) b.style.display=_ssm.checked.size?'flex':'none'; }
+function ssmBulk(action){
+  const names=[..._ssm.checked]; if(!names.length) return;
+  if(action==='delete' && !confirm('Delete '+names.length+' saved search'+(names.length===1?'':'es')+'?\n\nThey move to “Show deleted” and can be restored.')) return;
+  fetch('/api/saved_search_mgr/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({names,action})})
+    .then(r=>r.json()).then(d=>{ if(!d.ok) alert(d.error||'Failed'); _ssm.checked=new Set(); ssmLoad(); loadSavedList(); });
+}
+// ---- editor ----
+function ssmRec(){ return _ssm.list.find(x=>x.name===_ssm.sel)||null; }
+function ssmFormGet(){
+  const g=id=>{const e=document.getElementById(id);return e?e.value:'';};
+  const c={};
+  SSM_FIELDS.forEach(([k])=>{ c[k]=g('ssmf-'+k).trim(); });
+  SSM_LISTS.forEach(([k])=>{ c[k]=g('ssmf-'+k).split(',').map(x=>x.trim()).filter(Boolean); });
+  c.what=g('ssmf-what').split(/[\n|]/).map(x=>x.trim()).filter(Boolean).join('|');
+  return {name:g('ssmf-newname').trim(), notes:g('ssmf-notes'), criteria:c};
+}
+function ssmFormSet(o){
+  _ssm.apply=true;
+  const set=(id,val)=>{const e=document.getElementById(id); if(e) e.value=val==null?'':val;};
+  set('ssmf-newname',o.name); set('ssmf-notes',o.notes);
+  const c=o.criteria||{};
+  SSM_FIELDS.forEach(([k])=>set('ssmf-'+k,(k==='reg_status'&&!c[k])?'registered':c[k]));
+  SSM_LISTS.forEach(([k])=>set('ssmf-'+k,(c[k]||[]).join(', ')));
+  set('ssmf-what',String(c.what||'').split('|').join('\n'));
+  _ssm.apply=false;
+}
+function ssmDirty(){
+  const m=document.getElementById('ssm-modal'); if(!m||!m.classList.contains('open')||!_ssm.sel||!document.getElementById('ssmf-newname')) return false;
+  return JSON.stringify(ssmFormGet())!==_ssm.base;
+}
+function ssmSnap(){
+  if(_ssm.apply||!document.getElementById('ssmf-newname')) return;
+  const cur=JSON.stringify(ssmFormGet());
+  if(cur===_ssm.hist[_ssm.hi]) return;
+  _ssm.hist=_ssm.hist.slice(0,_ssm.hi+1); _ssm.hist.push(cur);
+  if(_ssm.hist.length>100) _ssm.hist.shift();
+  _ssm.hi=_ssm.hist.length-1;
+}
+function ssmOnEdit(){ if(_ssm.apply) return; clearTimeout(_ssm.timer); _ssm.timer=setTimeout(()=>{ssmSnap(); ssmButtons();},350); ssmButtons(); }
+function ssmUndo(){ clearTimeout(_ssm.timer); ssmSnap(); if(_ssm.hi>0){ _ssm.hi--; ssmFormSet(JSON.parse(_ssm.hist[_ssm.hi])); } ssmButtons(); }
+function ssmRedo(){ clearTimeout(_ssm.timer); if(_ssm.hi<_ssm.hist.length-1){ _ssm.hi++; ssmFormSet(JSON.parse(_ssm.hist[_ssm.hi])); } ssmButtons(); }
+function ssmButtons(){
+  const dirty=ssmDirty();
+  const set=(id,dis)=>{const e=document.getElementById(id); if(e){ e.disabled=dis; e.style.opacity=dis?.45:1; }};
+  set('ssm-b-undo',!(_ssm.hi>0 || JSON.stringify(ssmFormGet())!==_ssm.hist[_ssm.hi]));
+  set('ssm-b-redo',!(_ssm.hi<_ssm.hist.length-1));
+  set('ssm-b-save',!dirty); set('ssm-b-revert',!dirty);
+  const d=document.getElementById('ssm-dirty'); if(d) d.style.display=dirty?'inline':'none';
+}
+function ssmSelect(name,force){
+  if(!force && name!==_ssm.sel && ssmDirty() && !confirm('You have unsaved edits to “'+_ssm.sel+'”. Discard them?')) return;
+  _ssm.sel=name; _ssm.showHist=false; ssmRenderList(); ssmRenderEditor();
+}
+function _ssmField(k,label,type){
+  if(type.startsWith('sel:')){
+    const [, rest]=type.split('sel:'); const opts=rest.split(',').map(o=>{const [v,t]=o.includes('|')?o.split('|'):[o,o]; return [v,t];});
+    return `<div><label>${label}</label><select id="ssmf-${k}" onchange="ssmOnEdit()">${opts.map(([v,t])=>`<option value="${esc(v==='Any'?'':v)}">${esc(t)}</option>`).join('')}</select></div>`;
+  }
+  return `<div><label>${label}</label><input id="ssmf-${k}" type="${type}" oninput="ssmOnEdit()"></div>`;
+}
+function ssmRenderEditor(){
+  const ed=document.getElementById('ssm-ed'); if(!ed) return;
+  const r=ssmRec();
+  if(!r){ ed.innerHTML='<div style="color:var(--t3);font-size:13px;padding:30px 10px">Select a saved search on the left to view and edit its criteria.</div>'; return; }
+  if(r.deleted_at){
+    ed.innerHTML=`<h3 style="margin:0 0 6px">${esc(r.name)} <span class="ssm-badge" style="background:#fbd0d0;color:#8a1c1c">Deleted ${_ssmFmt(r.deleted_at)}</span></h3>
+      <div style="font-size:12px;color:var(--t2);margin-bottom:10px">${esc(_ssmSummary(r.criteria))||'No filters'}</div>
+      <div class="ssm-actions"><button class="btn btn-green btn-sm" onclick="ssmUndelete()">↩ Restore</button>
+      <button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="ssmDeleteForever()">Delete permanently</button></div>`;
+    return;
+  }
+  ed.innerHTML=`
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+      <div style="flex:1;min-width:240px"><label class="lb">Name (edit to rename)</label><input id="ssmf-newname" maxlength="80" oninput="ssmOnEdit()" style="font-weight:700;font-size:14px"></div>
+      <label style="font-size:12px;display:flex;gap:6px;align-items:center;padding-bottom:7px"><input type="checkbox" id="ssm-t-show" style="width:auto" ${r.hidden?'':'checked'} onchange="ssmToggle('hidden',!this.checked)"> Show in Daily Calling</label>
+      <label style="font-size:12px;display:flex;gap:6px;align-items:center;padding-bottom:7px"><input type="checkbox" id="ssm-t-pin" style="width:auto" ${r.pinned?'checked':''} onchange="ssmToggle('pinned',this.checked)"> 📌 Pin to top</label>
+    </div>
+    <div style="font-size:11px;color:var(--t3);margin:5px 0 8px">Created ${_ssmFmt(r.created_at)}${r.created_by?' by '+esc(r.created_by):''} · last saved ${_ssmFmt(r.updated_at)}${r.updated_by?' by '+esc(r.updated_by):''} · ${r.versions||0} version${(r.versions||0)===1?'':'s'}</div>
+    <label class="lb">Notes (visible to everyone; e.g. what this search is for)</label>
+    <textarea id="ssmf-notes" rows="2" oninput="ssmOnEdit()"></textarea>
+    <div class="ssm-grid">${SSM_FIELDS.map(f=>_ssmField(...f)).join('')}</div>
+    <label class="lb">What / Cause area — search terms, one per line <span style="font-weight:400">(a charity matches if its activities contain ANY of them)</span></label>
+    <textarea id="ssmf-what" rows="6" oninput="ssmOnEdit()" style="font-family:monospace"></textarea>
+    <div class="ssm-grid" style="margin-top:10px">${SSM_LISTS.map(([k,l])=>`<div><label>${l}</label><textarea id="ssmf-${k}" rows="2" oninput="ssmOnEdit()"></textarea></div>`).join('')}</div>
+    <div class="ssm-actions">
+      <button class="btn btn-outline btn-sm" id="ssm-b-undo" onclick="ssmUndo()" title="Undo last edit">↶ Undo</button>
+      <button class="btn btn-outline btn-sm" id="ssm-b-redo" onclick="ssmRedo()" title="Redo">↷ Redo</button>
+      <button class="btn btn-outline btn-sm" id="ssm-b-revert" onclick="ssmRevert()" title="Throw away unsaved edits">⟲ Revert to saved</button>
+      <button class="btn btn-green btn-sm" id="ssm-b-save" onclick="ssmSave()">💾 Save changes</button>
+      <span id="ssm-dirty" style="display:none;font-size:12px;color:#b45309;font-weight:700">● Unsaved changes</span>
+    </div>
+    <div class="ssm-actions" style="border-top:1px solid var(--border);padding-top:10px">
+      <button class="btn btn-gold btn-sm" onclick="ssmRun(true)" title="Runs what is in the editor now (saved or not)">▶ Run search</button>
+      <button class="btn btn-outline btn-sm" onclick="ssmRun(false)" title="Fill the Advanced Search form without running it">↗ Open in Advanced Search</button>
+      <span class="ssm-sep"></span>
+      <button class="btn btn-outline btn-sm" onclick="ssmDuplicate()">⧉ Duplicate</button>
+      <button class="btn btn-outline btn-sm" onclick="ssmToggleHist()">🕘 Version history</button>
+      <button class="btn btn-outline btn-sm" onclick="ssmCopyText()" title="Copy a readable summary">📋 Copy summary</button>
+      <span class="ssm-sep"></span>
+      <button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red)" onclick="ssmDelete()">🗑 Delete</button>
+    </div>
+    <div id="ssm-hist"></div>`;
+  ssmFormSet({name:r.name,notes:r.notes,criteria:r.criteria});
+  _ssm.base=JSON.stringify(ssmFormGet()); _ssm.hist=[_ssm.base]; _ssm.hi=0;
+  ssmButtons();
+  if(_ssm.showHist) ssmLoadHist();
+}
+function ssmApi(path,body){
+  return fetch('/api/saved_search_mgr/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+}
+function ssmSave(){
+  const r=ssmRec(); if(!r) return;
+  const f=ssmFormGet(); if(!f.name){ alert('Give the saved search a name.'); return; }
+  ssmApi('update',{name:r.name,new_name:f.name,notes:f.notes,criteria:f.criteria}).then(d=>{
+    if(!d.ok){ alert(d.error||'Could not save.'); return; }
+    cToast('Saved “'+d.search.name+'”');
+    _ssm.sel=d.search.name; ssmLoad(d.search.name).then(()=>loadSavedList());
   });
 }
+function ssmRevert(){ const r=ssmRec(); if(!r) return; ssmFormSet({name:r.name,notes:r.notes,criteria:r.criteria}); _ssm.hist=[JSON.stringify(ssmFormGet())]; _ssm.hi=0; ssmButtons(); }
+function ssmToggle(field,val){
+  const r=ssmRec(); if(!r) return;
+  ssmApi('update',{name:r.name,[field]:val}).then(d=>{
+    if(!d.ok){ alert(d.error||'Failed'); return; }
+    cToast(field==='hidden'?(val?'Hidden from Daily Calling':'Shown in Daily Calling'):(val?'Pinned to top':'Unpinned'));
+    // keep any unsaved edits: only refresh the list, not the editor
+    const i=_ssm.list.findIndex(x=>x.name===r.name); if(i>=0) _ssm.list[i]=Object.assign(_ssm.list[i],{hidden:d.search.hidden,pinned:d.search.pinned});
+    ssmRenderList(); loadSavedList();
+  });
+}
+function ssmRun(run){
+  const f=ssmFormGet(); applyCriteriaToAdvanced(f.criteria,run);
+  const sel=document.getElementById('saved-sel'); if(sel&&_ssm.sel){ loadSavedList(_ssm.sel); }
+  _ssm.apply=true; document.getElementById('ssm-modal').classList.remove('open'); _ssm.apply=false;
+  if(!run) cToast('Loaded into the Advanced Search form');
+}
+function ssmDuplicate(){
+  const r=ssmRec(); if(!r) return;
+  const nn=prompt('Name for the copy:',r.name+' (copy)'); if(!nn) return;
+  ssmApi('duplicate',{name:r.name,new_name:nn}).then(d=>{ if(!d.ok){ alert(d.error||'Failed'); return; } cToast('Duplicated'); _ssm.sel=d.search.name; ssmLoad(d.search.name).then(()=>loadSavedList()); });
+}
+function ssmDelete(){
+  const r=ssmRec(); if(!r) return;
+  if(!confirm('Delete “'+r.name+'”?\n\nIt moves to “Show deleted” and can be restored.')) return;
+  ssmApi('delete',{name:r.name}).then(()=>{ cToast('Deleted'); _ssm.sel=null; ssmLoad().then(()=>loadSavedList()); });
+}
+function ssmUndelete(){ const r=ssmRec(); if(!r) return; ssmApi('undelete',{name:r.name}).then(d=>{ if(d.ok){ cToast('Restored'); ssmLoad(r.name).then(()=>loadSavedList()); } }); }
+function ssmDeleteForever(){
+  const r=ssmRec(); if(!r) return;
+  if(!confirm('Permanently delete “'+r.name+'” and its history? This cannot be undone.')) return;
+  ssmApi('delete',{name:r.name,forever:true}).then(()=>{ _ssm.sel=null; ssmLoad(); });
+}
+function ssmToggleHist(){ _ssm.showHist=!_ssm.showHist; if(_ssm.showHist) ssmLoadHist(); else { const h=document.getElementById('ssm-hist'); if(h) h.innerHTML=''; } }
+function ssmLoadHist(){
+  const r=ssmRec(); const h=document.getElementById('ssm-hist'); if(!r||!h) return;
+  h.innerHTML='<div style="font-size:12px;color:var(--t3);margin-top:8px">Loading history…</div>';
+  ssmApi('history',{name:r.name}).then(d=>{
+    _ssm.versions=d.versions||[];
+    if(!_ssm.versions.length){ h.innerHTML='<div style="font-size:12px;color:var(--t3);margin-top:8px">No earlier versions yet — a version is recorded each time the search is saved.</div>'; return; }
+    h.innerHTML='<div class="ssm-hist">'+_ssm.versions.map((x,i)=>`<div class="r">
+      <div style="flex:1;min-width:0"><b>${i===0?'Current · ':''}${_ssmFmt(x.saved_at)}</b> <span style="color:var(--t3)">${esc(x.action)}${x.saved_by?' · '+esc(x.saved_by):''}</span>
+      <div style="color:var(--t2);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(_ssmSummary(x.criteria))||'No filters'}</div></div>
+      <button class="btn btn-outline btn-sm" onclick="ssmVersionToEditor(${i})" title="Put this version in the editor (not saved until you click Save changes)">Load in editor</button>
+      ${i===0?'':`<button class="btn btn-outline btn-sm" onclick="ssmRestore(${x.id})" title="Make this version the saved one now">Restore</button>`}</div>`).join('')+'</div>';
+  });
+}
+function ssmVersionToEditor(i){
+  const x=_ssm.versions[i]; if(!x) return; clearTimeout(_ssm.timer); ssmSnap();
+  const cur=ssmFormGet(); ssmFormSet({name:cur.name,notes:cur.notes,criteria:x.criteria}); ssmSnap(); ssmButtons();
+}
+function ssmRestore(id){
+  const r=ssmRec(); if(!r) return;
+  if(!confirm('Restore this version? The current version stays in the history.')) return;
+  ssmApi('restore_version',{name:r.name,version_id:id}).then(d=>{ if(!d.ok){ alert(d.error||'Failed'); return; } cToast('Version restored'); ssmLoad(r.name).then(()=>loadSavedList()); });
+}
+function ssmCopyText(){
+  const f=ssmFormGet(); const lines=['Saved search: '+f.name]; if(f.notes) lines.push('Notes: '+f.notes);
+  Object.entries(f.criteria).forEach(([k,v])=>{ const t=Array.isArray(v)?v.join(', '):v; if(t) lines.push(k+': '+t); });
+  const txt=lines.join('\n');
+  (navigator.clipboard?navigator.clipboard.writeText(txt):Promise.reject()).then(()=>cToast('Copied')).catch(()=>{ prompt('Copy this:',txt); });
+}
+function ssmExport(){
+  fetch('/api/saved_search_mgr/list',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+    const blob=new Blob([JSON.stringify(d.searches||[],null,2)],{type:'application/json'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='saved_searches_'+new Date().toISOString().slice(0,10)+'.json';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+  });
+}
+document.addEventListener('keydown',e=>{
+  const m=document.getElementById('ssm-modal'); if(!m||!m.classList.contains('open')) return;
+  if(e.key==='Escape'){ closeSsManager(); return; }
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){ e.preventDefault(); if(ssmDirty()) ssmSave(); }
+});
 function deleteSaved(){
   const name=document.getElementById('saved-sel').value;if(!name)return;
   if(!confirm('Delete "'+name+'"?'))return;
@@ -14024,7 +14394,7 @@ function renderSourceFilters(){
     const sel=document.getElementById('sf-saved_search');
     if(sel){
       sel.innerHTML='<option value="">Loading saved searches…</option>';
-      fetch('/api/saved_searches',{cache:'no-store'}).then(r=>r.json()).then(names=>{
+      fetch('/api/saved_searches?for=calling',{cache:'no-store'}).then(r=>r.json()).then(names=>{
         if(!names || !names.length){
           sel.innerHTML='<option value="">No saved searches yet — save one from Charity Search first</option>';
           return;
