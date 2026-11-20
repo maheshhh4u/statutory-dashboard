@@ -10610,6 +10610,266 @@ def api_call_history_export_download():
     return Response(data, mimetype=_XLSX_MIME,
         headers={"Content-Disposition": f"attachment; filename=call_history_full_{tstamp}.xlsx"})
 
+# ═══════════════════════════════════════════════════════════════
+# SMART NEXT 100 — learns from call history, scores UNCALLED charities
+# ═══════════════════════════════════════════════════════════════
+SN_POS  = {"meeting secured","interested","info requested - will reach out","not looked at details yet, call back"}
+SN_CONV = SN_POS | {"engaged","connected","not interested","no budget","email sent follow up"}
+SN_INC_BANDS = [(0,100e3,"under £100k"),(100e3,250e3,"£100k–£250k"),(250e3,500e3,"£250k–£500k"),
+                (500e3,1e6,"£500k–£1m"),(1e6,2e6,"£1m–£2m"),(2e6,5e6,"£2m–£5m"),(5e6,1e18,"over £5m")]
+
+def _sn_incband(v):
+    for lo,hi,lab in SN_INC_BANDS:
+        if lo <= v < hi: return lab
+    return "unknown"
+
+def _sn_ageband(reg_date):
+    try: y = int(str(reg_date)[:4]); age = datetime.utcnow().year - y
+    except Exception: return "unknown"
+    if age <= 0: return "registered this year"
+    if age == 1: return "1 year old (1st anniversary)"
+    if age < 5: return "2–4 years old"
+    if age < 10: return "5–9 years old"
+    if age < 20: return "10–19 years old"
+    if age < 40: return "20–39 years old"
+    if age == 40: return "40 years old (40th anniversary)"
+    return "over 40 years old"
+
+def _sn_features(row, inc):
+    pc = (row.get("charity_contact_postcode","") or "").upper().strip()
+    m = re.match(r"^[A-Z]{1,2}", pc)
+    ga = (row.get("charity_gift_aid","") or "").strip().lower() in ("true","t","1","yes","y")
+    land = (row.get("charity_has_land","") or "").strip().lower() in ("true","t","1","yes","y")
+    f = {
+        "Income band": _sn_incband(inc),
+        "Charity type": (row.get("charity_type","") or "").strip().title() or "unknown",
+        "Age of charity": _sn_ageband(row.get("date_of_registration","")),
+        "Postcode area": ("postcode area " + m.group(0)) if m else "unknown",
+        "Gift Aid": "claims Gift Aid" if ga else "no Gift Aid",
+        "Owns land": "owns land" if land else "no land",
+        "Website": "has website" if (row.get("charity_contact_web","") or "").strip() else "no website",
+        "Email": "has email" if (row.get("charity_contact_email","") or "").strip() else "no email",
+    }
+    return f
+
+def _sn_read_upload(fobj):
+    """Parse an uploaded Call History export. Returns (reg->best_score dict, called regs set)."""
+    import openpyxl
+    wb = openpyxl.load_workbook(fobj, read_only=True, data_only=True)
+    best, called = {}, set()
+    def hdr(ws, need):
+        for i, row in enumerate(ws.iter_rows(min_row=1, max_row=4, values_only=True)):
+            vals = [str(c).strip().lower() if c is not None else "" for c in row]
+            if all(n in vals for n in need): return i + 1, vals
+        return None, None
+    if "Calls" in wb.sheetnames:
+        ws = wb["Calls"]; hr, h = hdr(ws, ["reg number", "outcome"])
+        if hr:
+            ri, oi = h.index("reg number"), h.index("outcome")
+            for row in ws.iter_rows(min_row=hr+1, values_only=True):
+                if not row or len(row) <= max(ri, oi) or row[ri] is None: continue
+                reg = str(row[ri]).strip(); called.add(reg)
+                o = str(row[oi] or "").strip().lower()
+                s = 2 if o in SN_POS else (1 if o in SN_CONV else 0)
+                if s > best.get(reg, 0): best[reg] = s
+    if "Call History" in wb.sheetnames:
+        ws = wb["Call History"]; hr, h = hdr(ws, ["reg number"])
+        if hr:
+            ri = h.index("reg number")
+            for row in ws.iter_rows(min_row=hr+1, values_only=True):
+                if row and len(row) > ri and row[ri] is not None: called.add(str(row[ri]).strip())
+    wb.close()
+    return best, called
+
+def _sn_read_db():
+    best, called = {}, set()
+    for reg, o in (db_query("SELECT reg_number, outcome FROM call_log") or []):
+        if not reg: continue
+        reg = str(reg).strip(); called.add(reg)
+        o = str(o or "").strip().lower()
+        s = 2 if o in SN_POS else (1 if o in SN_CONV else 0)
+        if s > best.get(reg, 0): best[reg] = s
+    for (reg,) in (db_query("SELECT DISTINCT reg_number FROM called_log") or []):
+        if reg: called.add(str(reg).strip())
+    return best, called
+
+def _sn_run(job, upload_path, p):
+    import openpyxl
+    try:
+        _exp_status(job, state="running", message="Reading call history…")
+        best, called = {}, set()
+        if upload_path:
+            with open(upload_path, "rb") as f: b1, c1 = _sn_read_upload(f)
+            best.update(b1); called |= c1
+        b2, c2 = _sn_read_db()
+        for k, v in b2.items():
+            if k not in best: best[k] = v        # file wins when both have the charity
+        called |= c2
+        if len(called) < 50:
+            raise RuntimeError("Not enough call history to learn from (need at least 50 called charities).")
+        excl = set(_calling_excl)
+        _exp_status(job, message="Scanning the Charity Commission register…")
+        COLS = {"registered_charity_number","charity_name","charity_registration_status","date_of_registration",
+                "charity_contact_web","charity_contact_phone","charity_contact_email","charity_contact_address3",
+                "charity_contact_address4","charity_contact_postcode","charity_activities","charity_type",
+                "latest_income","charity_gift_aid","charity_has_land","linked_charity_number"}
+        train, cands = [], []
+        imin, imax = p["inc_min"], p["inc_max"]
+        for row in stream_zip_csv(CHARITY_URL, COLS):
+            st = (row.get("charity_registration_status","") or "").upper().strip()
+            if st not in ("REGISTERED","R"): continue
+            if (row.get("linked_charity_number","") or "0").strip() not in ("","0"): continue
+            reg = (row.get("registered_charity_number","") or "").strip()
+            inc = flt(row.get("latest_income",""))
+            if reg in called:
+                train.append((_sn_features(row, inc), best.get(reg, 0)))
+            elif reg not in excl and (row.get("charity_contact_phone","") or "").strip() and imin <= inc <= imax:
+                cands.append((reg, row, inc, _sn_features(row, inc)))
+        if len(train) < 50: raise RuntimeError("Could not match enough called charities to the register.")
+        _exp_status(job, message="Learning from outcomes…")
+        # target: positive outcome = 1, other real conversation = 0.25, everything else = 0
+        ys = [1.0 if s == 2 else (0.25 if s == 1 else 0.0) for _, s in train]
+        n_tr = len(train); base = max(sum(ys) / n_tr, 1e-6)
+        npos = sum(1 for _, s in train if s == 2)
+        K = 40.0  # shrinkage: small groups are pulled towards the average
+        stats = {}
+        for (f, _), y in zip(train, ys):
+            for k, v in f.items():
+                d = stats.setdefault((k, v), [0, 0.0, 0, 0]); d[0] += 1; d[1] += y
+        for (f, s) in train:
+            if s >= 1:
+                for k, v in f.items():
+                    stats[(k, v)][3] += 1
+                    if s == 2: stats[(k, v)][2] += 1
+        lift = {}
+        for key, (n, sy, pc_, cv_) in stats.items():
+            rate = (sy + K * base) / (n + K)
+            lift[key] = (rate / base, n, pc_, cv_)
+        import math
+        W = 0.6  # dampens double-counting between correlated features
+        scored = []
+        for reg, row, inc, f in cands:
+            contrib = []
+            tot = 0.0
+            for k, v in f.items():
+                l = lift.get((k, v))
+                if not l or l[1] < 25: continue
+                c = W * math.log(l[0]); tot += c; contrib.append((c, k, v, l))
+            scored.append((tot, reg, row, inc, f, contrib))
+        scored.sort(key=lambda x: -x[0])
+        # spread: max N per postcode area so the 100 aren't all one town
+        cap = p["per_area"]; per = {}; out = []
+        for sc in scored:
+            area = sc[4].get("Postcode area", "?")
+            if cap and per.get(area, 0) >= cap: continue
+            per[area] = per.get(area, 0) + 1; out.append(sc)
+            if len(out) >= p["count"]: break
+        rows = []
+        for i, (tot, reg, row, inc, f, contrib) in enumerate(out, 1):
+            contrib.sort(key=lambda x: -x[0])
+            good = [c for c in contrib if c[0] > 0.02][:3]
+            bits = []
+            nconv = sum(1 for _, s_ in train if s_ >= 1)
+            for c, k, v, (lf, n, pc_, cv_) in good:
+                bits.append(f"{k}: {v} — of {n} similar charities called, {pc_/n*100:.1f}% gave a positive outcome and {cv_/n*100:.1f}% reached a real conversation (average {npos/n_tr*100:.1f}% / {nconv/n_tr*100:.1f}%)")
+            bad = [c for c in contrib if c[0] < -0.1]
+            reason = "; ".join(bits) if bits else "Matches the typical profile of charities that responded (no single standout factor)."
+            if bad: reason += f". Weaker point: {bad[-1][1]}: {bad[-1][2]}."
+            est = min(base * math.exp(tot) , 0.95) / base * (npos / n_tr) * 100
+            addr = ", ".join(x for x in [row.get("charity_contact_address3",""), row.get("charity_contact_address4","")] if x)
+            rows.append({"rank": i, "reg_number": reg, "name": row.get("charity_name",""),
+                         "phone": row.get("charity_contact_phone",""), "email": row.get("charity_contact_email",""),
+                         "website": row.get("charity_contact_web",""), "location": addr,
+                         "postcode": row.get("charity_contact_postcode",""), "income": inc,
+                         "charity_type": row.get("charity_type",""), "registered": (row.get("date_of_registration","") or "")[:10],
+                         "score": round(tot, 3), "est_hit_rate": round(est, 1), "reason": reason,
+                         "activities": (row.get("charity_activities","") or "")[:300]})
+        # model insights
+        ins = []
+        for (k, v), (lf, n, pc_, cv_) in lift.items():
+            if n >= 25: ins.append({"feature": k, "value": v, "called": n, "positive": pc_,
+                                    "pos_rate": round(pc_ / n * 100, 1), "conv_rate": round(cv_ / n * 100, 1), "lift": round(lf, 2)})
+        ins.sort(key=lambda r: -r["lift"])
+        summary = {"trained_on": n_tr, "positives": npos, "base_rate": round(npos / n_tr * 100, 2),
+                   "pool": len(cands), "insights": ins}
+        _exp_status(job, message="Building Excel…")
+        wb = openpyxl.Workbook(write_only=True)
+        ws = wb.create_sheet("Next 100")
+        hd = ["Rank","Reg Number","Charity Name","Phone","Email","Website","Location","Postcode","Latest Income",
+              "Charity Type","Registered","Score","Est. positive rate %","Reason for picking","Activities"]
+        ws.append(hd)
+        for r in rows:
+            ws.append([r["rank"], r["reg_number"], r["name"], r["phone"], r["email"], r["website"], r["location"],
+                       r["postcode"], r["income"], r["charity_type"], r["registered"], r["score"],
+                       r["est_hit_rate"], r["reason"], r["activities"]])
+        ws2 = wb.create_sheet("What the data says")
+        ws2.append(["Feature","Value","Charities called","Positive outcomes","Positive rate %","Conversation rate %","Lift vs average (shrunk)"])
+        for r in ins: ws2.append([r["feature"], r["value"], r["called"], r["positive"], r["pos_rate"], r["conv_rate"], r["lift"]])
+        ws3 = wb.create_sheet("About")
+        for line in [
+            f"Learned from {n_tr} called charities ({npos} positive outcomes = {npos/n_tr*100:.1f}%).",
+            "Positive = Meeting secured, Interested, Info Requested, Call Back. Other real conversations count as a quarter-point.",
+            f"Candidates: registered, not yet called, not excluded, has a phone number, income £{imin:,.0f}–£{imax:,.0f} ({len(cands)} charities).",
+            "Each charity's score adds up how much better than average each of its traits performed in your history (small groups are shrunk towards the average).",
+            "Only traits known BEFORE calling are used (income, type, age, location, Gift Aid, land, website, email). Contact person and call count are results of a good call, not causes, so they are not used.",
+            "Treat this as a prioritised starting point, not a guarantee: positives are rare so the differences are modest.",
+        ]: ws3.append([line])
+        bio = io.BytesIO(); wb.save(bio)
+        with open(os.path.join(_exp_dir(), job + ".xlsx"), "wb") as f: f.write(bio.getvalue())
+        with open(os.path.join(_exp_dir(), job + ".res.json"), "w") as f:
+            json.dump({"rows": rows, "summary": summary}, f)
+        _exp_status(job, state="done", message="Ready", count=len(rows))
+    except Exception as e:
+        import traceback; print(f"[smart100 {job}] {traceback.format_exc()}")
+        _exp_status(job, state="error", message=str(e)[:300])
+    finally:
+        if upload_path:
+            try: os.unlink(upload_path)
+            except Exception: pass
+
+@app.route("/api/smart_next/start", methods=["POST"])
+def api_smart_next_start():
+    f = request.files.get("file")
+    path = ""
+    if f and f.filename:
+        _exp_cleanup()
+        path = os.path.join(_exp_dir(), "up_" + _secrets.token_hex(6) + ".xlsx"); f.save(path)
+    def num(k, d):
+        try: return float(str(request.form.get(k, "") or "").replace(",", "")) 
+        except Exception: return d
+    p = {"count": int(max(10, min(500, num("count", 100)))), "inc_min": num("inc_min", 100000),
+         "inc_max": num("inc_max", 5000000) or 1e18, "per_area": int(max(0, min(100, num("per_area", 12))))}
+    _exp_cleanup()
+    job = _secrets.token_hex(8)
+    _exp_status(job, state="running", user=current_user() or "", message="Starting…")
+    threading.Thread(target=_sn_run, args=(job, path, p), daemon=True).start()
+    return jsonify({"ok": True, "job": job})
+
+@app.route("/api/smart_next/status")
+def api_smart_next_status():
+    job = str(request.args.get("job", ""))
+    st = _exp_read(job) if _EXP_ID_RE.match(job) else None
+    if not st: return jsonify({"ok": False, "state": "error", "message": "Job not found (it may have expired)."}), 404
+    if st.get("state") == "running" and time.time() - st.get("updated", 0) > 240:
+        st["state"] = "error"; st["message"] = "Stopped responding — please try again."
+    out = {"ok": True, "state": st.get("state"), "message": st.get("message")}
+    if st.get("state") == "done":
+        try:
+            with open(os.path.join(_exp_dir(), job + ".res.json")) as f: out.update(json.load(f))
+        except Exception: pass
+    return _no_store(jsonify(out))
+
+@app.route("/api/smart_next/download")
+def api_smart_next_download():
+    job = str(request.args.get("job", ""))
+    st = _exp_read(job) if _EXP_ID_RE.match(job) else None
+    fp = os.path.join(_exp_dir(), job + ".xlsx") if st else ""
+    if not st or st.get("state") != "done" or not os.path.exists(fp):
+        return jsonify({"error": "Not ready or expired."}), 404
+    with open(fp, "rb") as f: data = f.read()
+    return Response(data, mimetype=_XLSX_MIME, headers={"Content-Disposition":
+        f"attachment; filename=smart_next_100_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.xlsx"})
+
 HIST_FILTER_KEYS = ("newsletter","source","stage","caller","has_phone","has_email","has_contact",
                     "has_followup","has_comment","retry","excluded","called_today",
                     "income_min","income_max","stat_min","min_calls")
@@ -13136,6 +13396,7 @@ def mx_apply_to_latest():
 # Audio flows via WebRTC peer connection — no RC desktop app needed.
 
 RC_SERVER_URL    = os.environ.get("RC_SERVER_URL", "https://platform.ringcentral.com").rstrip("/")
+RC_CLIENT_ID     = os.environ.get("RC_CLIENT_ID", "")
 RC_EMBEDDABLE_CLIENT_ID = os.environ.get("RC_EMBEDDABLE_CLIENT_ID", "") or RC_CLIENT_ID
 RC_CLIENT_SECRET = os.environ.get("RC_CLIENT_SECRET", "")
 RC_JWT           = os.environ.get("RC_JWT", "")

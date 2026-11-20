@@ -940,6 +940,7 @@ select:focus{outline:none;border-color:var(--green)}
       <button class="btn btn-sm" style="background:#1e3a5f;color:#fff" onclick="loadCallHistoryList(0)">🔍 Apply</button>
       <button class="btn btn-outline btn-sm" onclick="clearCallHistoryFilters()">Clear</button>
       <button class="btn btn-sm" style="background:#1d7a3a;color:#fff" onclick="exportHistoryExcel()">⬇ Export to Excel</button>
+      <button class="btn btn-sm" style="background:#7b3fe4;color:#fff" onclick="openSmartNext()" title="Learn from call history and suggest the next best charities to call">🎯 Smart Next 100</button>
       <button class="btn btn-outline btn-sm" onclick="openColumnSettings()" title="Choose which columns to show">⚙ Columns</button>
       <input type="text" id="ch2-search" placeholder="Filter name / reg…" oninput="debouncedHistorySearch()" style="width:160px;padding:6px;border:1px solid var(--bd);border-radius:4px">
       <select id="ch2-outcome" onchange="loadCallHistoryList(0)" style="padding:6px;border:1px solid var(--bd);border-radius:4px">
@@ -7862,7 +7863,11 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
-  { v:"2.93", date:"2026-11", title:"Call History Excel: all Charity Commission data + all caller notes",
+  {v:"2.94",date:"2026-11-20",title:"Smart Next 100",changes:[
+      "New \u201C\uD83C\uDFAF Smart Next 100\u201D button in Call History: learns from your call history (upload the export, or use the app\u2019s own data) which kinds of charities gave positive outcomes, then ranks charities you have not called yet from the Charity Commission register.",
+      "Every suggested charity comes with the reason it was picked, plus a \u201CWhat the data says\u201D sheet showing how each trait performed. Download as Excel."
+    ]},
+    { v:"2.93", date:"2026-11", title:"Call History Excel: all Charity Commission data + all caller notes",
     changes:[
       "Export to Excel (Call History) now includes every field the Charity Commission publishes for each charity: the full register entry, annual return Part A (latest) and Part B, governing document and objects, trustees, other names and regulators, published reports, annual return and event history, plus What/Who/How, areas of operation and policies.",
       "Includes every note added by callers: an \u201CAll Notes\u201D column on each charity (newest first, with date, caller and call outcome) and the current comment, plus separate \u201CNotes\u201D and \u201CCalls\u201D sheets with one row per note / call. Number of calls, first call and last caller added too.",
@@ -15131,6 +15136,42 @@ function getHistorySelectedRegs(){
   });
   return regs;
 }
+
+var _snJob=null,_snTimer=null;
+function openSmartNext(){document.getElementById('sn-modal').style.display='flex';}
+function _snEsc(t){return String(t==null?'':t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+function runSmartNext(){
+  var fd=new FormData(), f=document.getElementById('sn-file').files[0];
+  if(f) fd.append('file',f);
+  fd.append('count',document.getElementById('sn-count').value);
+  fd.append('inc_min',document.getElementById('sn-imin').value);
+  fd.append('inc_max',document.getElementById('sn-imax').value);
+  fd.append('per_area',document.getElementById('sn-area').value);
+  document.getElementById('sn-status').textContent='Starting… (this takes about a minute — the full register is scanned)';
+  document.getElementById('sn-dl').style.display='none';
+  document.getElementById('sn-table').innerHTML='';document.getElementById('sn-summary').innerHTML='';
+  if(_snTimer) clearInterval(_snTimer);
+  fetch('/api/smart_next/start',{method:'POST',body:fd}).then(function(r){return r.json();}).then(function(d){
+    if(!d.ok){document.getElementById('sn-status').textContent=d.error||'Failed';return;}
+    _snJob=d.job;
+    _snTimer=setInterval(function(){
+      fetch('/api/smart_next/status?job='+_snJob+'&_='+Date.now()).then(function(r){return r.json();}).then(function(s){
+        if(s.state==='running'){document.getElementById('sn-status').textContent='⏳ '+(s.message||'Working…');return;}
+        clearInterval(_snTimer);
+        if(s.state!=='done'){document.getElementById('sn-status').textContent='❌ '+(s.message||'Failed');return;}
+        document.getElementById('sn-status').textContent='✅ '+s.rows.length+' charities suggested';
+        document.getElementById('sn-dl').style.display='';
+        var m=s.summary;
+        var top=m.insights.slice(0,6).map(function(i){return _snEsc(i.feature+': '+i.value)+' ('+i.pos_rate+'%, n='+i.called+')';}).join(' · ');
+        document.getElementById('sn-summary').innerHTML='Learned from <b>'+m.trained_on+'</b> called charities ('+m.positives+' positive = '+m.base_rate+'%). Pool of uncalled charities scored: <b>'+m.pool+'</b>.<br>Best-performing traits: '+top;
+        var h='<tr style="background:#1e3a5f;color:#fff;position:sticky;top:0"><th>#</th><th>Charity</th><th>Reg</th><th>Phone</th><th>Location</th><th>Income</th><th>Est. %</th><th>Reason for picking</th></tr>';
+        s.rows.forEach(function(r){h+='<tr style="border-bottom:1px solid #ddd;vertical-align:top"><td>'+r.rank+'</td><td><b>'+_snEsc(r.name)+'</b><br><span style="color:#777">'+_snEsc(r.charity_type)+'</span></td><td>'+_snEsc(r.reg_number)+'</td><td>'+_snEsc(r.phone)+'</td><td>'+_snEsc(r.location)+'<br>'+_snEsc(r.postcode)+'</td><td>£'+Math.round(r.income).toLocaleString()+'</td><td>'+r.est_hit_rate+'</td><td style="max-width:420px">'+_snEsc(r.reason)+'</td></tr>';});
+        document.getElementById('sn-table').innerHTML=h;
+      }).catch(function(){});
+    },3000);
+  }).catch(function(e){document.getElementById('sn-status').textContent='❌ '+e;});
+}
+function downloadSmartNext(){if(_snJob) window.location='/api/smart_next/download?job='+_snJob;}
 function exportHistoryExcel(){
   const selected=getHistorySelectedRegs();
   const total=historyTotal||historyData.length;
@@ -16266,5 +16307,24 @@ fetch('/api/rc/config').then(r=>r.json()).then(d=>{
   <div id="reminderActionBar" style="display:none;padding:10px;border-top:1px solid #eee;gap:6px;flex-wrap:wrap;align-items:center"></div>
 </div>
 <div id="reminderMinPill" onclick="maximizeReminderWindow()" onmousedown="startPillDrag(event)" title="Click to reopen · drag to move" style="display:none;position:fixed;bottom:20px;right:18px;z-index:1460;background:linear-gradient(135deg,#e8b339,#c4952b);color:#1e3a5f;border-radius:20px;padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.22);align-items:center;gap:6px">🔔 <span id="reminderMinCount">0</span> follow-up<span id="reminderMinPlural">s</span> due</div>
+
+<div id="sn-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10050;align-items:flex-start;justify-content:center;overflow:auto;padding:30px 10px">
+ <div style="background:var(--bg,#fff);color:var(--t1,#111);border-radius:10px;max-width:1150px;width:100%;padding:18px">
+  <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">🎯 Smart Next 100 — suggested charities to call, with the reason for each</h3><button class="btn btn-outline btn-sm" onclick="document.getElementById('sn-modal').style.display='none'">✕</button></div>
+  <p style="font-size:12px;color:var(--t3);margin:8px 0">Learns which kinds of charities gave positive outcomes (Meeting secured, Interested, Info Requested, Call Back) in your call history, then ranks charities you have <b>not</b> called yet from the live Charity Commission register. Only charities with a phone number are suggested.</p>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+   <div><label style="font-size:11px;display:block">Call history file (optional — otherwise uses the app's own history)</label><input type="file" id="sn-file" accept=".xlsx"></div>
+   <div><label style="font-size:11px;display:block">How many</label><input id="sn-count" type="number" value="100" style="width:70px;padding:6px"></div>
+   <div><label style="font-size:11px;display:block">Income min £</label><input id="sn-imin" value="100000" style="width:95px;padding:6px"></div>
+   <div><label style="font-size:11px;display:block">Income max £</label><input id="sn-imax" value="5000000" style="width:95px;padding:6px"></div>
+   <div><label style="font-size:11px;display:block">Max per postcode area</label><input id="sn-area" type="number" value="12" style="width:70px;padding:6px"></div>
+   <button class="btn btn-sm" style="background:#7b3fe4;color:#fff" onclick="runSmartNext()">Get my next 100</button>
+   <button class="btn btn-sm" id="sn-dl" style="display:none;background:#1d7a3a;color:#fff" onclick="downloadSmartNext()">⬇ Download Excel</button>
+  </div>
+  <div id="sn-status" style="margin:10px 0;font-size:13px"></div>
+  <div id="sn-summary" style="font-size:12px;margin-bottom:8px"></div>
+  <div style="overflow:auto;max-height:60vh"><table id="sn-table" style="border-collapse:collapse;font-size:12px;width:100%"></table></div>
+ </div>
+</div>
 </body>
 </html>
