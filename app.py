@@ -10143,21 +10143,11 @@ def _load_active_batch():
         out.append(c)
     return out
 
-@app.route("/api/call_history_list/export", methods=["POST"])
-def api_call_history_list_export():
-    """Export selected (or all) previously-called charities to Excel, with their
-    charity details, contacts, last-called date, follow-up date, latest outcome and stage."""
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-        from openpyxl.utils import get_column_letter
-    except Exception:
-        return jsonify({"error": "openpyxl not installed. Add 'openpyxl' to requirements.txt and redeploy."}), 500
-    data = request.get_json(force=True) or {}
+def _history_export_regs(data):
+    """Resolve which charities an export covers: the ticked ones, or — for "all items" —
+    the full list matching the filters the History view is using (not just one page)."""
     regs = [str(r).strip() for r in (data.get("regs") or []) if str(r).strip()]
-    mode = str(data.get("mode","")).strip()  # "all" = use filters, else use regs
-    # "All items across all pages" → recompute the full filtered list from the same
-    # filters the History view is using, so the export isn't limited to the current page.
+    mode = str(data.get("mode","")).strip()
     if mode == "all" or not regs:
         flt = data.get("filters") or {}
         full = _build_call_history_rows(
@@ -10169,16 +10159,166 @@ def api_call_history_list_export():
             outcome_filter=str(flt.get("outcome","")).strip(),
             xf=_hist_filters_from(flt))
         regs = [r["reg_number"] for r in full]
-    if not regs:
-        return jsonify({"error": "No charities to export"}), 400
-    regset = set(regs)
+    return list(dict.fromkeys(regs))
 
-    # Gather supporting data
-    last_called, last_outcome = {}, {}
-    for reg, ts, oc in (db_query("SELECT reg_number, timestamp, outcome FROM call_log ORDER BY timestamp ASC") or []):
-        if reg in regset:
-            last_called[reg] = str(ts)
-            if oc: last_outcome[reg] = oc
+# ── Charity Commission data for the Call History export ───────────────────────
+# One bulk file per dataset on the register download page. Every column in every file
+# is exported (column names are read from the file itself, so nothing is dropped and
+# nothing has to be hard-coded). Each file is read with a fast pre-filter that only
+# builds a row for the charities being exported.
+CC_FILE = lambda name: f"{BULK_BASE}/publicextract.{name}.zip"
+_CC_DROP = {"registered_charity_number","linked_charity_number","date_of_extract","organisation_number"}
+
+def _cc_label(col):
+    return str(col).replace("_", " ").strip().title()
+
+def _cc_clean(v):
+    """CC dates arrive as 2024-03-31T00:00:00 — keep just the date."""
+    v = str(v or "").strip()
+    if len(v) == 19 and v[10] == "T" and v.endswith("T00:00:00"):
+        return v[:10]
+    return v
+
+_ILLEGAL_XL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+def _xl(v, limit=32000):
+    """Make a value safe for an Excel cell (no control chars; under Excel's 32,767-char cap)."""
+    if v is None or isinstance(v, (bool, int, float)): return v
+    v = _ILLEGAL_XL.sub("", str(v))
+    return v if len(v) <= limit else v[:limit] + " … [truncated]"
+
+_NUM_RE = re.compile(r"^-?(0|[1-9]\d{0,14})(\.\d+)?$")
+def _cc_numify(col, v):
+    """Financial columns become real numbers so Excel can sort/sum them; identifiers stay text."""
+    if v and _NUM_RE.match(v) and not any(t in col for t in ("number","phone","postcode","code","fax")):
+        try: return float(v) if "." in v else int(v)
+        except Exception: return v
+    return v
+
+def _cc_fetch(url, reg_bytes, handler):
+    """Download one CC bulk file and call handler(cols, row) for the rows of the wanted
+    charities only. Splits each line with a C-speed bytes split and only builds a dict on a
+    hit — several times faster than parsing every row of a 200,000-row file."""
+    tmp = tempfile.NamedTemporaryFile(prefix="ccx_", suffix=".zip", delete=False)
+    path = tmp.name
+    try:
+        r = requests.get(url, timeout=240, stream=True)
+        r.raise_for_status()
+        for chunk in r.iter_content(chunk_size=1024*1024):
+            if chunk: tmp.write(chunk)
+        tmp.close()
+        with zipfile.ZipFile(path) as z:
+            with z.open(z.namelist()[0]) as f:
+                cols = [c.strip().lower() for c in f.readline().decode("utf-8-sig", errors="replace").rstrip("\r\n").split("\t")]
+                if "registered_charity_number" not in cols:
+                    raise ValueError("no registered_charity_number column in " + url.split("/")[-1])
+                ri, n = cols.index("registered_charity_number"), len(cols)
+                for raw in f:
+                    fields = raw.rstrip(b"\r\n").split(b"\t")
+                    if ri >= len(fields) or fields[ri].strip() not in reg_bytes: continue
+                    vals = [x.decode("utf-8", errors="replace").strip() for x in fields]
+                    if len(vals) < n: vals += [""] * (n - len(vals))
+                    handler(cols, {c: ("" if v.lower() in ("nan", "none") else v) for c, v in zip(cols, vals)})
+        return cols
+    finally:
+        try:
+            if not tmp.closed: tmp.close()
+        except Exception: pass
+        try: os.unlink(path)
+        except Exception: pass
+
+def _cc_dataset(key, name, reg_set, mode, cap=8):
+    """mode: 'single' (the main register row), 'latest' (newest by financial period end),
+    'join' (several rows per charity — kept, newest `cap`)."""
+    t0 = time.time(); rows = {}
+    reg_bytes = {r.encode() for r in reg_set}
+    def h(cols, row):
+        reg = row["registered_charity_number"]
+        if mode == "single":
+            cur = rows.get(reg)
+            if cur is None or (str(cur.get("linked_charity_number","")) not in ("", "0")
+                               and str(row.get("linked_charity_number","")) in ("", "0")):
+                rows[reg] = row
+        elif mode == "latest":
+            cur = rows.get(reg)
+            if cur is None or row.get("fin_period_end_date","") >= cur.get("fin_period_end_date",""):
+                rows[reg] = row
+        else:
+            rows.setdefault(reg, []).append(row)
+    cols = _cc_fetch(CC_FILE(name), reg_bytes, h)
+    if mode == "join":
+        rows = {k: v[-cap:][::-1] for k, v in rows.items()}
+    return key, cols, rows, round(time.time() - t0, 1)
+
+_CC_DATASETS = [  # key, file, mode, cap, friendly label
+    ("charity",   "charity",                         "single", 0, "Register entry (all fields)"),
+    ("parta",     "charity_annual_return_parta",     "latest", 0, "Annual return Part A (latest)"),
+    ("partb",     "charity_annual_return_partb",     "latest", 0, "Annual return Part B (latest)"),
+    ("gov",       "charity_governing_document",      "latest", 0, "Governing document"),
+    ("names",     "charity_other_names",             "join",  20, "Other names"),
+    ("regulators","charity_other_regulators",        "join",  10, "Other regulators"),
+    ("trustees",  "charity_trustee",                 "join", 200, "Trustees"),
+    ("reports",   "charity_published_report",        "join",   6, "Published reports"),
+    ("arhist",    "charity_annual_return_history",   "join",   8, "Annual return history"),
+    ("events",    "charity_event_history",           "join",   8, "Event history"),
+]
+
+def _cc_collect_all(regs, progress=None):
+    """Read every CC dataset for the given charities (in parallel). A dataset that fails is
+    reported on the 'Export info' sheet instead of failing the whole export."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    reg_set = {str(r).strip() for r in regs if str(r).strip()}
+    out = {"info": [], "enrich": {}}
+    total = len(_CC_DATASETS) + 1
+    done = [0]
+    def tick(label):
+        done[0] += 1
+        if progress: progress(done[0], total, label)
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futs = {}
+        for key, name, mode, cap, label in _CC_DATASETS:
+            futs[ex.submit(_cc_dataset, key, name, reg_set, mode, cap)] = (key, label)
+        futs[ex.submit(enrich_regs_for_export, list(reg_set))] = ("enrich", "What / Who / How, areas and policies")
+        for fut in as_completed(futs):
+            key, label = futs[fut]
+            try:
+                res = fut.result()
+                if key == "enrich":
+                    out["enrich"] = res
+                    out["info"].append((label, "OK", len([1 for v in res.values() if any(v.values())]), ""))
+                else:
+                    _k, cols, rows, secs = res
+                    out[key] = {"cols": cols, "rows": rows}
+                    out["info"].append((label, "OK", len(rows), f"{secs}s"))
+            except Exception as e:
+                print(f"[history export] {label} failed: {e}")
+                out["info"].append((label, "FAILED", 0, str(e)[:200]))
+            tick(label)
+    return out
+
+def _build_history_workbook(regs, cc=None, progress=None):
+    """The Call History workbook (bytes). Sheets: Call History (one row per charity: call
+    data + caller notes + Charity Commission data when `cc` is given), CC Part B, Notes
+    (every dashboard note), Calls (every call), Export info."""
+    from openpyxl import Workbook
+    from openpyxl.cell import WriteOnlyCell
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    regset = set(regs)
+    tz = get_display_tz_name()
+
+    # ── supporting data from our own database ──
+    last_called, last_outcome, first_called, call_count, last_caller = {}, {}, {}, {}, {}
+    call_rows, outcome_at = [], {}
+    for rid, reg, page, phone, oc, notes, dur, cl, ts, synced in (db_query(
+            "SELECT id, reg_number, page, phone_used, outcome, notes, duration_sec, caller, timestamp, synced_to_maximizer "
+            "FROM call_log ORDER BY timestamp ASC, id ASC") or []):
+        if reg not in regset: continue
+        ts = str(ts or "")
+        last_called[reg] = ts; first_called.setdefault(reg, ts); call_count[reg] = call_count.get(reg, 0) + 1
+        if oc: last_outcome[reg] = oc
+        if cl: last_caller[reg] = cl
+        outcome_at[(reg, ts)] = oc or ""
+        call_rows.append((reg, ts, cl or "", oc or "", phone or "", int(dur or 0), notes or "", "Yes" if synced else "No", page or ""))
     for reg, ts in (db_query("SELECT reg_number, MAX(timestamp) FROM called_log GROUP BY reg_number") or []):
         if reg in regset and ts and str(ts) > last_called.get(reg, ""):
             last_called[reg] = str(ts)
@@ -10195,66 +10335,280 @@ def api_call_history_list_export():
             except Exception: pass
     for reg, nm in (db_query("SELECT reg_number, name FROM called_log") or []):
         if reg in regset and nm: names[reg] = nm
-
-    NAVY="1E3A5F"; thin=Side(style="thin", color="D5DAE0")
-    border=Border(left=thin,right=thin,top=thin,bottom=thin)
-    wb = Workbook(); ws = wb.active; ws.title = "Call History"
-    headers = ["Charity Name","Reg Number","Source","Source Detail",f"Last Called ({get_display_tz_name()})","Latest Outcome",f"Follow-up Due ({get_display_tz_name()})",
-               "Stage","Main Phone","Main Email","Website",
-               "Contact Person","Job Role","Contact Phone","Contact Email",
-               "Total Income","Statutory","Newsletter"]
-    for ci,h in enumerate(headers,1):
-        c=ws.cell(row=1,column=ci,value=h)
-        c.font=Font(name="Arial",bold=True,color="FFFFFF",size=11)
-        c.fill=PatternFill("solid",fgColor=NAVY); c.border=border
-        c.alignment=Alignment(horizontal="left",vertical="center")
-    # Preserve the order the user is viewing (regs list order)
-    # Reg → reconstructed source_detail (reuse the same logic the History view uses)
+    note_rows = []          # (reg, ts, caller, page, synced, text)
+    notes_by_reg = {}
+    for reg, page, text, cl, ts, synced in (db_query(
+            "SELECT reg_number, page, text, caller, timestamp, synced_to_maximizer FROM comment_history ORDER BY id ASC") or []):
+        if reg not in regset or not (text or "").strip(): continue
+        note_rows.append((reg, str(ts or ""), cl or "", page or "", "Yes" if synced else "No", text))
+        notes_by_reg.setdefault(reg, []).append((str(ts or ""), cl or "", text))
+    current_comment = {}
+    for k, t in _comments.items():
+        reg = k.split("|", 1)[-1]
+        if reg in regset and t and (reg not in current_comment or k.startswith("calling|")):
+            current_comment[reg] = t
     sd_map = {}
     try:
-        for r in _build_call_history_rows():
-            sd_map[r["reg_number"]] = r.get("source_detail","")
-    except Exception:
-        pass
-    r=2
-    for reg in regs:
-        base=batch_data.get(reg,{}) or {}
-        name=base.get("name") or names.get(reg,"") or reg
-        ov=_contact_overrides.get(reg,{}) or {}
-        contacts=ov.get("contacts") or []
+        for r in _build_call_history_rows(): sd_map[r["reg_number"]] = r.get("source_detail", "")
+    except Exception: pass
+
+    cc = cc or {}
+    cc_charity = (cc.get("charity") or {}); cc_a = (cc.get("parta") or {}); cc_b = (cc.get("partb") or {})
+    cc_gov = (cc.get("gov") or {}); enrich = cc.get("enrich") or {}
+
+    # ── column plan: (group, header, getter(reg) -> value) ──
+    NAVY, TEAL, PURPLE, GREEN, ORANGE, GREY = "1E3A5F", "0F766E", "6B21A8", "15803D", "C2410C", "475569"
+    cols_plan = []
+    _used_hdr = set()
+    def add(group, color, header, fn):
+        if header in _used_hdr: header = f"{header} (CC)"     # e.g. "Charity Name" exists in both groups
+        _used_hdr.add(header); cols_plan.append((group, color, header, fn))
+    def name_of(reg):
+        return (batch_data.get(reg, {}).get("name") or (cc_charity.get("rows", {}).get(reg) or {}).get("charity_name")
+                or names.get(reg, "") or reg)
+    def contacts_of(reg):
+        ov = _contact_overrides.get(reg, {}) or {}
+        contacts = ov.get("contacts") or []
         if contacts:
-            cp=contacts[0]; con_name,con_role,con_phone,con_email=cp.get("name",""),cp.get("role",""),cp.get("phone",""),cp.get("email","")
-            extras=[]
+            cp = contacts[0]; cn, cr, cph, cem = cp.get("name",""), cp.get("role",""), cp.get("phone",""), cp.get("email","")
+            extras = []
             for x in contacts[1:]:
-                seg=x.get("name","") or ""
-                if x.get("role"): seg+=f" ({x['role']})"
-                if x.get("phone"): seg+=f" {x['phone']}"
-                if x.get("email"): seg+=f" {x['email']}"
+                seg = x.get("name","") or ""
+                if x.get("role"): seg += f" ({x['role']})"
+                if x.get("phone"): seg += f" {x['phone']}"
+                if x.get("email"): seg += f" {x['email']}"
                 if seg.strip(): extras.append(seg.strip())
-            if extras: con_name=con_name+"  ||  "+"  ||  ".join(extras)
-        else:
-            con_name,con_role,con_phone,con_email=ov.get("name",""),ov.get("role",""),ov.get("cphone",""),ov.get("cemail","")
-        stage=_statuses.get(f"calling|{reg}","")
-        vals=[name, reg, base.get("source",""), sd_map.get(reg,""), utc_to_display_str(last_called.get(reg,"")),
-              last_outcome.get(reg,""), utc_to_display_str(followup.get(reg,"")), stage,
-              ov.get("phone") or base.get("phone",""), ov.get("email") or base.get("email",""),
-              ov.get("website") or base.get("website",""),
-              con_name, con_role, con_phone, con_email,
-              base.get("total_income",""), base.get("statutory",""),
-              bool(_newsletter.get(reg))]
-        for ci,v in enumerate(vals,1):
-            cell=ws.cell(row=r,column=ci,value=v)
-            cell.font=Font(name="Arial",size=10); cell.border=border
-        r+=1
-    widths=[30,12,16,22,17,20,17,16,16,24,22,30,18,16,24,14,12,12]
-    for ci,w in enumerate(widths,1):
-        ws.column_dimensions[get_column_letter(ci)].width=w
-    ws.freeze_panes="A2"
-    buf=io.BytesIO(); wb.save(buf); buf.seek(0)
-    tstamp=datetime.utcnow().strftime("%Y%m%d_%H%M")
-    return Response(buf.getvalue(),
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            if extras: cn = cn + "  ||  " + "  ||  ".join(extras)
+            return ov, (cn, cr, cph, cem)
+        return ov, (ov.get("name",""), ov.get("role",""), ov.get("cphone",""), ov.get("cemail",""))
+    G1 = "Call History"
+    add(G1, NAVY, "Charity Name", name_of)
+    add(G1, NAVY, "Reg Number", lambda r: r)
+    add(G1, NAVY, "Source", lambda r: batch_data.get(r, {}).get("source", ""))
+    add(G1, NAVY, "Source Detail", lambda r: sd_map.get(r, ""))
+    add(G1, NAVY, f"Last Called ({tz})", lambda r: utc_to_display_str(last_called.get(r, "")))
+    add(G1, NAVY, "Latest Outcome", lambda r: last_outcome.get(r, ""))
+    add(G1, NAVY, f"Follow-up Due ({tz})", lambda r: utc_to_display_str(followup.get(r, "")))
+    add(G1, NAVY, "Stage", lambda r: _statuses.get(f"calling|{r}", ""))
+    add(G1, NAVY, "Main Phone", lambda r: contacts_of(r)[0].get("phone") or batch_data.get(r, {}).get("phone", ""))
+    add(G1, NAVY, "Main Email", lambda r: contacts_of(r)[0].get("email") or batch_data.get(r, {}).get("email", ""))
+    add(G1, NAVY, "Website", lambda r: contacts_of(r)[0].get("website") or batch_data.get(r, {}).get("website", ""))
+    add(G1, NAVY, "Contact Person", lambda r: contacts_of(r)[1][0])
+    add(G1, NAVY, "Job Role", lambda r: contacts_of(r)[1][1])
+    add(G1, NAVY, "Contact Phone", lambda r: contacts_of(r)[1][2])
+    add(G1, NAVY, "Contact Email", lambda r: contacts_of(r)[1][3])
+    add(G1, NAVY, "Total Income", lambda r: batch_data.get(r, {}).get("total_income", ""))
+    add(G1, NAVY, "Statutory", lambda r: batch_data.get(r, {}).get("statutory", ""))
+    add(G1, NAVY, "Newsletter", lambda r: bool(_newsletter.get(r)))
+    G2 = "Caller Notes"
+    add(G2, ORANGE, "Number of Calls", lambda r: call_count.get(r, 0))
+    add(G2, ORANGE, f"First Called ({tz})", lambda r: utc_to_display_str(first_called.get(r, "")))
+    add(G2, ORANGE, "Last Caller", lambda r: last_caller.get(r, ""))
+    add(G2, ORANGE, "Current Comment", lambda r: current_comment.get(r, ""))
+    def all_notes(r):
+        lines = []
+        for ts, cl, text in reversed(notes_by_reg.get(r, [])):
+            oc = outcome_at.get((r, ts), "")
+            lines.append(f"[{utc_to_display_str(ts)} · {cl or 'unknown'}{(' · ' + oc) if oc else ''}] {text.strip()}")
+        return "\n\n".join(lines)
+    add(G2, ORANGE, "All Notes (newest first)", all_notes)
+    notes_col_idx = len(cols_plan)   # 1-based index of the All Notes column
+    if cc:
+        G3 = "Charity Commission — Register"
+        for c in (cc_charity.get("cols") or []):
+            if c == "registered_charity_number": continue
+            add(G3, TEAL, _cc_label(c), (lambda c: lambda r: _cc_clean((cc_charity["rows"].get(r) or {}).get(c, "")))(c))
+        G4 = "Charity Commission — What / Who / How, areas, policies"
+        for k, lbl in (("what","What it does"),("who","Who it helps"),("how","How it helps"),("region","Region"),
+                       ("local_authority","Local authority"),("country","Country"),("policy","Policies")):
+            add(G4, GREEN, lbl, (lambda k: lambda r: (enrich.get(r) or {}).get(k, ""))(k))
+        G5 = "Charity Commission — Annual return Part A (latest)"
+        for c in (cc_a.get("cols") or []):
+            if c in _CC_DROP: continue
+            add(G5, PURPLE, _cc_label(c), (lambda c: lambda r: _cc_numify(c, _cc_clean((cc_a["rows"].get(r) or {}).get(c, ""))))(c))
+        G6 = "Charity Commission — Governing document"
+        for c in (cc_gov.get("cols") or []):
+            if c in _CC_DROP: continue
+            add(G6, GREY, _cc_label(c), (lambda c: lambda r: _cc_clean((cc_gov["rows"].get(r) or {}).get(c, "")))(c))
+        G7 = "Charity Commission — Trustees, other names & regulators, filings"
+        def condense(row):
+            return "; ".join(f"{_cc_label(k)}: {_cc_clean(v)}" for k, v in row.items() if v and k not in _CC_DROP)
+        def trustee_names(r):
+            rows = ((cc.get("trustees") or {}).get("rows") or {}).get(r) or []
+            out = []
+            for row in reversed(rows):   # back to file order
+                nm = row.get("trustee_name") or row.get("name") or ""
+                out.append(nm if nm else condense(row))
+            return "; ".join(dict.fromkeys(x for x in out if x))
+        add(G7, GREY, "Trustees", trustee_names)
+        add(G7, GREY, "Number of Trustees", lambda r: len(((cc.get("trustees") or {}).get("rows") or {}).get(r) or []))
+        for key, lbl in (("names","Other names"),("regulators","Other regulators"),("reports","Published reports"),
+                         ("arhist","Annual return history"),("events","Event history")):
+            add(G7, GREY, lbl, (lambda key: lambda r: "\n".join(dict.fromkeys(condense(x) for x in (((cc.get(key) or {}).get("rows") or {}).get(r) or []))))(key))
+
+    wb = Workbook(write_only=True)
+    def hdr_cell(ws, text, color):
+        c = WriteOnlyCell(ws, value=text)
+        c.font = Font(name="Arial", bold=True, color="FFFFFF", size=11)
+        c.fill = PatternFill("solid", fgColor=color)
+        c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
+        return c
+    def width_for(header):
+        return max(12, min(40, len(header) + 4))
+
+    # ── Sheet 1: Call History ──
+    ws = wb.create_sheet("Call History")
+    for i, (g, color, h, fn) in enumerate(cols_plan, 1):
+        w = 80 if i == notes_col_idx else (50 if "Activities" in h or "Objects" in h else width_for(h))
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "C3"
+    seen = set(); grow = []
+    for g, color, h, fn in cols_plan:
+        grow.append(hdr_cell(ws, g if g not in seen else None, color)); seen.add(g)
+    ws.append(grow)
+    ws.append([hdr_cell(ws, h, color) for g, color, h, fn in cols_plan])
+    for n_, reg in enumerate(regs, 1):
+        row = []
+        for g, color, h, fn in cols_plan:
+            try: v = fn(reg)
+            except Exception: v = ""
+            row.append(_xl(v))
+        ws.append(row)
+        if progress and n_ % 500 == 0: progress(None, None, f"Writing rows {n_} of {len(regs)}")
+    ws.auto_filter.ref = f"A2:{get_column_letter(len(cols_plan))}{len(regs) + 2}"
+
+    # ── Sheet 2: Part B ──
+    if cc_b.get("cols"):
+        ws2 = wb.create_sheet("CC Financials (Part B)")
+        bcols = [c for c in cc_b["cols"] if c not in _CC_DROP]
+        ws2.column_dimensions["A"].width = 30; ws2.column_dimensions["B"].width = 12
+        for i, c in enumerate(bcols, 3): ws2.column_dimensions[get_column_letter(i)].width = width_for(_cc_label(c))
+        ws2.freeze_panes = "C2"
+        ws2.append([hdr_cell(ws2, "Charity Name", PURPLE), hdr_cell(ws2, "Reg Number", PURPLE)] + [hdr_cell(ws2, _cc_label(c), PURPLE) for c in bcols])
+        for reg in regs:
+            r_ = cc_b["rows"].get(reg)
+            if not r_: continue
+            ws2.append([_xl(name_of(reg)), reg] + [_xl(_cc_numify(c, _cc_clean(r_.get(c, "")))) for c in bcols])
+
+    # ── Sheet 3: Notes (every dashboard note, newest first per charity) ──
+    ws3 = wb.create_sheet("Notes")
+    for L, w in zip("ABCDEFG", (30, 12, 18, 18, 14, 12, 100)): ws3.column_dimensions[L].width = w
+    ws3.freeze_panes = "A2"
+    ws3.append([hdr_cell(ws3, h, ORANGE) for h in ("Charity Name", "Reg Number", f"Date/Time ({tz})", "Caller", "Page", "Synced to Maximizer", "Note")])
+    order = {r: i for i, r in enumerate(regs)}
+    for reg, ts, cl, page, synced, text in sorted(note_rows, key=lambda x: (order.get(x[0], 0), x[1]), reverse=False):
+        ws3.append([_xl(name_of(reg)), reg, utc_to_display_str(ts), cl, page, synced, _xl(text)])
+
+    # ── Sheet 4: Calls ──
+    ws4 = wb.create_sheet("Calls")
+    for L, w in zip("ABCDEFGHI", (30, 12, 18, 18, 22, 16, 10, 12, 90)): ws4.column_dimensions[L].width = w
+    ws4.freeze_panes = "A2"
+    ws4.append([hdr_cell(ws4, h, NAVY) for h in ("Charity Name", "Reg Number", f"Date/Time ({tz})", "Caller", "Outcome", "Phone Used", "Duration", "Synced to Maximizer", "Call Notes")])
+    for reg, ts, cl, oc, phone, dur, notes, synced, page in sorted(call_rows, key=lambda x: (order.get(x[0], 0), x[1])):
+        ws4.append([_xl(name_of(reg)), reg, utc_to_display_str(ts), cl, oc, phone, f"{dur//60}:{dur%60:02d}", synced, _xl(notes)])
+
+    # ── Sheet 5: Export info ──
+    if cc:
+        ws5 = wb.create_sheet("Export info")
+        for L, w in zip("ABCD", (52, 12, 22, 60)): ws5.column_dimensions[L].width = w
+        ws5.append([hdr_cell(ws5, h, GREY) for h in ("Charity Commission dataset", "Status", "Charities with data", "Detail")])
+        for lbl, st, n, detail in sorted(cc.get("info", [])): ws5.append([lbl, st, n, detail])
+        ws5.append([]); ws5.append([f"Exported {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC for {len(regs)} charities. Charity Commission data is the latest public register extract."])
+    buf = io.BytesIO(); wb.save(buf)
+    return buf.getvalue()
+
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+@app.route("/api/call_history_list/export", methods=["POST"])
+def api_call_history_list_export():
+    """QUICK export (no Charity Commission data): call/contact data, caller notes and call log.
+    The full export, with every Charity Commission field, runs as a background job below."""
+    try:
+        import openpyxl  # noqa: F401
+    except Exception:
+        return jsonify({"error": "openpyxl not installed. Add 'openpyxl' to requirements.txt and redeploy."}), 500
+    regs = _history_export_regs(request.get_json(force=True) or {})
+    if not regs:
+        return jsonify({"error": "No charities to export"}), 400
+    data = _build_history_workbook(regs, cc=None)
+    tstamp = datetime.utcnow().strftime("%Y%m%d_%H%M")
+    return Response(data, mimetype=_XLSX_MIME,
         headers={"Content-Disposition": f"attachment; filename=call_history_{tstamp}.xlsx"})
+
+# ── Full export = background job (reading the Charity Commission files takes a minute or
+# two — longer than a web request may last). State lives in small files in the temp
+# folder, so any of the server's worker processes can answer a status/download request. ──
+_EXP_ID_RE = re.compile(r"^[0-9a-f]{16}$")
+def _exp_dir():
+    d = os.path.join(tempfile.gettempdir(), "9m_exports"); os.makedirs(d, exist_ok=True); return d
+def _exp_status(job, **kw):
+    p = os.path.join(_exp_dir(), job + ".json"); cur = {}
+    try:
+        with open(p) as f: cur = json.load(f)
+    except Exception: pass
+    cur.update(kw); cur["updated"] = time.time()
+    with open(p + ".tmp", "w") as f: json.dump(cur, f)
+    os.replace(p + ".tmp", p)
+def _exp_read(job):
+    try:
+        with open(os.path.join(_exp_dir(), job + ".json")) as f: return json.load(f)
+    except Exception: return None
+def _exp_cleanup():
+    cutoff = time.time() - 2 * 3600
+    try:
+        for fn in os.listdir(_exp_dir()):
+            fp = os.path.join(_exp_dir(), fn)
+            if os.path.getmtime(fp) < cutoff:
+                try: os.unlink(fp)
+                except Exception: pass
+    except Exception: pass
+
+def _run_history_export_job(job, regs):
+    try:
+        def prog(done, total, label):
+            if done is None: _exp_status(job, message=label)
+            else: _exp_status(job, message=f"Reading Charity Commission files ({done} of {total} done) — latest: {label}", done=done, total=total)
+        cc = _cc_collect_all(regs, prog)
+        _exp_status(job, message="Building the Excel file…")
+        data = _build_history_workbook(regs, cc=cc, progress=prog)
+        with open(os.path.join(_exp_dir(), job + ".xlsx"), "wb") as f: f.write(data)
+        _exp_status(job, state="done", message="Ready", size=len(data), count=len(regs))
+    except Exception as e:
+        import traceback; print(f"[history export job {job}] {traceback.format_exc()}")
+        _exp_status(job, state="error", message=str(e)[:300])
+
+@app.route("/api/call_history_list/export_start", methods=["POST"])
+def api_call_history_export_start():
+    regs = _history_export_regs(request.get_json(force=True) or {})
+    if not regs: return jsonify({"ok": False, "error": "No charities to export"}), 400
+    if len(regs) > EXPORT_ENRICH_MAX:
+        return jsonify({"ok": False, "error": f"Too many charities ({len(regs)}) for one full export — narrow the filters (max {EXPORT_ENRICH_MAX})."}), 400
+    _exp_cleanup()
+    job = _secrets.token_hex(8)
+    _exp_status(job, state="running", user=current_user() or "", message="Starting…", done=0, total=len(_CC_DATASETS) + 1, count=len(regs))
+    threading.Thread(target=_run_history_export_job, args=(job, regs), daemon=True).start()
+    return jsonify({"ok": True, "job": job, "count": len(regs)})
+
+@app.route("/api/call_history_list/export_status")
+def api_call_history_export_status():
+    job = str(request.args.get("job", ""))
+    st = _exp_read(job) if _EXP_ID_RE.match(job) else None
+    if not st: return jsonify({"ok": False, "state": "error", "message": "Export not found (it may have expired)."}), 404
+    if st.get("state") == "running" and time.time() - st.get("updated", 0) > 180:
+        st["state"] = "error"; st["message"] = "The export stopped responding (the server may have restarted). Please try again."
+    return _no_store(jsonify({"ok": True, **{k: st.get(k) for k in ("state", "message", "done", "total", "count")}}))
+
+@app.route("/api/call_history_list/export_download")
+def api_call_history_export_download():
+    job = str(request.args.get("job", ""))
+    st = _exp_read(job) if _EXP_ID_RE.match(job) else None
+    fp = os.path.join(_exp_dir(), job + ".xlsx") if st else ""
+    if not st or st.get("state") != "done" or not os.path.exists(fp):
+        return jsonify({"error": "Export not ready or expired."}), 404
+    with open(fp, "rb") as f: data = f.read()
+    tstamp = datetime.utcnow().strftime("%Y%m%d_%H%M")
+    return Response(data, mimetype=_XLSX_MIME,
+        headers={"Content-Disposition": f"attachment; filename=call_history_full_{tstamp}.xlsx"})
 
 HIST_FILTER_KEYS = ("newsletter","source","stage","caller","has_phone","has_email","has_contact",
                     "has_followup","has_comment","retry","excluded","called_today",

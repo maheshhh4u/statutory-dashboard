@@ -7862,6 +7862,13 @@ const APP_NAME = "9 Mountains Prospecting & Cold-Calling Dashboard";
 // Newest first. Bump the decimal for routine releases; reserve a major bump (2.0)
 // for a genuinely big release. Each entry: {v, date, title, changes:[...]}.
 const CHANGELOG = [
+  { v:"2.93", date:"2026-11", title:"Call History Excel: all Charity Commission data + all caller notes",
+    changes:[
+      "Export to Excel (Call History) now includes every field the Charity Commission publishes for each charity: the full register entry, annual return Part A (latest) and Part B, governing document and objects, trustees, other names and regulators, published reports, annual return and event history, plus What/Who/How, areas of operation and policies.",
+      "Includes every note added by callers: an \u201CAll Notes\u201D column on each charity (newest first, with date, caller and call outcome) and the current comment, plus separate \u201CNotes\u201D and \u201CCalls\u201D sheets with one row per note / call. Number of calls, first call and last caller added too.",
+      "Columns are colour-grouped (call history, caller notes, register, what/who/how, annual return, governing document, trustees) with filters and a frozen header. Financial figures are real numbers so they sort and sum.",
+      "The full export runs in the background with a progress bar (about 1\u20132 minutes) and downloads automatically. Untick \u201CInclude all Charity Commission data\u201D in the export window for the instant version (still with all notes). An \u201CExport info\u201D sheet lists what was included."
+    ]},
   { v:"2.92", date:"2026-11", title:"Manage Saved Searches",
     changes:[
       "New \u201C\u2699 Manage\u201D button on the saved-searches (yellow) bar in Charity Search opens a full manager: view every saved search with its criteria, edit any field, rename, and save.",
@@ -15128,7 +15135,11 @@ function exportHistoryExcel(){
   const selected=getHistorySelectedRegs();
   const total=historyTotal||historyData.length;
   const html=`<div style="padding:4px">
-    <p style="font-size:13px;margin:0 0 14px">Export the Call History to Excel. What would you like to include?</p>
+    <p style="font-size:13px;margin:0 0 12px">Export the Call History to Excel. What would you like to include?</p>
+    <label style="display:flex;gap:9px;align-items:flex-start;font-size:13px;margin:0 0 12px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;cursor:pointer">
+      <input type="checkbox" id="exp-full" checked style="margin-top:3px">
+      <span><b>Include all Charity Commission data</b><br><span style="color:var(--t3);font-size:12px">Every register field, annual-return figures, trustees, governing document, what/who/how, areas and policies. Caller notes and the call log are always included. Takes about 1–2 minutes — untick for an instant export without the Charity Commission data.</span></span>
+    </label>
     <div style="display:flex;flex-direction:column;gap:8px">
       <button class="btn btn-green" onclick="doExportHistory('all')" style="justify-content:flex-start;text-align:left">
         📋 All items across all pages <span style="color:#eaffea;font-size:12px">(${total} charit${total===1?'y':'ies'})</span>
@@ -15142,7 +15153,15 @@ function exportHistoryExcel(){
   </div>`;
   showModal('⬇ Export Call History', html);
 }
+function _expDownloadBlob(blob,name){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+let _expPoll=null;
 function doExportHistory(which){
+  const full=!!(document.getElementById('exp-full')&&document.getElementById('exp-full').checked);
   let payload;
   if(which==='selected'){
     const regs=getHistorySelectedRegs();
@@ -15153,19 +15172,48 @@ function doExportHistory(which){
     payload={mode:'all', filters:getHistoryFilters()};
   }
   closeGenericModal(true);
-  cToast('Preparing Excel…');
-  fetch('/api/call_history_list/export',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(payload)})
-    .then(r=>{ if(!r.ok) return r.json().then(e=>{throw new Error(e.error||'Export failed')}); return r.blob(); })
-    .then(blob=>{
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement('a');
-      a.href=url; a.download='call_history.xlsx';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(()=>URL.revokeObjectURL(url),1500);
-    })
-    .catch(e=>alert('Export failed: '+e.message));
+  if(!full){
+    cToast('Preparing Excel…');
+    fetch('/api/call_history_list/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      .then(r=>{ if(!r.ok) return r.json().then(e=>{throw new Error(e.error||'Export failed')}); return r.blob(); })
+      .then(blob=>_expDownloadBlob(blob,'call_history.xlsx'))
+      .catch(e=>alert('Export failed: '+e.message));
+    return;
+  }
+  // Full export (with all Charity Commission data) runs as a background job on the server
+  showModal('⬇ Preparing your Excel export',
+    '<div style="padding:4px"><div id="exp-prog-msg" style="font-size:13px;margin-bottom:10px">Starting…</div>'+
+    '<div style="height:8px;background:var(--border);border-radius:6px;overflow:hidden"><div id="exp-prog-bar" style="height:100%;width:3%;background:var(--navy);transition:width .5s"></div></div>'+
+    '<div id="exp-prog-time" style="font-size:11px;color:var(--t3);margin-top:8px">You can keep this window open — it downloads automatically when ready.</div>'+
+    '<div style="text-align:right;margin-top:14px"><button class="btn btn-outline btn-sm" onclick="cancelExportPoll()">Cancel</button></div></div>');
+  const t0=Date.now(); clearInterval(_expPoll);
+  const msg=t=>{ const e=document.getElementById('exp-prog-msg'); if(e) e.innerHTML=t; };
+  fetch('/api/call_history_list/export_start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(r=>r.json()).then(d=>{
+      if(!d.ok){ msg('<span style="color:var(--red)">⚠ '+esc(d.error||'Could not start the export')+'</span>'); return; }
+      msg('Exporting '+d.count+' charit'+(d.count===1?'y':'ies')+'…');
+      _expPoll=setInterval(()=>{
+        const sec=Math.round((Date.now()-t0)/1000);
+        const tm=document.getElementById('exp-prog-time'); if(tm) tm.textContent='Elapsed '+Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0')+' · you can keep this window open — it downloads automatically when ready.';
+        fetch('/api/call_history_list/export_status?job='+d.job,{cache:'no-store'}).then(r=>r.json()).then(st=>{
+          const bar=document.getElementById('exp-prog-bar');
+          if(st.state==='running'){
+            if(bar&&st.total) bar.style.width=Math.max(5,Math.round(100*(st.done||0)/st.total))+'%';
+            msg(esc(st.message||'Working…'));
+          } else if(st.state==='done'){
+            clearInterval(_expPoll); if(bar) bar.style.width='100%';
+            msg('Ready — downloading…');
+            const a=document.createElement('a'); a.href='/api/call_history_list/export_download?job='+d.job;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(()=>closeGenericModal(true),1200);
+          } else {
+            clearInterval(_expPoll); msg('<span style="color:var(--red)">⚠ Export failed: '+esc(st.message||'unknown error')+'</span>');
+          }
+        }).catch(()=>{});
+      },2000);
+    }).catch(e=>msg('<span style="color:var(--red)">⚠ '+esc(e.message)+'</span>'));
 }
+function cancelExportPoll(){ clearInterval(_expPoll); closeGenericModal(true); }
 
 function fmtRetryTime(s){
   // "2026-07-14 10:15:00" (stored UTC) -> "today 10:15" / "tomorrow 10:15" / "14 Jul, 10:15"
