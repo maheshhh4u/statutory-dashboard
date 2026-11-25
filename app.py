@@ -4442,6 +4442,10 @@ def _run_advanced_search(criteria, limit=50000):
     emin=flt(criteria.get("exp_min","")); emax=flt(criteria.get("exp_max","")) or float("inf")
     df=str(criteria.get("reg_date_from","")).strip(); dt=str(criteria.get("reg_date_to","")).strip()
     tq=str(criteria.get("charity_type","")).upper().strip()
+    # "filed" = the register shows a latest accounts period (the charity has filed accounts);
+    # "not_filed" = it has never filed any. Blank = don't filter.
+    accq=str(criteria.get("accounts","")).strip().lower()
+    if accq not in ("filed","not_filed"): accq=""
     limit = max(1, min(int(limit or 50000), 200000))
     COLS={"registered_charity_number","charity_name","charity_registration_status",
           "date_of_registration","date_of_removal","charity_contact_web",
@@ -4479,6 +4483,9 @@ def _run_advanced_search(criteria, limit=50000):
             if not any(t in addr_blob for t in lq_terms): continue
         ctype=row.get("charity_type","").upper()
         if tq and tq not in ctype: continue
+        if accq:
+            _has_acc = bool((row.get("latest_acc_fin_period_end_date","") or "").strip())
+            if (accq=="filed") != _has_acc: continue
         inc=flt(row.get("latest_income",""))
         if imin and inc<imin: continue
         if imax<float("inf") and inc>imax: continue
@@ -4525,7 +4532,9 @@ def api_ai_expand_search_terms():
     need = str(data.get("need", "")).strip()[:3000]
     if not need:
         return jsonify({"ok": False, "error": "Describe what you're looking for first."}), 400
+    _today = datetime.utcnow().date()
     system = (
+        f"Today's date is {_today.isoformat()}. "
         "You help a UK charity-sector sales team search the Charity Commission register. Each charity has a "
         "short plain-text description of its activities, written by the charity. A search matches if ANY of "
         "your terms appears in that description, with each term matched from the START of a word onward "
@@ -4549,9 +4558,16 @@ def api_ai_expand_search_terms():
         "- inc_min / inc_max: annual income range in GBP as whole numbers ('over £1m' -> inc_min 1000000; "
         "'between 100k and 5m' -> 100000 and 5000000);\n"
         "- exp_min / exp_max: annual expenditure range in GBP, same rules;\n"
-        "- charity_type: one of 'CIO', 'Charitable Company', 'Trust' only if stated.\n\n"
+        "- charity_type: one of 'CIO', 'Charitable Company', 'Trust' only if stated.\n"
+        "- reg_date_from / reg_date_to: registration date range as YYYY-MM-DD. 'registered in the last N years' -> from = today minus N years, to = today. "
+        "'running for N years', 'N years old' or 'about N years' -> a window of six months either side: from = today minus (N+0.5) years, to = today minus (N-0.5) years. "
+        "'registered in 2023' -> 2023-01-01 to 2023-12-31. 'newly registered' on its own (no number) -> the last 2 years.\n"
+        "- accounts: 'filed' if the brief says the charity has filed / submitted its accounts or annual return; 'not_filed' if it says they have NOT filed / "
+        "have never filed accounts; otherwise empty string.\n"
+        "If the brief states no cause area or topic (it only describes dates, size, place or accounts), return an EMPTY terms list.\n\n"
         "Reply with ONLY a JSON object, no markdown, in exactly this shape: "
-        '{"terms":["..."],"locations":[],"inc_min":null,"inc_max":null,"exp_min":null,"exp_max":null,"charity_type":""}')
+        '{"terms":["..."],"locations":[],"inc_min":null,"inc_max":null,"exp_min":null,"exp_max":null,"charity_type":"",'
+        '"reg_date_from":"","reg_date_to":"","accounts":""}')
     try:
         resp = requests.post(
             "https://api.openai.com/v1/chat/completions",
@@ -4587,8 +4603,6 @@ def api_ai_expand_search_terms():
             if t and len(t) <= 60 and t.lower() not in seen:
                 seen.add(t.lower()); terms.append(t)
         terms = terms[:80]
-        if not terms:
-            return jsonify({"ok": False, "error": "AI didn't return any usable terms — try rephrasing."}), 502
         def _money(x):
             try:
                 v = int(float(str(x).replace(",", "").replace("£", "")))
@@ -4605,6 +4619,17 @@ def api_ai_expand_search_terms():
                    "inc_min": _money(parsed.get("inc_min")), "inc_max": _money(parsed.get("inc_max")),
                    "exp_min": _money(parsed.get("exp_min")), "exp_max": _money(parsed.get("exp_max")),
                    "charity_type": ctype}
+        def _iso(x):
+            x = str(x or "").strip()[:10]
+            return x if re.match(r"^\d{4}-\d{2}-\d{2}$", x) else ""
+        filters["reg_date_from"] = _iso(parsed.get("reg_date_from"))
+        filters["reg_date_to"] = _iso(parsed.get("reg_date_to"))
+        _acc = str(parsed.get("accounts") or "").strip().lower()
+        filters["accounts"] = _acc if _acc in ("filed", "not_filed") else ""
+        _has_filter = bool(locs or filters["inc_min"] or filters["inc_max"] or filters["exp_min"] or filters["exp_max"]
+                           or ctype or filters["reg_date_from"] or filters["reg_date_to"] or filters["accounts"])
+        if not terms and not _has_filter:
+            return jsonify({"ok": False, "error": "AI didn't return any usable terms or filters — try rephrasing."}), 502
         return jsonify({"ok": True, "terms": terms, "filters": filters})
     except requests.exceptions.Timeout:
         return jsonify({"ok": False, "error": "AI took too long to respond. Try again."}), 504
@@ -4625,6 +4650,7 @@ def advanced_search():
         "exp_min": request.args.get("exp_min",""), "exp_max": request.args.get("exp_max",""),
         "reg_date_from": request.args.get("reg_date_from",""), "reg_date_to": request.args.get("reg_date_to",""),
         "charity_type": request.args.get("charity_type",""),
+        "accounts": request.args.get("accounts",""),
     }
     try: limit = max(1, min(int(request.args.get("limit","50000")), 200000))
     except: limit = 50000
@@ -9224,7 +9250,7 @@ def db_export(table):
 # save". Every read below therefore goes to the database (the dict is only kept in step).
 SS_KEYS = ("name","reg_number","postcode","location","area_of_operation","what_class","who_class",
            "how_class","what","reg_status","charity_type","inc_min","inc_max","exp_min","exp_max",
-           "reg_date_from","reg_date_to")
+           "reg_date_from","reg_date_to","accounts")
 SS_LIST_KEYS = ("area_of_operation","what_class","who_class","how_class")
 
 def _ss_now(): return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
